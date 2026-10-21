@@ -180,6 +180,37 @@ function sMul(factors) {
       list = (c.eq(Q1) ? [] : [sN(c)]).concat(items);
       continue;
     }
+    // radicals of rational numbers with the same index merge:  √2·√3 = √6,  √2·√8 = 4
+    const radIdx = items.map((it, i) => (it.k === '^' && it.b.k === 'n' && it.b.q.sign() > 0 && it.e.k === 'n' && !it.e.q.isInt() && it.e.q.d < 13n && babs(it.e.q.n) < 50n ? i : -1)).filter((i) => i >= 0);
+    if (radIdx.length >= 2) {
+      const byIndex = new Map();
+      radIdx.forEach((i) => {
+        const d = items[i].e.q.d.toString();
+        if (!byIndex.has(d)) byIndex.set(d, []);
+        byIndex.get(d).push(i);
+      });
+      const drop = new Set();
+      const added = [];
+      let merged = false;
+      for (const [d, idxs] of byIndex) {
+        if (idxs.length < 2) continue;
+        let P = Q1;
+        idxs.forEach((i) => {
+          const p = Number(items[i].e.q.n);
+          P = P.mul(p >= 0 ? items[i].b.q.pow(p) : items[i].b.q.inv().pow(-p));
+        });
+        const r = numPowFrac(P, new Q(1n, BigInt(d)));
+        if (!r) continue;
+        merged = true;
+        idxs.forEach((i) => drop.add(i));
+        c = c.mul(r.coef);
+        if (r.radicand) added.push(sPowRaw(sN(r.radicand), sN(new Q(1n, BigInt(r.index)))));
+      }
+      if (merged) {
+        list = (c.eq(Q1) ? [] : [sN(c)]).concat(items.filter((_, i) => !drop.has(i)), added);
+        continue;
+      }
+    }
     items.sort(factorCmp);
     if (!items.length) return sN(c);
     if (items.length === 1 && c.eq(Q1)) return items[0];

@@ -34,6 +34,9 @@ else
   echo; echo "== 6-9. skipped (python3 with numpy, sympy, scipy not found; see tests/requirements.txt)"
 fi
 echo; echo "== 8f. differential equations: every answer substituted back into its equation"; node ode-battery.mjs "$skill"; for s in 1 2; do node ode-fuzz.mjs "$skill" $s 400; done
+echo; echo "== 8j. numerical methods (ODE steppers, quadrature rules, interpolation, splines, root finders) vs exact fractions / numpy / scipy"; for s in 1 2; do node numerical-battery.mjs "$skill" $s; done
+echo; echo "== 8k. parametric / polar / vector calculus vs sympy / scipy"; for s in 1 2; do node curves-battery.mjs "$skill" $s; done
+echo; echo "== 8l. extra statistics (distributions, two-sample tests, ANOVA, descriptive measures, regressions) vs scipy.stats / numpy"; for s in 1 2; do node stats2-battery.mjs "$skill" $s; done
 echo; echo "== 8h. random limits, Taylor polynomials, definite integrals (pole detection) and finite sums, checked numerically"; for s in 1 2; do node calc-random-battery.mjs "$skill" $s 80; done
 echo; echo "== 8i. random equations (rational, radical, exponential, log, abs, polynomial) and inequalities, checked by a numerical scan"; for s in 1 2; do node eq-battery.mjs "$skill" $s 80; done
 echo; echo "== 8g. random rational functions (non-monic factors): apart, integrals, inverse Laplace, checked numerically"; for s in 1 2; do node rational-battery.mjs "$skill" $s 100; done

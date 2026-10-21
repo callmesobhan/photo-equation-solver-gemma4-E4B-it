@@ -18,7 +18,7 @@ You only READ the math. The tool does ALL the calculating. Never solve it yourse
    - If the picture holds several separate problems, use `problems` (a list of strings) instead of `equation`.
 3. Reply with the tool's "Read as" line and its "Answer" lines exactly as returned. Add the "Working" and "Check" lines only if the user wants steps. Never change the numbers. If the result comes with a picture (a graph), say that it is shown in the chat.
 4. Ask the user to check that "Read as" matches their picture. If it does not, tell them to retake the photo closer and sharper.
-5. Unsure how to write a command? Call the tool with `{"equation": "help"}` (topics: `help syntax`, `equations`, `calculus`, `ode`, `multivar`, `optimize`, `algebra`, `matrix`, `number`, `stats`, `geometry`, `units`, `plot`) and use what it says.
+5. Unsure how to write a command? Call the tool with `{"equation": "help"}` (topics: `help syntax`, `equations`, `calculus`, `ode`, `numerical`, `curves`, `multivar`, `optimize`, `algebra`, `matrix`, `number`, `stats`, `geometry`, `units`, `plot`) and use what it says.
 
 ## Writing ordinary math
 
@@ -37,6 +37,8 @@ You only READ the math. The tool does ALL the calculating. Never solve it yourse
 | Calculus | `integrate(f, x)`, `integrate(f, x, a, b)` (`oo` = infinity), `diff(f, x)`, `diff(f, x, 2)`, `limit(f, x, a)`, `taylor(f, x, 0, 5)`, `sum(f, k, 1, oo)` |
 | Calculus uses | `tangent(f, x, a)`, `critical(f, x)`, `analyze(f, x)` (full function study), `areabetween(f, g, x)`, `volumerev(f, x, a, b)`, `arclength(f, x, a, b)`, `newton(f, x, x0)`, `implicit(x^2 + y^2 - 25)` |
 | Differential equations | write them as they are, initial conditions after a comma: `y' + 2y = e^x`, `y'' - 3y' + 2y = 0, y(0) = 1, y'(0) = 0`, `(x + y) dx + (x - y) dy = 0`, systems `x' = 3x + y; y' = x + 3y`; Laplace: `laplace(sin(2t), t)`, `ilaplace(1/(s^2+1), s)` |
+| Curves and vectors | parametric `paramdiff(t^2, t^3, t, 2)`, `paramlength(cos(t), sin(t), t, 0, 2*pi)`; polar `polararea(1 + cos(t), t, 0, 2*pi)`, `polarlength(...)`; `curvature([t, t^2, t^3], t, 1)`, `velocity(...)`, `tnb(...)`, `lineintegral([y, x], [cos(t), sin(t)], t, 0, pi)`, `potential([2*x*y, x^2])`, `tospherical(1, 1, sqrt(2))` |
+| Numerical methods | `euler(x + y, 0, 1, 0.1, 0.5)`, `rk4(...)`, `simpson(sin(x), 0, pi, 4)`, `trapezoid(x^2, 0, 1, 4)`, `bisection(x^3 - x - 2, 1, 2, 6)`, `secant(...)`, `interpolate([0,1,2], [1,3,7], 1.5)`, `polyfit([0,1,2,3], [1,2,5,10], 2)`, `spline(...)` |
 | Several variables | `grad(f, x, y)`, `hessian(f, x, y)`, `critical(f, x, y)`, `lagrange(f, g, c, x, y)`, double integral `integrate(integrate(x*y, y, 0, x), x, 0, 2)` |
 | Optimization | `maximize 3x + 2y subject to x + y <= 4, x, y >= 0` (linear programming) |
 | Algebra | `factor(x^4-1)`, `expand((x+1)^5)`, `simplify(...)`, `apart(...)`, `gcd(12, 18)`, complex: `(3+4i)(1-2i)`, `sqrt(-4)`, `z^2 = 3+4i`, `polar(1+i)` |
@@ -44,6 +46,7 @@ You only READ the math. The tool does ALL the calculating. Never solve it yourse
 | Matrices | `[[1,2],[3,4]]` with `det()`, `inv()`, `rank()`, `rref()`, `eigen()`, `linsolve(A, b)`, `A*B`, `A^-1`; vectors `dot([1,2,3],[4,5,6])`, `cross(...)`, `gramschmidt([1,1,0],[1,0,1])` |
 | Numbers | `isprime(97)`, `factor(360)`, `divisors(36)`, `17 mod 5`, `3x ≡ 4 (mod 7)`, `ncr(10,3)`, `npr(10,3)`, `factorial(8)`, `sequence(2,6,12,20)`, `binary(10)`, `dice(2,6,7)`, `birthday(23)`, `arrangements of MISSISSIPPI` |
 | Statistics | `mean(2,4,4,5)`, `stdev(...)`, `linreg([1,2,3],[2,4,7])`, `binompdf(10,0.5,3)`, `normalcdf(a, b, mean, sd)`, `invnorm(0.975)`, `tinterval(52,4,25,0.95)`, `ttest(...)`, `chisqtest(...)` |
+| More statistics | `ttest2([5,6,7,8,9],[3,4,5,6,9])`, `pairedt([10,12,9],[8,11,9])`, `anova([4,5,6],[7,8,9],[1,2,3])`, `prop2test(45,100,30,90)`, `corrtest([1,2,3,4,5],[2,4,5,4,6])`, `outliers([1,2,3,50])`, `multireg([[1,2],[2,1],[3,5],[4,3],[5,6]], [3,4,9,8,12])`, `markov([[0.9,0.1],[0.5,0.5]])`, `gammacdf(2, 3, 1)` |
 | Geometry | `circle(5)`, `cone(3,4)`, `triangle(a=3, b=4, C=60)`, `distance([1,2],[4,6])`; a conic is just written: `x^2 + y^2 - 6x + 4y - 12 = 0` |
 | Other | `convert 5 km to miles`, `compound(1000, 5%, 10)`, `loan(200000, 6.5, 30)`, `molarmass(Ca(OH)2)`, `balance H2 + O2 -> H2O`, `suvat(u=0, a=9.8, t=3)` |
 | Graphs | `plot(x^2, x, -5, 5)`, `plot(sin(x), cos(x), x, -6.28, 6.28)` |

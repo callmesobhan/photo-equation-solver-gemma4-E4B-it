@@ -900,8 +900,11 @@ function showCall(n) {
 
 /** Registry of command names (filled by the modules that implement them). */
 const COMMANDS = {};
-function defCmd(names, fn) {
-  names.split(' ').forEach((n) => { COMMANDS[n] = fn; });
+function defCmd(names, fn, replaces) {
+  names.split(' ').forEach((n) => {
+    if (COMMANDS[n] && !replaces) throw new Error('command name registered twice: ' + n); // caught by every test, never reaches users
+    COMMANDS[n] = fn;
+  });
 }
 
 /** End of an expression that runs to the end of the statement (stops at ; , newline or a relation). */
@@ -2725,6 +2728,37 @@ function sMul(factors) {
     if (again) {
       list = (c.eq(Q1) ? [] : [sN(c)]).concat(items);
       continue;
+    }
+    // radicals of rational numbers with the same index merge:  \u221a2\u00b7\u221a3 = \u221a6,  \u221a2\u00b7\u221a8 = 4
+    const radIdx = items.map((it, i) => (it.k === '^' && it.b.k === 'n' && it.b.q.sign() > 0 && it.e.k === 'n' && !it.e.q.isInt() && it.e.q.d < 13n && babs(it.e.q.n) < 50n ? i : -1)).filter((i) => i >= 0);
+    if (radIdx.length >= 2) {
+      const byIndex = new Map();
+      radIdx.forEach((i) => {
+        const d = items[i].e.q.d.toString();
+        if (!byIndex.has(d)) byIndex.set(d, []);
+        byIndex.get(d).push(i);
+      });
+      const drop = new Set();
+      const added = [];
+      let merged = false;
+      for (const [d, idxs] of byIndex) {
+        if (idxs.length < 2) continue;
+        let P = Q1;
+        idxs.forEach((i) => {
+          const p = Number(items[i].e.q.n);
+          P = P.mul(p >= 0 ? items[i].b.q.pow(p) : items[i].b.q.inv().pow(-p));
+        });
+        const r = numPowFrac(P, new Q(1n, BigInt(d)));
+        if (!r) continue;
+        merged = true;
+        idxs.forEach((i) => drop.add(i));
+        c = c.mul(r.coef);
+        if (r.radicand) added.push(sPowRaw(sN(r.radicand), sN(new Q(1n, BigInt(r.index)))));
+      }
+      if (merged) {
+        list = (c.eq(Q1) ? [] : [sN(c)]).concat(items.filter((_, i) => !drop.has(i)), added);
+        continue;
+      }
     }
     items.sort(factorCmp);
     if (!items.length) return sN(c);
@@ -7847,7 +7881,7 @@ defCmd('inversefunction finverse inverse_function', (n) => {
   out.work.push('Swap: y = ' + fmtS(S) + ' and solve for ' + v + ', then rename y as ' + v);
   return out;
 });
-defCmd('compose composition', (n) => {
+defCmd('compose', (n) => {
   needArgs(n, 2, 3, 'f, g and optionally the variable');
   const f = fromAst(n.args[0]);
   const g = fromAst(n.args[1]);
@@ -12795,6 +12829,8 @@ HELP.index = [
   '  equations   equations, systems, inequalities, formulas ("solve for t"), complex numbers',
   '  calculus    integrate, diff, limit, taylor, sum, product, tangent lines, curve study, areas and volumes',
   '  ode         differential equations (first order, linear of any order, systems) and Laplace transforms',
+  '  curves      parametric and polar curves (slope, length, area), curvature, velocity, line integrals, potential functions, coordinate systems',
+  '  numerical   Euler / Runge-Kutta, trapezoid / Simpson rules, bisection / secant, interpolation, splines, curve fitting',
   '  algebra     factor, expand, simplify, apart, gcd, lcm, divide, complex numbers',
   '  matrix      determinant, inverse, eigenvalues, rank, systems, vectors',
   '  number      primes, divisors, modular arithmetic, counting, sequences, sets, number bases',
@@ -12841,6 +12877,23 @@ HELP.calculus = [
   '  areabetween(f, g, x)  or  areabetween(f, g, x, a, b)   volumerev(f, x, a, b)  volumerev(f, g, x, a, b)  (about the x-axis)',
   '  shells(f, x, a, b)  (about the y-axis)   arclength(f, x, a, b)   surfacearea of revolution: surfacearearev(f, x, a, b)   avgvalue(f, x, a, b)',
   '  differential equations and Laplace transforms:  help ode',
+].join('\n');
+HELP.curves = [
+  'PARAMETRIC AND POLAR CURVES, MOTION IN SPACE, LINE INTEGRALS',
+  '  parametric:  paramdiff(x(t), y(t), t, t0)  (dy/dx, d\u00b2y/dx\u00b2, tangent line)   paramlength(x(t), y(t), t, a, b)  or  paramlength([x(t), y(t), z(t)], t, a, b)   paramarea(x(t), y(t), t, a, b)',
+  '  polar:  polararea(r, t, a, b)   polarlength(r, t, a, b)   polarslope(r, t, t0)      e.g. polararea(1 + cos(t), t, 0, 2*pi)    (t stands for the angle \u03b8)',
+  '  coordinates:  topolar(x, y)  torect(r, \u03b8)  tocylindrical(x, y, z)  fromcylindrical(r, \u03b8, z)  tospherical(x, y, z)  fromspherical(\u03c1, \u03c6, \u03b8)',
+  '  motion:  velocity([x(t), y(t), z(t)], t, t0) [acceleration, speed]   curvature([x(t), y(t)], t, t0)  or  curvature(f, x, x0)   tnb([x(t), y(t), z(t)], t, t0)  (T, N, B, curvature, torsion)',
+  '  fields:  lineintegral([P, Q], [x(t), y(t)], t, a, b)  (\u222bF\u00b7dr)   lineintegral(f, [x(t), y(t)], t, a, b)  (\u222bf ds)   potential([P, Q, R])  (conservative? potential function)',
+  '  see also: grad, curl, divergence in  help multivar;  arclength(f, x, a, b)  for y = f(x)',
+].join('\n');
+HELP.numerical = [
+  'NUMERICAL METHODS (the iterations are done in exact fractions while the numbers stay rational)',
+  "  ODE y' = f(x, y):  euler(f, x0, y0, h, xend)   heun(...) [improvedeuler]   rk2(...) [midpointmethod]   rk4(...) [rungekutta]   e.g. euler(x + y, 0, 1, 0.1, 0.5)",
+  '  integrals:  trapezoid(f, a, b, n) [trapezoidrule, trapezoidal]  simpson(f, a, b, n)  midpointrule(f, a, b, n)  leftsum / rightsum(f, a, b, n)  riemann(f, a, b, n, left|right|mid)   (also the exact value, the error and the error bound)',
+  '              trapezoidn(f, a, b, tol)  simpsonn(f, a, b, tol)  midpointn(f, a, b, tol)   smallest n that guarantees an error below tol',
+  '  roots:  bisection(f, a, b, steps)  secant(f, x0, x1, steps)  falseposition(f, a, b, steps)  fixedpoint(g, x0, steps)  newton(f, x, x0, steps)',
+  '  data:  interpolate([0,1,2], [1,3,7], 1.5) [newtoninterp]  polyfit(xs, ys, degree, x0)  spline(xs, ys, x0) [naturalspline]  difftable([1,4,9,16])  numdiff(f, x0, h) [finitedifference]',
 ].join('\n');
 HELP.ode = [
   'DIFFERENTIAL EQUATIONS (write the equation as it is; add initial conditions after a comma or semicolon: y(0) = 1, y\'(0) = 0)',
@@ -12908,12 +12961,17 @@ HELP.stats = [
   '  normalcdf(x)  normalcdf(x, mean, sd)  normalcdf(a, b, mean, sd)  (use oo for infinity)   normalpdf   invnorm(p, mean, sd)   zcrit(95)',
   '  tcdf(t, df) invt(p, df) tcrit(0.95, df)   chi2cdf(x, df) invchi2(p, df)   fcdf(f, d1, d2)   expcdf(rate, x) [exponentialcdf]',
   '  zinterval(mean, sigma, n, 0.95)   tinterval(mean, s, n, 0.95)  or tinterval([data], 0.95)   propinterval(x, n, 0.95)',
+  '  more distributions (pdf / cdf):  unifpdf unifcdf(x, a, b)  exppdf(x, rate) invexp(p, rate)  gammapdf gammacdf(x, shape, scale) invgamma  betapdf betacdf(x, a, b) invbeta  weibullpdf weibullcdf(x, k, lambda)  lognormpdf lognormcdf(x, mu, sigma)  tpdf chi2pdf fpdf  invf(p, d1, d2)  negbinpdf negbincdf(k, r, p)',
+  '  two samples:  ttest2(m1, s1, n1, m2, s2, n2)  or  ttest2([data1], [data2])  (Welch)   ttest2pooled(...)   tinterval2(..., 0.95) tinterval2pooled   pairedt([before], [after])   ztest2(m1, s1, n1, m2, s2, n2)   prop2test(x1, n1, x2, n2)   prop2interval(x1, n1, x2, n2, 0.95)',
+  '  other tests:  anova([g1], [g2], [g3])   corrtest(xs, ys)   vartest(s, n, sigma0)   ftest2(s1, n1, s2, n2)   varinterval(s, n, 0.95)   samplesize(sigma, E, conf)   samplesizeprop(E, conf, p)   clt(mu, sigma, n, x)   binomnormal(n, p, k)',
+  '  descriptive:  outliers(list)  fivenum  mad  skewness  kurtosis  geomean  harmean  rms  cv  wmean([values], [weights])  zscores  percentrank(list, x)  freqtable(list, width)  stemleaf(list)  grouped([midpoints], [freqs])  ranks  spearman(xs, ys)  kendall(xs, ys)',
+  '  regression:  multireg([[x1, x2], ...], [y...], [x1, x2])   expreg  powerreg  logreg (xs, ys, x0)     Markov chains: markov([[0.9,0.1],[0.5,0.5]], 3, [1,0])     coupon(n)',
   '  ztest(mean, mu0, sigma, n)   ttest(mean, s, n, mu0)  or ttest([data], mu0)   proptest(x, n, p0)   chisqtest([[10,20],[30,40]])  or  chisqtest(observed, expected)',
 ].join('\n');
 HELP.geometry = [
   'GEOMETRY',
   '  circle(r) circle(d=10)  sphere(r)  cylinder(r, h)  cone(r, h)  box(l, w, h)  cube(s)  pyramid(B, h)  rectangle(w, h)  square(s)',
-  '  trapezoid(a, b, h)  parallelogram(b, h)  rhombus(p, q)  ellipse(a, b)  sector(r, degrees)  polygon(n, side)  hypotenuse(a, b)  leg(c, a)',
+  '  trapezoid(a, b, h) [trapezium]  parallelogram(b, h)  rhombus(p, q)  ellipse(a, b)  sector(r, degrees)  polygon(n, side)  hypotenuse(a, b)  leg(c, a)',
   '  triangle(a, b, c)  or named parts  triangle(a=3, b=4, C=60)  (sides a b c, angles A B C in degrees; SSS SAS ASA AAS SSA)',
   '  righttriangle(a=3, b=4)   righttriangle(c=10, A=30)',
   '  distance([1,2],[4,6])  midpoint(P, Q)  slope(P, Q)  line(P, Q)  pointlinedistance(x0, y0, a, b, c)  polygonarea([0,0],[4,0],[4,3])  centroid(P, Q, R)',
@@ -12937,7 +12995,7 @@ HELP.plot = [
 ].join('\n');
 const HELP_ALIAS = {
   '': 'index', help: 'index', commands: 'index', all: 'index', topics: 'index', input: 'syntax', notation: 'syntax', solve: 'equations', inequalities: 'equations', systems: 'equations', formulas: 'equations',
-  diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
+  diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', parametric: 'curves', polar: 'curves', motion: 'curves', vectorfields: 'curves', lineintegrals: 'curves', coordinates: 'curves', numerics: 'numerical', numericalmethods: 'numerical', 'numerical methods': 'numerical', euler: 'numerical', rungekutta: 'numerical', quadrature: 'numerical', integration: 'calculus', interpolation: 'numerical', rootfinding: 'numerical', splines: 'numerical', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
   discrete: 'number', counting: 'number', probability: 'stats', statistics: 'stats', geometry: 'geometry', conic: 'geometry', conics: 'geometry', triangles: 'geometry',
   finance: 'units', chemistry: 'units', physics: 'units', conversion: 'units', graph: 'plot', plots: 'plot', plotting: 'plot', graphs: 'plot',
 };
@@ -13138,6 +13196,1917 @@ function tryLinearProgram(text) {
   out.work.push('The optimum of a linear objective lies at a corner point; all corner points were found exactly by solving every pair/triple of constraint boundaries and keeping the feasible ones.');
   return { readAs, out };
 }
+// ======================================================================
+// 17. Numerical methods: Euler / Heun / midpoint / Runge-Kutta for y' = f(x, y), Riemann sums, trapezoid / midpoint /
+//     Simpson rules with error bounds, bisection / secant / false position / fixed point, interpolation, splines,
+//     least-squares polynomial fits, difference tables, numerical derivatives.
+//     Steps are carried out in exact rational arithmetic while every number stays rational, else in doubles.
+// ======================================================================
+const NV_MAXBITS = 600;
+const isQv = (v) => v instanceof Q;
+const toNumV = (v) => (isQv(v) ? v.toNumber() : v);
+const degradeV = (v) => (isQv(v) && bitLen(babs(v.n)) + bitLen(v.d) > NV_MAXBITS ? v.toNumber() : v);
+const vAdd = (a, b) => degradeV(isQv(a) && isQv(b) ? a.add(b) : toNumV(a) + toNumV(b));
+const vSub = (a, b) => degradeV(isQv(a) && isQv(b) ? a.sub(b) : toNumV(a) - toNumV(b));
+const vMul = (a, b) => degradeV(isQv(a) && isQv(b) ? a.mul(b) : toNumV(a) * toNumV(b));
+const vDiv = (a, b) => {
+  if ((isQv(b) && b.isZero()) || b === 0) throw new MathError('division by zero in the iteration');
+  return degradeV(isQv(a) && isQv(b) ? a.div(b) : toNumV(a) / toNumV(b));
+};
+const vNum = (v) => toNumV(v);
+/** A short text for a table cell. */
+function vCell(v) {
+  if (isQv(v) && v.isInt()) return v.toString();
+  const x = vNum(v);
+  return fmtNum(x);
+}
+/** "= p/q (= decimal)" or "\u2248 decimal" for an answer line (the sign is included). */
+function vEq(v) {
+  if (isQv(v)) {
+    const t = v.toString();
+    if (v.isInt()) return '= ' + t;
+    if (t.length <= 24) return '= ' + t + ' (' + approxSym(v.toNumber()) + ' ' + fmtNum(v.toNumber()) + ')';
+  }
+  return '\u2248 ' + fmtNum(vNum(v));
+}
+/** f evaluated at the given variable values: exact when everything is rational and the result is a rational number. */
+function nvValueAt(S, env) {
+  const keys = Object.keys(env);
+  if (keys.every((k) => isQv(env[k]))) {
+    try {
+      const r = simp(subsMany(S, new Map(keys.map((k) => [k, sN(env[k])]))));
+      if (r.k === 'n') return r.q;
+    } catch (e) {
+      if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+    }
+  }
+  const e2 = {};
+  keys.forEach((k) => { e2[k] = vNum(env[k]); });
+  const v = numS(S, e2);
+  if (!isFinite(v)) throw new MathError('the function is not defined (or too large) at ' + keys.map((k) => k + ' = ' + vCell(env[k])).join(', '));
+  return v;
+}
+/** A number argument: a rational when it is one (so decimals and fractions stay exact), else a double (pi, sqrt(2), ...). */
+function valArg(node) {
+  try {
+    return constQ(node);
+  } catch (e) {
+    if (!(e instanceof MathError)) throw e;
+    return numArg(node);
+  }
+}
+function stepsBetween(a, b, h, what) {
+  const span = vSub(b, a);
+  const k = vDiv(span, h);
+  const kn = vNum(k);
+  const r = Math.round(kn);
+  if (!isFinite(kn) || r < 1 || Math.abs(kn - r) > 1e-9) throw new MathError(what + ': (end \u2212 start)/h must be a whole number of steps (here ' + fmtNum(kn) + ')');
+  if (r > 400) throw new MathError('at most 400 steps are supported');
+  return r;
+}
+function listRows(rows, head, tail) {
+  if (rows.length <= head + tail + 1) return rows;
+  return rows.slice(0, head).concat(['\u2026'], rows.slice(rows.length - tail));
+}
+
+// ---- Euler and Runge-Kutta ---------------------------------------------------------------------------------------------------------
+const ODE_METHODS = {
+  euler: { name: "Euler's method", formula: 'y_(n+1) = y_n + h\u00b7f(x_n, y_n)', order: 1 },
+  heun: { name: "improved Euler (Heun's) method", formula: 'y_(n+1) = y_n + h/2\u00b7(f(x_n, y_n) + f(x_n + h, y_n + h\u00b7f(x_n, y_n)))', order: 2 },
+  midpoint: { name: 'the midpoint method', formula: 'y_(n+1) = y_n + h\u00b7f(x_n + h/2, y_n + h/2\u00b7f(x_n, y_n))', order: 2 },
+  rk4: { name: 'the classical Runge\u2013Kutta method (RK4)', formula: 'k1 = f(x, y), k2 = f(x + h/2, y + h\u00b7k1/2), k3 = f(x + h/2, y + h\u00b7k2/2), k4 = f(x + h, y + h\u00b7k3);  y_(n+1) = y_n + h/6\u00b7(k1 + 2k2 + 2k3 + k4)', order: 4 },
+};
+function odeVariables(f) {
+  const vs = Array.from(varsOfS(f));
+  if (vs.length > 2) throw new MathError('f may contain only the independent variable and the unknown function (found ' + vs.sort().join(', ') + ')');
+  let X = 'x';
+  let Y = 'y';
+  if (vs.includes('y')) {
+    Y = 'y';
+    X = vs.find((v) => v !== 'y') || 'x';
+  } else if (vs.length === 2) {
+    X = vs.includes('x') ? 'x' : vs.includes('t') ? 't' : vs[0];
+    Y = vs.find((v) => v !== X);
+  } else if (vs.length === 1) {
+    X = vs[0];
+  }
+  return { X, Y };
+}
+function odeSolver(method) {
+  return (n) => {
+    needArgs(n, 5, 5, 'the right-hand side f(x, y) of y\' = f(x, y), x0, y0, the step h and the x to reach, e.g. ' + n.fn + '(x + y, 0, 1, 0.1, 1)');
+    const f = fromAst(n.args[0]);
+    const { X, Y } = odeVariables(f);
+    const x0 = valArg(n.args[1]);
+    const y0 = valArg(n.args[2]);
+    const h = valArg(n.args[3]);
+    const xe = valArg(n.args[4]);
+    if (vNum(h) === 0) throw new MathError('the step h must not be 0');
+    const steps = stepsBetween(x0, xe, h, n.fn);
+    const F = (x, y) => nvValueAt(f, { [X]: x, [Y]: y });
+    const two = Q1.add(Q1);
+    const half = (v) => vDiv(v, isQv(x0) && isQv(h) ? two : 2);
+    let x = x0;
+    let y = y0;
+    const rows = ['n    ' + X.padEnd(12) + Y + '_n'];
+    rows.push('0    ' + vCell(x).padEnd(12) + vCell(y));
+    for (let i = 1; i <= steps; i++) {
+      let y1;
+      if (method === 'euler') y1 = vAdd(y, vMul(h, F(x, y)));
+      else if (method === 'heun') {
+        const k1 = F(x, y);
+        const k2 = F(vAdd(x, h), vAdd(y, vMul(h, k1)));
+        y1 = vAdd(y, vMul(half(h), vAdd(k1, k2)));
+      } else if (method === 'midpoint') {
+        const k1 = F(x, y);
+        y1 = vAdd(y, vMul(h, F(vAdd(x, half(h)), vAdd(y, vMul(half(h), k1)))));
+      } else {
+        const k1 = F(x, y);
+        const k2 = F(vAdd(x, half(h)), vAdd(y, vMul(half(h), k1)));
+        const k3 = F(vAdd(x, half(h)), vAdd(y, vMul(half(h), k2)));
+        const k4 = F(vAdd(x, h), vAdd(y, vMul(h, k3)));
+        const six = isQv(h) ? new Q(6n) : 6;
+        y1 = vAdd(y, vMul(vDiv(h, six), vAdd(vAdd(k1, vMul(isQv(h) ? two : 2, k2)), vAdd(vMul(isQv(h) ? two : 2, k3), k4))));
+      }
+      x = steps === i ? xe : vAdd(x, h);
+      y = y1;
+      if (!isFinite(vNum(y))) throw new MathError('the values grew beyond the range of numbers (the solution may blow up)');
+      rows.push(String(i).padEnd(5) + vCell(x).padEnd(12) + vCell(y));
+    }
+    const out = newOut();
+    const M = ODE_METHODS[method];
+    out.answer.push(Y + '(' + vCell(xe) + ') ' + vEq(y) + '   (' + steps + ' step' + (steps > 1 ? 's' : '') + ' of ' + M.name + ', h = ' + vCell(h) + ')');
+    out.work.push(M.formula);
+    listRows(rows, 14, 4).forEach((r) => out.work.push(r));
+    if (isQv(y) && !y.isInt()) out.notes.push('The steps were carried out in exact fractions; the decimal is the rounded value.');
+    // compare with the exact solution when the equation can be solved in closed form
+    if (Y === 'y') {
+      try {
+        const res = solveProblem("y' = " + fmtS(f, true).replace(/\*\*/g, '^') + ', y(' + vCell(x0) + ') = ' + vCell(y0));
+        const line = res.out.answer.find((a) => /^y = /.test(a));
+        if (line) {
+          const E = fromAst(parseExpression(line.replace(/^y = /, '')));
+          const ex = numS(E, { [X]: vNum(xe) });
+          if (isFinite(ex)) {
+            out.work.push('Exact solution: y = ' + line.replace(/^y = /, '') + '  gives y(' + vCell(xe) + ') = ' + fmtNum(ex) + ';  error of the approximation = ' + fmtNum(Math.abs(ex - vNum(y))));
+            out.value = { num: vNum(y) };
+          }
+        }
+      } catch (e) {
+        if (!(e instanceof MathError) && !(e instanceof NotAlgebraic) && !(e instanceof RangeError)) throw e;
+      }
+    }
+    if (!out.value) out.value = { num: vNum(y) };
+    return out;
+  };
+}
+defCmd('euler eulermethod', odeSolver('euler'));
+defCmd('heun improvedeuler', odeSolver('heun'));
+defCmd('rk2 midpointmethod', odeSolver('midpoint'));
+defCmd('rk4 rungekutta', odeSolver('rk4'));
+for (const [nm, label] of [['euler', "Euler's method"], ['heun', "Heun's method"], ['rk2', 'the midpoint method'], ['rk4', 'Runge\u2013Kutta (RK4)']]) {
+  COMMANDS[nm].show = (n) => label + " for y' = " + showRaw(n.args[0]) + ', y(' + showRaw(n.args[1]) + ') = ' + showRaw(n.args[2]) + ', h = ' + showRaw(n.args[3]) + ', up to x = ' + showRaw(n.args[4]);
+}
+
+// ---- Riemann sums and quadrature rules ----------------------------------------------------------------------------------------------------
+const RULE_INFO = {
+  trapezoid: { label: 'trapezoid rule T', formula: 'h/2\u00b7(f(x\u2080) + 2f(x\u2081) + \u2026 + 2f(x\u2099\u208b\u2081) + f(x\u2099))', p: 2 },
+  midpoint: { label: 'midpoint rule M', formula: 'h\u00b7(f(m\u2081) + \u2026 + f(m\u2099)) with m\u1d62 the midpoints of the subintervals', p: 2 },
+  simpson: { label: "Simpson's rule S", formula: 'h/3\u00b7(f(x\u2080) + 4f(x\u2081) + 2f(x\u2082) + \u2026 + 4f(x\u2099\u208b\u2081) + f(x\u2099))', p: 4 },
+  left: { label: 'left Riemann sum L', formula: 'h\u00b7(f(x\u2080) + \u2026 + f(x\u2099\u208b\u2081))', p: 1 },
+  right: { label: 'right Riemann sum R', formula: 'h\u00b7(f(x\u2081) + \u2026 + f(x\u2099))', p: 1 },
+};
+function maxAbsDerivative(S, v, order, a, b) {
+  let D = S;
+  for (let k = 0; k < order; k++) D = simp(diffS(D, v));
+  let m = 0;
+  const N = 2000;
+  for (let i = 0; i <= N; i++) {
+    const t = a + ((b - a) * i) / N;
+    const val = Math.abs(evalAt(D, v, t));
+    if (isFinite(val)) m = Math.max(m, val);
+    else return Infinity;
+  }
+  return m;
+}
+function ruleSetup(n, kind) {
+  needArgs(n, 4, 5, 'f, the limits a and b and the number of subintervals n: ' + n.fn + '(x^2, 0, 1, 4)');
+  const S = fromAst(n.args[0]);
+  const v = n.args[4] && n.args[4].t === 'var' ? varOfArg(n.args[4]) : singleVarOf(S);
+  const a = valArg(n.args[1]);
+  const b = valArg(n.args[2]);
+  const nn = Number(intArg(n.args[3]));
+  if (nn < 1 || nn > 2000) throw new MathError('n must be between 1 and 2000');
+  if (kind === 'simpson' && nn % 2) throw new MathError("Simpson's rule needs an even number of subintervals");
+  if (vNum(a) === vNum(b)) throw new MathError('the limits must differ');
+  return { S, v, a, b, nn, aS: simp(fromAst(n.args[1])), bS: simp(fromAst(n.args[2])) };
+}
+function exactIntegral(S, v, a, b, aS, bS) {
+  try {
+    const F = antiderivative(S, v);
+    if (F) {
+      const hi = bS || (isQv(b) ? sN(b) : decimalS(b));
+      const lo = aS || (isQv(a) ? sN(a) : decimalS(a));
+      const val = simp(sSub(subsS(F, v, hi), subsS(F, v, lo)));
+      const num = numS(val, {});
+      if (isFinite(num)) return { S: val, num };
+    }
+  } catch (e) {
+    if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+  }
+  const r = integrateNumeric(S, v, vNum(a), vNum(b));
+  return r.ok ? { S: null, num: r.value } : null;
+}
+function quadRule(kind) {
+  return (n) => {
+    const { S, v, a, b, nn, aS, bS } = ruleSetup(n, kind);
+    const info = RULE_INFO[kind];
+    const nq = isQv(a) && isQv(b) ? new Q(BigInt(nn)) : nn;
+    const h = vDiv(vSub(b, a), nq);
+    const node = (i) => vAdd(a, vMul(h, isQv(h) ? new Q(BigInt(i)) : i));
+    const f = (x) => nvValueAt(S, { [v]: x });
+    let sum = isQv(h) ? Q0 : 0;
+    const rows = ['i    x_i           f(x_i)'];
+    const cell = (i, x, fx, tag) => rows.push(String(i).padEnd(5) + vCell(x).padEnd(14) + vCell(fx) + (tag ? '   ' + tag : ''));
+    let result;
+    if (kind === 'left' || kind === 'right') {
+      for (let i = kind === 'left' ? 0 : 1; i <= (kind === 'left' ? nn - 1 : nn); i++) {
+        const x = node(i);
+        const fx = f(x);
+        sum = vAdd(sum, fx);
+        cell(i, x, fx);
+      }
+      result = vMul(h, sum);
+    } else if (kind === 'midpoint') {
+      const hh = vDiv(h, isQv(h) ? new Q(2n) : 2);
+      for (let i = 0; i < nn; i++) {
+        const x = vAdd(node(i), hh);
+        const fx = f(x);
+        sum = vAdd(sum, fx);
+        cell(i + 1, x, fx, 'midpoint');
+      }
+      result = vMul(h, sum);
+    } else {
+      for (let i = 0; i <= nn; i++) {
+        const x = node(i);
+        const fx = f(x);
+        const w = kind === 'trapezoid' ? (i === 0 || i === nn ? 1 : 2) : i === 0 || i === nn ? 1 : i % 2 ? 4 : 2;
+        sum = vAdd(sum, vMul(isQv(h) ? new Q(BigInt(w)) : w, fx));
+        cell(i, x, fx, 'weight ' + w);
+      }
+      result = vMul(vDiv(h, isQv(h) ? new Q(kind === 'trapezoid' ? 2n : 3n) : kind === 'trapezoid' ? 2 : 3), sum);
+    }
+    const out = newOut();
+    out.answer.push(info.label + '_' + nn + ' ' + vEq(result));
+    out.work.push('h = (b \u2212 a)/n = ' + vCell(h) + ';  ' + info.formula);
+    listRows(rows, 12, 3).forEach((r) => out.work.push(r));
+    const ex = exactIntegral(S, v, a, b, aS, bS);
+    if (ex) {
+      out.work.push('Exact value of the integral: ' + (ex.S && fmtS(ex.S) !== fmtNum(ex.num) ? fmtS(ex.S) + ' \u2248 ' : '') + fmtNum(ex.num) + ';  error of this approximation = ' + fmtNum(Math.abs(ex.num - vNum(result))));
+    }
+    if (info.p > 1) {
+      const K = maxAbsDerivative(S, v, info.p, vNum(a), vNum(b));
+      if (isFinite(K)) {
+        const L = vNum(b) - vNum(a);
+        const bound = kind === 'simpson' ? (K * L ** 5) / (180 * nn ** 4) : kind === 'trapezoid' ? (K * L ** 3) / (12 * nn * nn) : (K * L ** 3) / (24 * nn * nn);
+        out.work.push('Error bound: |E| \u2264 K\u00b7(b \u2212 a)^' + (kind === 'simpson' ? '5/(180n\u2074)' : '3/(' + (kind === 'trapezoid' ? '12' : '24') + 'n\u00b2)') + ' with K = max|f' + (kind === 'simpson' ? '\u2057' : '\u2033') + '| \u2248 ' + fmtNum(K) + ' on [a, b]  \u2192  |E| \u2264 ' + fmtNum(bound));
+      }
+    }
+    out.value = { num: vNum(result) };
+    return out;
+  };
+}
+const trapezoidRule = quadRule('trapezoid');
+const geometryTrapezoid = COMMANDS.trapezoid; // trapezoid(a, b, h) is also the area of the shape: four arguments mean the rule
+const isRuleCall = (n) => n.args.length >= 4;
+const trapezoidBoth = (n) => (isRuleCall(n) ? trapezoidRule(n) : geometryTrapezoid(n));
+trapezoidBoth.show = (n) => (!isRuleCall(n) && geometryTrapezoid.show ? geometryTrapezoid.show(n) : n.fn + '(' + n.args.map(showRaw).join(', ') + ')');
+defCmd('trapezoid', trapezoidBoth, true);
+defCmd('trapezoidal trapezoidrule', trapezoidRule);
+defCmd('simpson simpsonrule', quadRule('simpson'));
+defCmd('midpointrule', quadRule('midpoint'));
+defCmd('leftsum leftriemann', quadRule('left'));
+defCmd('rightsum rightriemann', quadRule('right'));
+defCmd('riemann riemannsum', (n) => {
+  needArgs(n, 4, 4, 'f, a, b and n: riemann(x^2, 0, 2, 4)  (left, right and midpoint sums together)');
+  const outs = ['leftsum', 'rightsum', 'midpointrule'].map((nm) => COMMANDS[nm]({ ...n, fn: nm }));
+  const out = newOut();
+  outs.forEach((o) => out.answer.push(o.answer[0]));
+  outs[0].work.forEach((w) => out.work.push(w));
+  out.notes.push('For the table of one rule alone use leftsum, rightsum or midpointrule.');
+  out.value = outs[1].value;
+  return out;
+});
+function smallestN(kind, nodeArgs) {
+  const { S, v, a, b } = (() => {
+    needArgs(nodeArgs, 4, 4, 'f, a, b and the allowed error: ' + nodeArgs.fn + '(sin(x), 0, pi, 0.001)');
+    const S0 = fromAst(nodeArgs.args[0]);
+    return { S: S0, v: singleVarOf(S0), a: valArg(nodeArgs.args[1]), b: valArg(nodeArgs.args[2]) };
+  })();
+  const tol = numArg(nodeArgs.args[3]);
+  if (!(tol > 0)) throw new MathError('the allowed error must be positive');
+  const info = RULE_INFO[kind];
+  const lo = vNum(a);
+  const hi = vNum(b);
+  const K = maxAbsDerivative(S, v, info.p, lo, hi);
+  if (!isFinite(K)) throw new MathError('the derivative is unbounded on [a, b]');
+  const L = hi - lo;
+  let need;
+  if (kind === 'simpson') need = Math.ceil(((K * L ** 5) / (180 * tol)) ** 0.25);
+  else need = Math.ceil(Math.sqrt((K * L ** 3) / ((kind === 'trapezoid' ? 12 : 24) * tol)));
+  if (kind === 'simpson' && need % 2) need++;
+  need = Math.max(need, kind === 'simpson' ? 2 : 1);
+  const out = newOut();
+  out.answer.push('n = ' + need + '  (smallest n guaranteed by the error bound for the ' + info.label.replace(/ [A-Z]$/, '') + ')');
+  out.work.push('K = max|f' + (kind === 'simpson' ? '\u2057' : '\u2033') + '| \u2248 ' + fmtNum(K) + ' on [' + fmtNum(lo) + ', ' + fmtNum(hi) + ']');
+  out.work.push(kind === 'simpson' ? '|E| \u2264 K(b \u2212 a)\u2075/(180n\u2074) < ' + fmtNum(tol) : '|E| \u2264 K(b \u2212 a)\u00b3/(' + (kind === 'trapezoid' ? '12' : '24') + 'n\u00b2) < ' + fmtNum(tol));
+  out.value = { q: qInt(need) };
+  return out;
+}
+defCmd('trapezoidn ntrapezoid', (n) => smallestN('trapezoid', n));
+defCmd('simpsonn nsimpson', (n) => smallestN('simpson', n));
+defCmd('midpointn nmidpoint', (n) => smallestN('midpoint', n));
+
+// ---- root finding ------------------------------------------------------------------------------------------------------------------------------
+function rootFn(n, argIdx) {
+  const S = fromAst(n.args[0]);
+  const v = singleVarOf(S);
+  return { S, v, f: (x) => evalAt(S, v, x) };
+}
+defCmd('bisection bisect', (n) => {
+  needArgs(n, 3, 4, 'f, the endpoints a and b and optionally the number of steps (or a tolerance below 1): bisection(x^3 - x - 2, 1, 2, 10)');
+  const { S, v, f } = rootFn(n);
+  let a = numArg(n.args[1]);
+  let b = numArg(n.args[2]);
+  const lim = n.args[3] ? numArg(n.args[3]) : 1e-6;
+  const maxIt = lim >= 1 ? Math.min(100, Math.floor(lim)) : 60;
+  const tol = lim >= 1 ? 0 : lim;
+  if (a > b) [a, b] = [b, a];
+  let fa = f(a);
+  const fb = f(b);
+  if (!isFinite(fa) || !isFinite(fb)) throw new MathError('f is not defined at an endpoint');
+  if (fa * fb > 0) throw new MathError('f(a) and f(b) have the same sign, so bisection cannot start (f(' + fmtNum(a) + ') = ' + fmtNum(fa) + ', f(' + fmtNum(b) + ') = ' + fmtNum(fb) + ')');
+  const rows = ['n    a              b              c = (a + b)/2   f(c)'];
+  let c = a;
+  let it = 0;
+  for (; it < maxIt; it++) {
+    c = (a + b) / 2;
+    const fc = f(c);
+    rows.push(String(it + 1).padEnd(5) + fmtNum(a).padEnd(15) + fmtNum(b).padEnd(15) + fmtNum(c).padEnd(16) + fmtNum(fc));
+    if (fc === 0) break;
+    if (fa * fc < 0) b = c;
+    else {
+      a = c;
+      fa = fc;
+    }
+    if (tol && (b - a) / 2 < tol) {
+      it++;
+      break;
+    }
+  }
+  const out = newOut();
+  out.answer.push('x \u2248 ' + fmtNum(c) + '   (c' + it + ' after ' + it + ' step' + (it === 1 ? '' : 's') + '; the root lies in [' + fmtNum(a) + ', ' + fmtNum(b) + '], so the error is at most ' + fmtNum((b - a) / 2) + ')');
+  listRows(rows, 14, 4).forEach((r) => out.work.push(r));
+  out.work.push('Each step halves the interval; after n steps the error is at most (b \u2212 a)/2\u207f.');
+  out.value = { num: c };
+  return out;
+});
+defCmd('secant secantmethod', (n) => {
+  needArgs(n, 3, 4, 'f, two starting values and optionally the number of steps: secant(x^2 - 2, 1, 2, 6)');
+  const { f } = rootFn(n);
+  let x0 = numArg(n.args[1]);
+  let x1 = numArg(n.args[2]);
+  const steps = n.args[3] ? Math.min(40, Number(intArg(n.args[3]))) : 8;
+  const rows = ['n    x_n              f(x_n)'];
+  rows.push('0    ' + fmtNum(x0).padEnd(17) + fmtNum(f(x0)));
+  rows.push('1    ' + fmtNum(x1).padEnd(17) + fmtNum(f(x1)));
+  for (let k = 2; k <= steps + 1; k++) {
+    const f0 = f(x0);
+    const f1 = f(x1);
+    if (f1 === f0) break;
+    const x2 = x1 - (f1 * (x1 - x0)) / (f1 - f0);
+    if (!isFinite(x2)) throw new MathError('the iteration left the domain of f');
+    x0 = x1;
+    x1 = x2;
+    rows.push(String(k).padEnd(5) + fmtNum(x1).padEnd(17) + fmtNum(f(x1)));
+    if (Math.abs(f(x1)) < 1e-14) break;
+  }
+  const out = newOut();
+  out.answer.push('x \u2248 ' + fmtNum(x1));
+  out.work.push('x_(n+1) = x_n \u2212 f(x_n)(x_n \u2212 x_(n\u22121))/(f(x_n) \u2212 f(x_(n\u22121)))');
+  rows.forEach((r) => out.work.push(r));
+  out.value = { num: x1 };
+  return out;
+});
+defCmd('falseposition regulafalsi', (n) => {
+  needArgs(n, 3, 4, 'f, the endpoints a and b and optionally the number of steps: falseposition(x^3 - 2, 1, 2, 6)');
+  const { f } = rootFn(n);
+  let a = numArg(n.args[1]);
+  let b = numArg(n.args[2]);
+  const steps = n.args[3] ? Math.min(60, Number(intArg(n.args[3]))) : 8;
+  let fa = f(a);
+  let fb = f(b);
+  if (fa * fb > 0) throw new MathError('f(a) and f(b) must have opposite signs');
+  const rows = ['n    a              b              c               f(c)'];
+  let c = a;
+  for (let k = 1; k <= steps; k++) {
+    c = (a * fb - b * fa) / (fb - fa);
+    const fc = f(c);
+    rows.push(String(k).padEnd(5) + fmtNum(a).padEnd(15) + fmtNum(b).padEnd(15) + fmtNum(c).padEnd(16) + fmtNum(fc));
+    if (fc === 0) break;
+    if (fa * fc < 0) {
+      b = c;
+      fb = fc;
+    } else {
+      a = c;
+      fa = fc;
+    }
+  }
+  const out = newOut();
+  out.answer.push('x \u2248 ' + fmtNum(c));
+  out.work.push('c = (a\u00b7f(b) \u2212 b\u00b7f(a))/(f(b) \u2212 f(a));  the sign of f(c) decides which endpoint is replaced');
+  rows.forEach((r) => out.work.push(r));
+  out.value = { num: c };
+  return out;
+});
+defCmd('fixedpoint fixedpointiteration', (n) => {
+  needArgs(n, 2, 3, 'g, a starting value and optionally the number of steps: fixedpoint(cos(x), 1, 10)');
+  const S = fromAst(n.args[0]);
+  const v = singleVarOf(S);
+  let x = numArg(n.args[1]);
+  const steps = n.args[2] ? Math.min(60, Number(intArg(n.args[2]))) : 12;
+  const rows = ['n    x_n              g(x_n)'];
+  let converged = false;
+  for (let k = 0; k <= steps; k++) {
+    const gx = evalAt(S, v, x);
+    rows.push(String(k).padEnd(5) + fmtNum(x).padEnd(17) + fmtNum(gx));
+    if (!isFinite(gx)) throw new MathError('the iteration left the domain of g');
+    if (Math.abs(gx - x) < 1e-12) {
+      converged = true;
+      x = gx;
+      break;
+    }
+    x = gx;
+    if (Math.abs(x) > 1e12) throw new MathError('the iteration diverges');
+  }
+  const out = newOut();
+  out.answer.push('x \u2248 ' + fmtNum(x) + (converged ? '  (converged: x = g(x))' : '  (after ' + steps + ' steps)'));
+  out.work.push('x_(n+1) = g(x_n);  g\'(x) = ' + fmtS(simp(diffS(S, v))));
+  rows.forEach((r) => out.work.push(r));
+  const slope = Math.abs(evalAt(simp(diffS(S, v)), v, x));
+  if (isFinite(slope)) out.notes.push('|g\'(x)| at the fixed point is ' + fmtNum(slope) + (slope < 1 ? ' < 1, so the iteration converges there.' : ' \u2265 1, so the iteration is not attracted to this point.'));
+  out.value = { num: x };
+  return out;
+});
+
+// ---- interpolation, splines, least squares, difference tables ----------------------------------------------------------------------------------
+function pointLists(n, from) {
+  const take = (node) => {
+    if (node.t !== 'list') throw new MathError('a list such as [1, 2, 3] is needed here');
+    return node.items.map(constQ);
+  };
+  const xs = take(n.args[from]);
+  const ys = take(n.args[from + 1]);
+  if (xs.length !== ys.length) throw new MathError('the two lists must have the same length');
+  if (xs.length < 2) throw new MathError('at least two points are needed');
+  if (xs.length > 25) throw new MathError('at most 25 points are supported');
+  return { xs, ys };
+}
+function polyMulLinear(p, root) {
+  // p(x) * (x - root)
+  const r = new Array(p.length + 1).fill(Q0);
+  p.forEach((c, i) => {
+    r[i + 1] = r[i + 1].add(c);
+    r[i] = r[i].sub(c.mul(root));
+  });
+  return r;
+}
+defCmd('interpolate lagrange_interp interpolation newtoninterp', (n) => {
+  needArgs(n, 2, 3, 'the x-values, the y-values and optionally a point: interpolate([0, 1, 2], [1, 3, 7], 1.5)');
+  const { xs, ys } = pointLists(n, 0);
+  for (let i = 0; i < xs.length; i++) for (let j = i + 1; j < xs.length; j++) if (xs[i].eq(xs[j])) throw new MathError('the x-values must be different');
+  const m = xs.length;
+  // Newton divided differences
+  const table = [ys.slice()];
+  for (let k = 1; k < m; k++) {
+    const prev = table[k - 1];
+    table.push(prev.slice(0, m - k).map((_, i) => prev[i + 1].sub(prev[i]).div(xs[i + k].sub(xs[i]))));
+  }
+  const coef = table.map((col) => col[0]);
+  // expand the Newton form
+  let basis = [Q1];
+  let poly = [Q0];
+  coef.forEach((c, k) => {
+    poly = padd(poly, basis.map((b) => b.mul(c)));
+    if (k < m - 1) basis = polyMulLinear(basis, xs[k]);
+  });
+  poly = ptrim(poly);
+  const out = newOut();
+  out.answer.push('P(x) = ' + polyText(poly, 'x') + '   (the polynomial of degree \u2264 ' + (m - 1) + ' through the ' + m + ' points)');
+  const newtonTerms = coef.map((c, k) => (k === 0 ? c.toString() : '(' + c.toString() + ')' + xs.slice(0, k).map((xk) => '(x ' + (xk.sign() < 0 ? '+ ' + xk.abs().toString() : xk.isZero() ? '' : '- ' + xk.toString()) + ')').join('').replace('(x )', 'x')));
+  out.work.push('Newton form: P(x) = ' + newtonTerms.join(' + '));
+  out.work.push('Divided differences f[x\u2080], f[x\u2080,x\u2081], \u2026 : ' + coef.map((c) => c.toString()).join(',  '));
+  if (n.args[2]) {
+    const x0 = constQ(n.args[2]);
+    const val = peval(poly, x0);
+    out.answer.push('P(' + x0.toString() + ') = ' + qText(val));
+    out.value = { q: val };
+  } else out.value = { S: polyToS(poly, 'x') };
+  const ok = xs.every((xv, i) => peval(poly, xv).eq(ys[i]));
+  out.check = ok ? 'P(x\u1d62) = y\u1d62 at every given point' : null;
+  return out;
+});
+defCmd('polyfit polynomialfit leastsquarespoly', (n) => {
+  needArgs(n, 3, 4, 'the x-values, the y-values, the degree and optionally a point: polyfit([0,1,2,3], [1,2,5,10], 2)');
+  const { xs, ys } = pointLists(n, 0);
+  const deg = Number(intArg(n.args[2]));
+  if (deg < 0 || deg > 8 || deg >= xs.length) throw new MathError('the degree must be between 0 and ' + Math.min(8, xs.length - 1));
+  const size = deg + 1;
+  const A = [];
+  const b = [];
+  for (let i = 0; i < size; i++) {
+    A.push([]);
+    for (let j = 0; j < size; j++) A[i].push(xs.reduce((s, x) => s.add(x.pow(i + j)), Q0));
+    b.push(xs.reduce((s, x, k) => s.add(ys[k].mul(x.pow(i))), Q0));
+  }
+  const c = solveSquare(A, b);
+  if (!c) throw new MathError('the normal equations are singular (not enough different x-values for this degree)');
+  const resid = ys.map((y, k) => y.sub(peval(c, xs[k])));
+  const sse = resid.reduce((s, r) => s.add(r.mul(r)), Q0);
+  const mean = ys.reduce((s, y) => s.add(y), Q0).div(new Q(BigInt(ys.length)));
+  const sst = ys.reduce((s, y) => s.add(y.sub(mean).mul(y.sub(mean))), Q0);
+  const out = newOut();
+  out.answer.push('y = ' + polyText(c, 'x'));
+  out.work.push('Normal equations (V\u1d40V)c = V\u1d40y with V the Vandermonde matrix, solved exactly');
+  out.work.push('sum of squared residuals = ' + qText(sse) + (sst.isZero() ? '' : ';  R\u00b2 = ' + qText(Q1.sub(sse.div(sst)))));
+  if (n.args[3]) {
+    const x0 = constQ(n.args[3]);
+    out.answer.push('y(' + x0.toString() + ') \u2248 ' + qText(peval(c, x0)));
+  }
+  out.value = { S: polyToS(c, 'x') };
+  return out;
+});
+defCmd('difftable differences finitedifferences', (n) => {
+  needArgs(n, 1, 1, 'a list of values: difftable([1, 4, 9, 16, 25])');
+  if (n.args[0].t !== 'list') throw new MathError('a list such as [1, 4, 9, 16] is needed');
+  let row = n.args[0].items.map(constQ);
+  if (row.length < 2 || row.length > 25) throw new MathError('give between 2 and 25 values');
+  const out = newOut();
+  const rows = [row.map((q) => q.toString()).join(', ')];
+  let order = 0;
+  while (row.length > 1) {
+    row = row.slice(1).map((v, i) => v.sub(row[i]));
+    order++;
+    rows.push(row.map((q) => q.toString()).join(', '));
+    if (row.every((q) => q.eq(row[0]))) break;
+  }
+  const constant = row.length > 0 && row.every((q) => q.eq(row[0]));
+  out.answer.push(constant && row.length > 1 ? 'the differences of order ' + order + ' are constant (' + row[0].toString() + '): the values follow a polynomial of degree ' + order : 'no constant difference was reached with these ' + rows[0].split(',').length + ' values');
+  rows.forEach((r, i) => out.work.push((i === 0 ? 'values: ' : '\u0394' + (i > 1 ? toSup(String(i)) : '') + ':  ') + r));
+  return out;
+});
+defCmd('spline cubicspline naturalspline', (n) => {
+  needArgs(n, 2, 3, 'the x-values, the y-values and optionally a point: spline([0,1,2,3], [1,2,0,2], 1.5)');
+  const { xs, ys } = pointLists(n, 0);
+  const m = xs.length;
+  for (let i = 1; i < m; i++) if (xs[i].sub(xs[i - 1]).sign() <= 0) throw new MathError('the x-values must be strictly increasing');
+  if (m < 3) throw new MathError('a cubic spline needs at least three points');
+  const h = xs.slice(1).map((x, i) => x.sub(xs[i]));
+  // second derivatives M_i, natural ends M_0 = M_(m-1) = 0
+  const interior = m - 2;
+  const A = [];
+  const rhs = [];
+  for (let i = 1; i <= interior; i++) {
+    const row = new Array(interior).fill(Q0);
+    if (i > 1) row[i - 2] = h[i - 1];
+    row[i - 1] = h[i - 1].add(h[i]).mul(new Q(2n));
+    if (i < interior) row[i] = h[i];
+    A.push(row);
+    rhs.push(ys[i + 1].sub(ys[i]).div(h[i]).sub(ys[i].sub(ys[i - 1]).div(h[i - 1])).mul(new Q(6n)));
+  }
+  const Mint = solveSquare(A, rhs);
+  if (!Mint) throw new MathError('the spline system is singular');
+  const M = [Q0].concat(Mint, [Q0]);
+  const out = newOut();
+  const shiftText = (x) => (x.isZero() ? 'x' : '(x ' + (x.sign() < 0 ? '+ ' + x.abs().toString() : '- ' + x.toString()) + ')');
+  const pieces = [];
+  for (let i = 0; i < m - 1; i++) {
+    const a = ys[i];
+    const b = ys[i + 1].sub(ys[i]).div(h[i]).sub(h[i].mul(M[i + 1].add(M[i].mul(new Q(2n)))).div(new Q(6n)));
+    const c = M[i].div(new Q(2n));
+    const d = M[i + 1].sub(M[i]).div(h[i].mul(new Q(6n)));
+    pieces.push({ a, b, c, d, x0: xs[i], x1: xs[i + 1] });
+    const t = shiftText(xs[i]);
+    const parts = [a.isZero() ? '' : a.toString()];
+    [[b, t], [c, t + '\u00b2'], [d, t + '\u00b3']].forEach(([co, tx]) => {
+      if (!co.isZero()) parts.push((co.eq(Q1) ? '' : co.eq(qInt(-1)) ? '-' : '(' + co.toString() + ')') + tx);
+    });
+    out.answer.push('S' + (i + 1) + '(x) = ' + (parts.filter(Boolean).join(' + ').replace(/\+ -/g, '- ') || '0') + '    for ' + xs[i].toString() + ' \u2264 x \u2264 ' + xs[i + 1].toString());
+  }
+  out.work.push('Natural cubic spline: continuous with continuous first and second derivatives, and S\u2033 = 0 at both ends');
+  if (n.args[2]) {
+    const x0 = constQ(n.args[2]);
+    const p = pieces.find((pc) => x0.sub(pc.x0).sign() >= 0 && pc.x1.sub(x0).sign() >= 0);
+    if (!p) throw new MathError('the point lies outside the data range');
+    const t = x0.sub(p.x0);
+    const val = p.a.add(p.b.mul(t)).add(p.c.mul(t.mul(t))).add(p.d.mul(t.mul(t).mul(t)));
+    out.answer.push('S(' + x0.toString() + ') = ' + qText(val));
+    out.value = { q: val };
+  }
+  return out;
+});
+defCmd('numdiff numericaldifferentiation finitedifference', (n) => {
+  needArgs(n, 2, 3, 'f, the point and optionally the step h: numdiff(sin(x), 1, 0.1)');
+  const S = fromAst(n.args[0]);
+  const v = singleVarOf(S);
+  const x0 = numArg(n.args[1]);
+  const h = n.args[2] ? numArg(n.args[2]) : 0.1;
+  if (!(h > 0)) throw new MathError('the step h must be positive');
+  const f = (x) => evalAt(S, v, x);
+  const exact = evalAt(simp(diffS(S, v)), v, x0);
+  const fwd = (f(x0 + h) - f(x0)) / h;
+  const bwd = (f(x0) - f(x0 - h)) / h;
+  const ctr = (f(x0 + h) - f(x0 - h)) / (2 * h);
+  const five = (-f(x0 + 2 * h) + 8 * f(x0 + h) - 8 * f(x0 - h) + f(x0 - 2 * h)) / (12 * h);
+  const second = (f(x0 + h) - 2 * f(x0) + f(x0 - h)) / (h * h);
+  const exact2 = evalAt(simp(diffS(diffS(S, v), v)), v, x0);
+  const out = newOut();
+  out.answer.push("central difference: f'(" + fmtNum(x0) + ') \u2248 ' + fmtNum(ctr) + '   (exact ' + fmtNum(exact) + ', error ' + fmtNum(Math.abs(ctr - exact)) + ')');
+  out.work.push('forward  (f(x+h) \u2212 f(x))/h = ' + fmtNum(fwd) + ',  error ' + fmtNum(Math.abs(fwd - exact)));
+  out.work.push('backward (f(x) \u2212 f(x\u2212h))/h = ' + fmtNum(bwd) + ',  error ' + fmtNum(Math.abs(bwd - exact)));
+  out.work.push('central  (f(x+h) \u2212 f(x\u2212h))/(2h) = ' + fmtNum(ctr) + ',  error ' + fmtNum(Math.abs(ctr - exact)));
+  out.work.push('five-point  (\u2212f(x+2h) + 8f(x+h) \u2212 8f(x\u2212h) + f(x\u22122h))/(12h) = ' + fmtNum(five) + ',  error ' + fmtNum(Math.abs(five - exact)));
+  out.work.push("second derivative (f(x+h) \u2212 2f(x) + f(x\u2212h))/h\u00b2 = " + fmtNum(second) + ' (exact ' + fmtNum(exact2) + ')');
+  out.value = { num: ctr };
+  return out;
+});
+// ======================================================================
+// 18. Curves and vector calculus: parametric and polar curves (slope, arc length, area), coordinate systems, velocity,
+//     acceleration, curvature, the TNB frame, torsion, line integrals and potential functions.
+// ======================================================================
+const trigTidy = (e) => {
+  const x = simp(expandS(e));
+  try {
+    return simp(simplifyTrigS(x));
+  } catch (err) {
+    return x;
+  }
+};
+const vecText = (u) => '[' + u.map((c) => fmtS(simp(c))).join(', ') + ']';
+const vDotS = (u, v) => simp(sAdd(u.map((a, i) => sMul([a, v[i]]))));
+const vCrossS = (u, v) => [
+  simp(sSub(sMul([u[1], v[2]]), sMul([u[2], v[1]]))),
+  simp(sSub(sMul([u[2], v[0]]), sMul([u[0], v[2]]))),
+  simp(sSub(sMul([u[0], v[1]]), sMul([u[1], v[0]]))),
+];
+const vDiffS = (u, t) => u.map((a) => simp(diffS(a, t)));
+const pad3 = (u) => (u.length === 2 ? u.concat([S0]) : u);
+function curveOf(node, what) {
+  if (node.t !== 'list' || node.items.length < 2 || node.items.length > 3) throw new MathError(what + ' needs a curve written as [x(t), y(t)] or [x(t), y(t), z(t)]');
+  return node.items.map((it) => fromAst(it));
+}
+function paramVar(comps, hintNode) {
+  if (hintNode && hintNode.t === 'var') return hintNode.name;
+  const vs = new Set();
+  comps.forEach((c) => varsOfS(c).forEach((x) => vs.add(x)));
+  if (vs.size === 1) return Array.from(vs)[0];
+  if (!vs.size) return 't';
+  throw new MathError('say which letter is the parameter (found ' + Array.from(vs).sort().join(', ') + ')');
+}
+/** sqrt of a sum of squares, with perfect-square factors taken out:  sqrt(4t\u00b2 + 9t\u2074) = |t|\u00b7sqrt(4 + 9t\u00b2),  sqrt(2 + 2cos t) = 2|cos(t/2)|. */
+function sqrtParts(R, v) {
+  let e = simp(expandS(R));
+  try {
+    e = simplifyTrigS(e);
+  } catch (err) {
+    // keep the expanded form
+  }
+  e = simp(e);
+  const c = v ? polyCoeffsS(e, v) : null;
+  if (c && c.length > 1 && c.every((k) => k.k === 'n')) {
+    const fp = factorPolyQ(c.map((k) => k.q));
+    let outside = [];
+    let inside = [];
+    fp.factors.forEach(({ ints, mult }) => {
+      const P = polyToS(intsToPoly(ints), v);
+      if (mult >= 2) outside.push(sPow(P, sI(Math.floor(mult / 2))));
+      if (mult % 2) inside.push(P);
+    });
+    if (outside.length) return { outside: simp(sMul(outside)), inside: simp(sMul([sN(fp.content)].concat(inside))) };
+  }
+  // half-angle:  A + A cos u = 2A cos\u00b2(u/2),  A \u2212 A cos u = 2A sin\u00b2(u/2)
+  const terms = termsOf(e);
+  if (terms.length === 2) {
+    const [c0, c1] = terms.map((tm) => splitCoef(tm));
+    const cosT = [c0, c1].find(([, rest]) => rest && rest.k === 'f' && rest.fn === 'cos');
+    const cnst = [c0, c1].find(([, rest]) => rest && rest.k === 'n' && rest.q.eq(Q1));
+    const constPart = terms.find((tm) => tm.k === 'n');
+    const cosTerm = terms.find((tm) => tm !== constPart);
+    if (constPart && cosTerm) {
+      const [cc, rest] = splitCoef(cosTerm);
+      if (rest && rest.k === 'f' && rest.fn === 'cos' && constPart.q.abs().eq(cc.abs())) {
+        const half = sMul([sN(new Q(1n, 2n)), rest.a[0]]);
+        const A = constPart.q;
+        const same = A.sign() === cc.sign();
+        void cosT;
+        void cnst;
+        return { outside: simp(sFn(same ? 'cos' : 'sin', [half])), inside: simp(sN(A.mul(new Q(2n)).abs())) };
+      }
+    }
+  }
+  return { outside: null, inside: e };
+}
+/** Numeric sign changes of f on [a, b] (zeros of the factor taken out of a square root). */
+function signChangePoints(f, a, b) {
+  const N = 800;
+  const pts = [];
+  let xp = a;
+  let fp = f(a);
+  for (let i = 1; i <= N; i++) {
+    const x = a + ((b - a) * i) / N;
+    const fx = f(x);
+    if (isFinite(fp) && isFinite(fx) && fp * fx < 0) {
+      let lo = xp;
+      let hi = x;
+      const sl = Math.sign(fp);
+      for (let it = 0; it < 100; it++) {
+        const m = (lo + hi) / 2;
+        if (Math.sign(f(m)) === sl) lo = m;
+        else hi = m;
+      }
+      pts.push((lo + hi) / 2);
+    }
+    xp = x;
+    fp = fx;
+  }
+  return pts;
+}
+const cutS = (x) => {
+  const fr = toFraction(x / Math.PI, 720);
+  if (fr && Math.abs(fr.p / fr.q - x / Math.PI) < 1e-12) return simp(sMul([sN(new Q(BigInt(fr.p), BigInt(fr.q))), S_PI]));
+  return decimalOrExact(x);
+};
+/** The definite integral of sqrt(R) over [lo, hi], splitting where the factor taken out of the root changes sign. */
+function sqrtIntegral(R, v, lo, hi) {
+  const { outside, inside } = sqrtParts(R, v);
+  if (lo.inf || hi.inf) return integralValue(sSqrt(outside ? simp(sMul([sq(outside), inside])) : inside), v, lo, hi);
+  const a = numS(lo.S, {});
+  const b = numS(hi.S, {});
+  if (!outside) {
+    // no closed form for the root: cut at the zeros of the radicand (kinks of the root) so that the numerical method converges
+    const quick = integralValue(sSqrt(inside), v, lo, hi);
+    if (!quick.failed) return quick;
+    const g = (x) => evalAt(inside, v, x);
+    const N = 1000;
+    const kinks = [];
+    for (let i = 1; i < N; i++) {
+      const x = a + ((b - a) * i) / N;
+      if (g(x) < 1e-3 * Math.max(...[0, 0.25, 0.5, 0.75, 1].map((q) => Math.abs(g(a + (b - a) * q)))) && g(x) <= g(x - (b - a) / N) && g(x) <= g(x + (b - a) / N)) {
+        let l = x - (b - a) / N;
+        let h = x + (b - a) / N;
+        for (let it = 0; it < 80; it++) {
+          const m1 = l + (h - l) / 3;
+          const m2 = h - (h - l) / 3;
+          if (g(m1) < g(m2)) h = m2;
+          else l = m1;
+        }
+        kinks.push((l + h) / 2);
+      }
+    }
+    const pts = [a].concat(kinks, [b]);
+    let total = 0;
+    for (let i = 0; i + 1 < pts.length; i++) {
+      const piece = integralValue(sSqrt(inside), v, { S: cutS(pts[i]) }, { S: cutS(pts[i + 1]) });
+      if (piece.diverges || piece.failed) return piece;
+      total += piece.num;
+    }
+    return { num: total };
+  }
+  let cuts = [];
+  const oc = polyCoeffsS(outside, v);
+  if (oc && oc.every((k) => k.k === 'n')) cuts = polyRoots(oc.map((k) => k.q)).real.map((r) => r.val).filter((r) => r > a + 1e-9 && r < b - 1e-9).sort((p, q) => p - q);
+  else cuts = signChangePoints((x) => evalAt(outside, v, x), a, b);
+  const points = [{ S: lo.S, val: a }].concat(cuts.map((r) => ({ S: cutS(r), val: r })), [{ S: hi.S, val: b }]);
+  let total = S0;
+  let numTotal = 0;
+  let exact = true;
+  for (let i = 0; i + 1 < points.length; i++) {
+    const mid = (points[i].val + points[i + 1].val) / 2;
+    const sign = evalAt(outside, v, mid) < 0 ? -1 : 1;
+    const piece = integralValue(simp(sMul([sN(qInt(sign)), outside, sSqrt(inside)])), v, { S: points[i].S }, { S: points[i + 1].S });
+    if (piece.diverges || piece.failed) return piece;
+    if (piece.S) total = sAdd([total, piece.S]);
+    else exact = false;
+    numTotal += piece.num;
+  }
+  return exact ? { S: simp(total), num: numTotal } : { num: numTotal };
+}
+function outLineFor(label, r, out) {
+  out.answer.push(integralLine(label, r));
+  if (r.S) out.value = { S: r.S };
+  else if (r.num !== undefined) out.value = { num: r.num };
+}
+
+// ---- parametric curves ---------------------------------------------------------------------------------------------------------------------------------------
+defCmd('paramdiff parametricdiff dydxparam', (n) => {
+  needArgs(n, 3, 4, 'x(t), y(t), the parameter and optionally a value t0: paramdiff(t^2, t^3, t, 2)');
+  const xs = fromAst(n.args[0]);
+  const ys = fromAst(n.args[1]);
+  const t = paramVar([xs, ys], n.args[2]);
+  const dx = simp(diffS(xs, t));
+  const dy = simp(diffS(ys, t));
+  if (isNumVal(dx, 0)) throw new MathError('dx/d' + t + ' is 0, so the curve is a vertical line');
+  const slope = simp(sDiv(dy, dx));
+  const second = simp(sDiv(simp(diffS(slope, t)), dx));
+  const out = newOut();
+  out.answer.push('dy/dx = (dy/d' + t + ')/(dx/d' + t + ') = ' + fmtS(slope));
+  out.answer.push('d\u00b2y/dx\u00b2 = (d/d' + t + ' (dy/dx))/(dx/d' + t + ') = ' + fmtS(second));
+  out.work.push('dx/d' + t + ' = ' + fmtS(dx) + ',  dy/d' + t + ' = ' + fmtS(dy));
+  if (n.args[3]) {
+    const t0 = geoVal(n.args[3]);
+    const at = (e) => simp(subsS(e, t, t0));
+    const px = at(xs);
+    const py = at(ys);
+    const dxv = at(dx);
+    if (isNumVal(dxv, 0)) {
+      out.answer.push('at ' + t + ' = ' + fmtS(t0) + ': the point is (' + fmtS(px) + ', ' + fmtS(py) + ') and the tangent is vertical (dx/d' + t + ' = 0)');
+    } else {
+      const m = at(slope);
+      out.answer.push('at ' + t + ' = ' + fmtS(t0) + ': the point is (' + fmtS(px) + ', ' + fmtS(py) + '), slope = ' + symText(m) + ', d\u00b2y/dx\u00b2 = ' + symText(at(second)));
+      if (m.k === 'n') out.answer.push('tangent line: y = ' + fmtS(simp(expandS(sAdd([sMul([m, sV('x')]), sSub(py, sMul([m, px]))])))));
+    }
+  }
+  // horizontal and vertical tangents
+  const zero = (e) => {
+    const c = polyCoeffsS(e, t);
+    if (!c || !c.every((k) => k.k === 'n') || c.length < 2) return null;
+    return polyRoots(c.map((k) => k.q)).real.map((r) => r.text || fmtNum(r.val));
+  };
+  const hz = zero(dy);
+  const vt = zero(dx);
+  if (hz && hz.length) out.work.push('horizontal tangents where d' + 'y/d' + t + ' = 0:  ' + t + ' = ' + hz.join(', '));
+  if (vt && vt.length) out.work.push('vertical tangents where dx/d' + t + ' = 0:  ' + t + ' = ' + vt.join(', '));
+  out.value = { S: slope };
+  return out;
+});
+COMMANDS.paramdiff.show = (n) => 'parametric curve x = ' + showRaw(n.args[0]) + ', y = ' + showRaw(n.args[1]) + (n.args[3] ? ', at ' + showRaw(n.args[2]) + ' = ' + showRaw(n.args[3]) : '');
+
+function curveArgs(n, what, usage) {
+  // (x, y, t, a, b) or ([x, y(, z)], t, a, b)
+  needArgs(n, 4, 5, usage);
+  if (n.args[0].t === 'list') {
+    needArgs(n, 4, 4, usage);
+    return { comps: curveOf(n.args[0], what), t: paramVar(curveOf(n.args[0], what), n.args[1]), a: bnd(n.args[2]), b: bnd(n.args[3]) };
+  }
+  needArgs(n, 5, 5, usage);
+  const comps = [fromAst(n.args[0]), fromAst(n.args[1])];
+  return { comps, t: paramVar(comps, n.args[2]), a: bnd(n.args[3]), b: bnd(n.args[4]) };
+}
+defCmd('paramlength curvelength parametriclength', (n) => {
+  const { comps, t, a, b } = curveArgs(n, 'the curve length', 'x(t), y(t), t, a, b  (or [x(t), y(t), z(t)], t, a, b): paramlength(cos(t), sin(t), t, 0, 2*pi)');
+  const d = vDiffS(comps, t);
+  const R = simp(sAdd(d.map(sq)));
+  const out = newOut();
+  out.work.push('L = \u222b \u221a((dx/d' + t + ')\u00b2 + (dy/d' + t + ')\u00b2' + (comps.length === 3 ? ' + (dz/d' + t + ')\u00b2' : '') + ') d' + t + ' from ' + intLimitsText(a, b) + ',  velocity = ' + vecText(d));
+  outLineFor('arc length', sqrtIntegral(R, t, a, b), out);
+  return out;
+});
+defCmd('paramarea areaunderparam', (n) => {
+  needArgs(n, 5, 5, 'x(t), y(t), t, a, b: paramarea(t - sin(t), 1 - cos(t), t, 0, 2*pi)');
+  const xs = fromAst(n.args[0]);
+  const ys = fromAst(n.args[1]);
+  const t = paramVar([xs, ys], n.args[2]);
+  const out = newOut();
+  out.work.push('A = \u222b y\u00b7(dx/d' + t + ') d' + t + ' from ' + intLimitsText(bnd(n.args[3]), bnd(n.args[4])) + ',  dx/d' + t + ' = ' + fmtS(simp(diffS(xs, t))));
+  outLineFor('area under the curve', integralValue(simp(sMul([ys, diffS(xs, t)])), t, bnd(n.args[3]), bnd(n.args[4])), out);
+  out.notes.push('This is the signed area between the curve and the x-axis (negative where the curve runs right-to-left or below the axis).');
+  return out;
+});
+
+// ---- polar curves --------------------------------------------------------------------------------------------------------------------------------------------
+function polarArgs(n, usage, lo, hi) {
+  needArgs(n, lo, hi, usage);
+  const r = fromAst(n.args[0]);
+  const t = paramVar([r], n.args[1]);
+  return { r, t };
+}
+defCmd('polararea areapolar', (n) => {
+  const { r, t } = polarArgs(n, 'r(\u03b8), the angle variable and the limits a, b: polararea(1 + cos(t), t, 0, 2*pi)', 4, 4);
+  const a = bnd(n.args[2]);
+  const b = bnd(n.args[3]);
+  const out = newOut();
+  out.work.push('A = \u00bd \u222b r\u00b2 d' + t + ' from ' + intLimitsText(a, b) + ',  r = ' + fmtS(simp(r)));
+  outLineFor('area', integralValue(simp(sMul([sN(new Q(1n, 2n)), sq(r)])), t, a, b), out);
+  return out;
+});
+defCmd('polarlength polararclength', (n) => {
+  const { r, t } = polarArgs(n, 'r(\u03b8), the angle variable and the limits a, b: polarlength(1 + cos(t), t, 0, 2*pi)', 4, 4);
+  const a = bnd(n.args[2]);
+  const b = bnd(n.args[3]);
+  const R = simp(sAdd([sq(r), sq(diffS(r, t))]));
+  const out = newOut();
+  out.work.push('L = \u222b \u221a(r\u00b2 + (dr/d' + t + ')\u00b2) d' + t + ' from ' + intLimitsText(a, b) + ',  r\u00b2 + r\'\u00b2 = ' + fmtS(R));
+  outLineFor('arc length', sqrtIntegral(R, t, a, b), out);
+  return out;
+});
+defCmd('polarslope polardiff', (n) => {
+  const { r, t } = polarArgs(n, 'r(\u03b8), the angle variable and optionally \u03b8\u2080: polarslope(1 + cos(t), t, pi/2)', 2, 3);
+  const dr = simp(diffS(r, t));
+  const st = sFn('sin', [sV(t)]);
+  const ct = sFn('cos', [sV(t)]);
+  const num = simp(sAdd([sMul([dr, st]), sMul([r, ct])]));
+  const den = simp(sSub(sMul([dr, ct]), sMul([r, st])));
+  const out = newOut();
+  const tidy = (e) => {
+    const x = simp(expandS(e));
+    try {
+      return simp(simplifyTrigS(x));
+    } catch (err) {
+      return x;
+    }
+  };
+  out.answer.push('dy/dx = (r\' sin ' + t + ' + r cos ' + t + ')/(r\' cos ' + t + ' \u2212 r sin ' + t + ') = ' + fmtS(simp(sDiv(tidy(num), tidy(den)))));
+  out.work.push('x = r cos ' + t + ', y = r sin ' + t + ';  r = ' + fmtS(simp(r)) + ',  r\' = ' + fmtS(dr));
+  if (n.args[2]) {
+    const t0 = geoVal(n.args[2]);
+    const at = (e) => simp(subsS(e, t, t0));
+    const dv = at(den);
+    const px = at(sMul([r, ct]));
+    const py = at(sMul([r, st]));
+    out.answer.push('at ' + t + ' = ' + fmtS(t0) + ': the point is (' + fmtS(px) + ', ' + fmtS(py) + ')' + (isNumVal(dv, 0) ? (isNumVal(at(num), 0) ? ' (0/0: the slope needs a limit)' : ' and the tangent is vertical') : ', slope = ' + symText(simp(sDiv(at(num), dv)))));
+  }
+  return out;
+});
+
+// ---- coordinate systems -------------------------------------------------------------------------------------------------------------------------------------------
+function angleText(theta) {
+  // radians as a rational multiple of \u03c0 when it is one
+  const fr = toFraction(theta / Math.PI, 360);
+  if (fr && Math.abs(fr.p / fr.q - theta / Math.PI) < 1e-12) {
+    const q = new Q(BigInt(fr.p), BigInt(fr.q));
+    return fmtS(simp(sMul([sN(q), S_PI]))) + ' (' + fmtNum((theta * 180) / Math.PI) + '\u00b0)';
+  }
+  return fmtNum(theta) + ' rad (' + fmtNum((theta * 180) / Math.PI) + '\u00b0)';
+}
+function angleS(theta) {
+  const fr = toFraction(theta / Math.PI, 360);
+  if (fr && Math.abs(fr.p / fr.q - theta / Math.PI) < 1e-12) return simp(sMul([sN(new Q(BigInt(fr.p), BigInt(fr.q))), S_PI]));
+  return decimalS(theta);
+}
+defCmd('topolar rect2polar cartesiantopolar', (n) => {
+  needArgs(n, 2, 2, 'x and y: topolar(1, sqrt(3))');
+  const x = geoVal(n.args[0]);
+  const y = geoVal(n.args[1]);
+  const r = simp(sSqrt(simp(expandS(sAdd([sq(x), sq(y)])))));
+  const th = Math.atan2(numS(y, {}), numS(x, {}));
+  const out = newOut();
+  out.answer.push('r = ' + fmtS(r) + ',  \u03b8 = ' + angleText(th));
+  if (th < 0) out.work.push('The same point has \u03b8 = ' + angleText(th + 2 * Math.PI) + ' (angle measured from 0 to 2\u03c0).');
+  out.work.push('r = \u221a(x\u00b2 + y\u00b2),  \u03b8 = atan2(y, x)');
+  out.value = { S: r };
+  return out;
+});
+defCmd('torect polar2rect polartocartesian', (n) => {
+  needArgs(n, 2, 2, 'r and \u03b8: torect(2, pi/3)');
+  const r = geoVal(n.args[0]);
+  const th = geoVal(n.args[1]);
+  const out = newOut();
+  out.answer.push('(x, y) = (' + fmtS(simp(sMul([r, sFn('cos', [th])]))) + ', ' + fmtS(simp(sMul([r, sFn('sin', [th])]))) + ')');
+  out.work.push('x = r cos \u03b8,  y = r sin \u03b8');
+  return out;
+});
+defCmd('tocylindrical cartesiantocylindrical', (n) => {
+  needArgs(n, 3, 3, 'x, y, z: tocylindrical(1, 1, 2)');
+  const [x, y, z] = n.args.map(geoVal);
+  const r = simp(sSqrt(simp(expandS(sAdd([sq(x), sq(y)])))));
+  const th = Math.atan2(numS(y, {}), numS(x, {}));
+  const out = newOut();
+  out.answer.push('(r, \u03b8, z) = (' + fmtS(r) + ', ' + angleText(th) + ', ' + fmtS(z) + ')');
+  out.work.push('r = \u221a(x\u00b2 + y\u00b2),  \u03b8 = atan2(y, x),  z = z');
+  return out;
+});
+defCmd('fromcylindrical cylindricaltocartesian', (n) => {
+  needArgs(n, 3, 3, 'r, \u03b8, z: fromcylindrical(2, pi/6, 1)');
+  const [r, th, z] = n.args.map(geoVal);
+  const out = newOut();
+  out.answer.push('(x, y, z) = (' + fmtS(simp(sMul([r, sFn('cos', [th])]))) + ', ' + fmtS(simp(sMul([r, sFn('sin', [th])]))) + ', ' + fmtS(z) + ')');
+  out.work.push('x = r cos \u03b8,  y = r sin \u03b8');
+  return out;
+});
+defCmd('tospherical cartesiantospherical', (n) => {
+  needArgs(n, 3, 3, 'x, y, z: tospherical(1, 1, sqrt(2))');
+  const [x, y, z] = n.args.map(geoVal);
+  const rho = simp(sSqrt(simp(expandS(sAdd([sq(x), sq(y), sq(z)])))));
+  const rv = numS(rho, {});
+  if (rv === 0) throw new MathError('the origin has no spherical angles');
+  const phi = Math.acos(numS(z, {}) / rv);
+  const th = Math.atan2(numS(y, {}), numS(x, {}));
+  const out = newOut();
+  out.answer.push('(\u03c1, \u03c6, \u03b8) = (' + fmtS(rho) + ', ' + angleText(phi) + ', ' + angleText(th) + ')');
+  out.work.push('\u03c1 = \u221a(x\u00b2 + y\u00b2 + z\u00b2),  \u03c6 = arccos(z/\u03c1) is the angle from the positive z-axis,  \u03b8 = atan2(y, x)');
+  return out;
+});
+defCmd('fromspherical sphericaltocartesian', (n) => {
+  needArgs(n, 3, 3, '\u03c1, \u03c6, \u03b8: fromspherical(2, pi/3, pi/4)');
+  const [rho, phi, th] = n.args.map(geoVal);
+  const out = newOut();
+  const sp = sFn('sin', [phi]);
+  out.answer.push('(x, y, z) = (' + fmtS(simp(sMul([rho, sp, sFn('cos', [th])]))) + ', ' + fmtS(simp(sMul([rho, sp, sFn('sin', [th])]))) + ', ' + fmtS(simp(sMul([rho, sFn('cos', [phi])]))) + ')');
+  out.work.push('x = \u03c1 sin \u03c6 cos \u03b8,  y = \u03c1 sin \u03c6 sin \u03b8,  z = \u03c1 cos \u03c6');
+  return out;
+});
+
+// ---- motion along a curve: velocity, acceleration, curvature, TNB frame ---------------------------------------------------------------------------------------------
+function speedS(d, t) {
+  const { outside, inside } = sqrtParts(simp(sAdd(d.map(sq))), t);
+  return outside ? simp(sMul([sFn('abs', [outside]), sSqrt(inside)])) : simp(sSqrt(inside));
+}
+const atT = (e, t, t0) => simp(subsS(e, t, t0));
+defCmd('velocity acceleration speed motion', (n) => {
+  needArgs(n, 2, 3, 'the position [x(t), y(t), z(t)], the time variable and optionally t0: velocity([t, t^2, t^3], t, 1)');
+  const r = curveOf(n.args[0], 'velocity');
+  const t = paramVar(r, n.args[1]);
+  const v = vDiffS(r, t);
+  const a = vDiffS(v, t);
+  const sp = speedS(v, t);
+  const out = newOut();
+  out.answer.push('velocity v = r\' = ' + vecText(v));
+  out.answer.push('acceleration a = r\'\' = ' + vecText(a));
+  out.answer.push('speed |v| = ' + fmtS(sp));
+  if (n.args[2]) {
+    const t0 = geoVal(n.args[2]);
+    const vv = v.map((c) => atT(c, t, t0));
+    const aa = a.map((c) => atT(c, t, t0));
+    out.work.push('at ' + t + ' = ' + fmtS(t0) + ':  position ' + vecText(r.map((c) => atT(c, t, t0))) + ',  v = ' + vecText(vv) + ',  a = ' + vecText(aa) + ',  speed = ' + symText(atT(sp, t, t0)));
+    const s0 = atT(sp, t, t0);
+    if (!isNumVal(s0, 0)) out.work.push('unit tangent T = ' + vecText(vv.map((c) => simp(sDiv(c, s0)))));
+    const at = simp(sDiv(vDotS(vv, aa), s0));
+    if (!isNumVal(s0, 0)) out.work.push('tangential acceleration a_T = (v\u00b7a)/|v| = ' + symText(at));
+  }
+  out.value = { S: sp };
+  return out;
+});
+function curvatureFor(r, t) {
+  const r3 = pad3(r);
+  const v = vDiffS(r3, t);
+  const a = vDiffS(v, t);
+  const cr = vCrossS(v, a);
+  const num = speedS(cr, t);
+  const sv = speedS(v, t);
+  return { kappa: simp(sDiv(num, sPow(sv, sI(3)))), v, a, cr, sv };
+}
+defCmd('curvature', (n) => {
+  needArgs(n, 2, 3, 'a curve [x(t), y(t)] or [x(t), y(t), z(t)], or a function f, the variable and optionally a value: curvature(x^2, x, 1)');
+  const out = newOut();
+  if (n.args[0].t === 'list') {
+    const r = curveOf(n.args[0], 'curvature');
+    const t = paramVar(r, n.args[1]);
+    const { kappa } = curvatureFor(r, t);
+    out.answer.push('\u03ba = |r\' \u00d7 r\'\'|/|r\'|\u00b3 = ' + fmtS(kappa));
+    if (n.args[2]) {
+      const t0 = geoVal(n.args[2]);
+      const k0 = atT(kappa, t, t0);
+      out.answer.push('at ' + t + ' = ' + fmtS(t0) + ': \u03ba = ' + symText(k0) + (isNumVal(k0, 0) ? '' : ',  radius of curvature R = 1/\u03ba = ' + symText(simp(sPow(k0, SM1)))));
+    }
+    out.value = { S: kappa };
+    return out;
+  }
+  const f = fromAst(n.args[0]);
+  const x = n.args[1].t === 'var' ? varOfArg(n.args[1]) : singleVarOf(f);
+  const d1 = simp(diffS(f, x));
+  const d2 = simp(diffS(d1, x));
+  const kappa = simp(sDiv(sFn('abs', [d2]), sPow(simp(sAdd([S1, sq(d1)])), new Q(3n, 2n) && sN(new Q(3n, 2n)))));
+  out.answer.push('\u03ba = |f\u2033|/(1 + f\u2032\u00b2)^(3/2) = ' + fmtS(kappa));
+  out.work.push('f\u2032 = ' + fmtS(d1) + ',  f\u2033 = ' + fmtS(d2));
+  const at = n.args[2] ? geoVal(n.args[2]) : null;
+  if (at) {
+    const k0 = simp(subsS(kappa, x, at));
+    out.answer.push('at ' + x + ' = ' + fmtS(at) + ': \u03ba = ' + symText(k0) + (isNumVal(k0, 0) ? '' : ',  radius of curvature R = 1/\u03ba = ' + symText(simp(sPow(k0, SM1)))));
+  }
+  out.value = { S: kappa };
+  return out;
+});
+defCmd('tnb frenet frenetframe', (n) => {
+  needArgs(n, 2, 3, 'the curve [x(t), y(t), z(t)], the parameter and optionally t0: tnb([cos(t), sin(t), t], t, 0)');
+  const r = pad3(curveOf(n.args[0], 'tnb'));
+  const t = paramVar(r, n.args[1]);
+  const { kappa, v, a, cr, sv } = curvatureFor(r, t);
+  const jerk = vDiffS(a, t);
+  const crn = speedS(cr, t);
+  const tau = trigTidy(simp(sDiv(vDotS(cr, jerk), simp(sMul([crn, crn])))));
+  const out = newOut();
+  const unit = (u, len) => u.map((c) => simp(sDiv(c, len)));
+  const T = unit(v, sv).map(trigTidy);
+  const B = unit(cr, crn).map(trigTidy);
+  const N = vCrossS(B, T).map(trigTidy);
+  const symbolic = () => {
+    out.work.push('formulas: T = ' + vecText(T) + ';  N = ' + vecText(N) + ';  B = ' + vecText(B) + ';  \u03ba = ' + fmtS(kappa) + ';  \u03c4 = ' + fmtS(tau));
+  };
+  if (n.args[2]) {
+    const t0 = geoVal(n.args[2]);
+    const g = (u) => u.map((c) => atT(c, t, t0));
+    out.answer.push('at ' + t + ' = ' + fmtS(t0) + ':');
+    out.answer.push('T = ' + vecText(g(T)));
+    out.answer.push('N = ' + vecText(g(N)));
+    out.answer.push('B = ' + vecText(g(B)));
+    out.answer.push('curvature \u03ba = ' + symText(atT(kappa, t, t0)) + ',  torsion \u03c4 = ' + symText(atT(tau, t, t0)));
+    if ((vecText(T) + vecText(N) + vecText(B)).length < 400) symbolic();
+  } else {
+    out.answer.push('T = ' + vecText(T));
+    out.answer.push('N = ' + vecText(N));
+    out.answer.push('B = ' + vecText(B));
+    out.answer.push('curvature \u03ba = ' + fmtS(kappa) + ',  torsion \u03c4 = ' + fmtS(tau));
+  }
+  out.work.push('T = r\'/|r\'|,  B = (r\' \u00d7 r\'\')/|r\' \u00d7 r\'\'|,  N = B \u00d7 T,  \u03ba = |r\' \u00d7 r\'\'|/|r\'|\u00b3,  \u03c4 = (r\' \u00d7 r\'\')\u00b7r\'\'\'/|r\' \u00d7 r\'\'|\u00b2');
+  return out;
+});
+
+// ---- line integrals, potential functions ----------------------------------------------------------------------------------------------------------------------------
+function fieldVars(dim) {
+  return ['x', 'y', 'z'].slice(0, dim);
+}
+defCmd('lineintegral lineint pathintegral', (n) => {
+  needArgs(n, 5, 5, 'the field [P, Q] or [P, Q, R] (or a scalar function), the curve [x(t), y(t)], the parameter and the limits: lineintegral([y, x], [cos(t), sin(t)], t, 0, pi)');
+  const r = curveOf(n.args[1], 'lineintegral');
+  const t = paramVar(r, n.args[2]);
+  const names = fieldVars(r.length);
+  const sub = new Map(names.map((nm, i) => [nm, r[i]]));
+  const v = vDiffS(r, t);
+  const a = bnd(n.args[3]);
+  const b = bnd(n.args[4]);
+  const out = newOut();
+  let integrand;
+  if (n.args[0].t === 'list') {
+    const F = n.args[0].items.map((it) => fromAst(it));
+    if (F.length !== r.length) throw new MathError('the field and the curve must have the same number of components');
+    const Fr = F.map((c) => simp(subsMany(c, sub)));
+    integrand = vDotS(Fr, v);
+    out.work.push('\u222b F\u00b7dr = \u222b F(r(' + t + '))\u00b7r\'(' + t + ') d' + t + ' from ' + intLimitsText(a, b) + ';  r\' = ' + vecText(v) + ',  F(r(' + t + ')) = ' + vecText(Fr));
+    outLineFor('\u222b F\u00b7dr', integralValue(simp(expandS(integrand)), t, a, b), out);
+  } else {
+    const f = simp(subsMany(fromAst(n.args[0]), sub));
+    const sp = speedS(v, t);
+    out.work.push('\u222b f ds = \u222b f(r(' + t + '))\u00b7|r\'(' + t + ')| d' + t + ' from ' + intLimitsText(a, b) + ';  |r\'| = ' + fmtS(sp));
+    const R = simp(sMul([sq(f), simp(sAdd(v.map(sq)))]));
+    // sqrt(f\u00b2 \u00b7 |r'|\u00b2) would lose the sign of f, so integrate f\u00b7|r'| directly
+    outLineFor('\u222b f ds', integralValue(simp(sMul([f, sp])), t, a, b), out);
+    void R;
+  }
+  return out;
+});
+defCmd('potential potentialfunction conservative', (n) => {
+  needArgs(n, 1, 1, 'a vector field [P, Q] or [P, Q, R]: potential([2*x*y, x^2 + 3])');
+  if (n.args[0].t !== 'list' || n.args[0].items.length < 2 || n.args[0].items.length > 3) throw new MathError('give the field as [P, Q] or [P, Q, R]');
+  const F = n.args[0].items.map((it) => fromAst(it));
+  const names = fieldVars(F.length);
+  const out = newOut();
+  // curl-free test
+  for (let i = 0; i < F.length; i++) {
+    for (let j = i + 1; j < F.length; j++) {
+      const d1 = simp(expandS(diffS(F[i], names[j])));
+      const d2 = simp(expandS(diffS(F[j], names[i])));
+      if (!sameFunction(d1, d2)) {
+        out.answer.push('not conservative: \u2202' + 'PQR'[i] + '/\u2202' + names[j] + ' = ' + fmtS(d1) + ' but \u2202' + 'PQR'[j] + '/\u2202' + names[i] + ' = ' + fmtS(d2));
+        out.work.push('A conservative field must satisfy \u2202P/\u2202y = \u2202Q/\u2202x (and the same for the other pairs).');
+        return out;
+      }
+    }
+  }
+  // integrate component by component
+  let f = antiderivative(F[0], names[0]);
+  if (!f) throw new MathError('I could not integrate P with respect to x');
+  for (let i = 1; i < F.length; i++) {
+    const rest = simp(sSub(F[i], diffS(f, names[i])));
+    if (varsOfS(rest).has(names[0]) || (i === 2 && varsOfS(rest).has(names[1]))) throw new MathError('the field does not have a potential I can build');
+    if (isNumVal(simp(expandS(rest)), 0)) continue;
+    const g = antiderivative(rest, names[i]);
+    if (!g) throw new MathError('I could not integrate component ' + (i + 1));
+    f = sAdd([f, g]);
+  }
+  f = simp(expandS(f));
+  out.answer.push('f = ' + fmtS(f) + ' + C   (\u2207f = F)');
+  out.work.push('curl F = 0, so F is conservative: f_x = P gives f = \u222bP dx + g(y, z), then g is found from the other components');
+  const okAll = F.every((c, i) => sameFunction(simp(diffS(f, names[i])), c));
+  out.check = okAll ? 'the gradient of f equals F' : null;
+  out.notes.push('For a conservative field the line integral from A to B is f(B) \u2212 f(A), whatever the path.');
+  out.value = { S: f };
+  return out;
+});
+// ======================================================================
+// 19. More statistics and probability: further distributions, two-sample / paired / ANOVA / correlation / variance tests,
+//     sample sizes, sampling distributions, outliers and other descriptive measures, frequency tables, stem-and-leaf plots,
+//     rank correlation, multiple and curve regression, Markov chains.
+// ======================================================================
+const qFloat = (q) => q.toNumber();
+function listArg(node, what) {
+  if (node.t !== 'list') throw new MathError(what + ' needs a list of numbers in square brackets');
+  return dataOf([node], what);
+}
+const fmtP = (p) => fmtNum(p);
+
+// ---- more distributions ---------------------------------------------------------------------------------------------------------------
+function posArg(v, what) {
+  if (!(v > 0)) throw new MathError(what + ' must be positive');
+  return v;
+}
+const gammaPdf = (x, k, th) => (x < 0 ? 0 : x === 0 ? (k === 1 ? 1 / th : k < 1 ? Infinity : 0) : Math.exp((k - 1) * Math.log(x / th) - x / th - lgamma(k)) / th);
+const betaPdf = (x, a, b) => (x < 0 || x > 1 ? 0 : Math.exp(lgamma(a + b) - lgamma(a) - lgamma(b) + (a - 1) * Math.log(x) + (b - 1) * Math.log(1 - x)));
+const chi2Pdf = (x, df) => gammaPdf(x, df / 2, 2);
+const tPdf = (x, df) => Math.exp(lgamma((df + 1) / 2) - lgamma(df / 2) - 0.5 * Math.log(df * Math.PI) - ((df + 1) / 2) * Math.log(1 + (x * x) / df));
+const fPdf = (x, d1, d2) => (x <= 0 ? 0 : Math.exp(0.5 * (d1 * Math.log(d1 * x) + d2 * Math.log(d2) - (d1 + d2) * Math.log(d1 * x + d2)) - Math.log(x) - (lgamma(d1 / 2) + lgamma(d2 / 2) - lgamma((d1 + d2) / 2))));
+function distPair(names, usage, nParams, pdf, cdf, label) {
+  defCmd(names.pdf, (n) => {
+    needArgs(n, 1 + nParams, 1 + nParams, usage);
+    const [x, ...p] = n.args.map(numArg);
+    return pOut(newOut(), label + ' density at ' + fmtNum(x), pdf(x, ...p));
+  });
+  if (cdf) {
+    defCmd(names.cdf, (n) => {
+      needArgs(n, 1 + nParams, 2 + nParams, usage + ' (a second x gives P(x1 \u2264 X \u2264 x2))');
+      const a = n.args.map(numArg);
+      if (a.length === 2 + nParams) {
+        const p = a.slice(2);
+        return pOut(newOut(), 'P(' + fmtNum(a[0]) + ' \u2264 X \u2264 ' + fmtNum(a[1]) + ')', cdf(a[1], ...p) - cdf(a[0], ...p));
+      }
+      return pOut(newOut(), 'P(X \u2264 ' + fmtNum(a[0]) + ')', cdf(a[0], ...a.slice(1)));
+    });
+  }
+}
+distPair({ pdf: 'unifpdf uniformpdf', cdf: 'unifcdf uniformcdf' }, 'x, a, b (uniform on [a, b])', 2, (x, a, b) => (x >= a && x <= b ? 1 / (b - a) : 0), (x, a, b) => (b <= a ? NaN : x <= a ? 0 : x >= b ? 1 : (x - a) / (b - a)), 'uniform');
+distPair({ pdf: 'exppdf exponentialpdf', cdf: null }, 'x and the rate \u03bb: exppdf(x, rate)', 1, (x, lam) => (x < 0 ? 0 : posArg(lam, '\u03bb') * Math.exp(-lam * x)), null, 'exponential');
+distPair({ pdf: 'gammapdf', cdf: 'gammacdf' }, 'x, shape k and scale \u03b8 (\u03b8 = 1/rate)', 2, (x, k, th) => gammaPdf(x, posArg(k, 'the shape'), posArg(th, 'the scale')), (x, k, th) => igammaP(posArg(k, 'the shape'), Math.max(x, 0) / posArg(th, 'the scale')), 'gamma');
+distPair({ pdf: 'betapdf', cdf: 'betacdf' }, 'x in [0, 1], a and b', 2, (x, a, b) => betaPdf(x, posArg(a, 'a'), posArg(b, 'b')), (x, a, b) => ibeta(Math.min(Math.max(x, 0), 1), posArg(a, 'a'), posArg(b, 'b')), 'beta');
+distPair({ pdf: 'weibullpdf', cdf: 'weibullcdf' }, 'x, shape k and scale \u03bb', 2, (x, k, lam) => (x < 0 ? 0 : (posArg(k, 'k') / lam) * (x / lam) ** (k - 1) * Math.exp(-((x / lam) ** k))), (x, k, lam) => (x <= 0 ? 0 : 1 - Math.exp(-((x / posArg(lam, '\u03bb')) ** posArg(k, 'k')))), 'Weibull');
+distPair({ pdf: 'lognormpdf lognormalpdf', cdf: 'lognormcdf lognormalcdf' }, 'x, \u03bc and \u03c3 of ln X', 2, (x, mu, sg) => (x <= 0 ? 0 : normPdf((Math.log(x) - mu) / posArg(sg, '\u03c3')) / (x * sg)), (x, mu, sg) => (x <= 0 ? 0 : normCdf((Math.log(x) - mu) / posArg(sg, '\u03c3'))), 'lognormal');
+distPair({ pdf: 'tpdf', cdf: null }, 't and the degrees of freedom', 1, (x, df) => tPdf(x, posArg(df, 'df')), null, 't');
+distPair({ pdf: 'chi2pdf chisqpdf', cdf: null }, 'x and the degrees of freedom', 1, (x, df) => chi2Pdf(x, posArg(df, 'df')), null, 'chi-square');
+distPair({ pdf: 'fpdf', cdf: null }, 'x and the two degrees of freedom', 2, (x, d1, d2) => fPdf(x, posArg(d1, 'df1'), posArg(d2, 'df2')), null, 'F');
+defCmd('invf', (n) => {
+  needArgs(n, 3, 3, 'the left-tail probability and the two degrees of freedom');
+  const [p, d1, d2] = n.args.map(numArg);
+  const out = newOut();
+  out.work.push('The f with P(F \u2264 f) = ' + fmtNum(p) + ' (for a right-tail area \u03b1 use 1 \u2212 \u03b1)');
+  return numOut(out, invCdf((f) => fCdf(f, d1, d2), p, 0, 5), 'f');
+});
+defCmd('invgamma', (n) => {
+  needArgs(n, 3, 3, 'the left-tail probability, the shape k and the scale \u03b8');
+  const [p, k, th] = n.args.map(numArg);
+  return numOut(newOut(), invCdf((x) => igammaP(posArg(k, 'k'), Math.max(x, 0) / posArg(th, '\u03b8')), p, 0, k * th + 5), 'x');
+});
+defCmd('invbeta', (n) => {
+  needArgs(n, 3, 3, 'the left-tail probability, a and b');
+  const [p, a, b] = n.args.map(numArg);
+  const out = newOut();
+  let lo = 0;
+  let hi = 1;
+  if (!(p > 0 && p < 1)) throw new MathError('the probability must be strictly between 0 and 1');
+  for (let i = 0; i < 100; i++) {
+    const m = (lo + hi) / 2;
+    if (ibeta(m, a, b) < p) lo = m;
+    else hi = m;
+  }
+  return numOut(out, (lo + hi) / 2, 'x');
+});
+defCmd('invexp invexponential', (n) => {
+  needArgs(n, 2, 2, 'the left-tail probability and the rate \u03bb');
+  const [p, lam] = n.args.map(numArg);
+  if (!(p > 0 && p < 1)) throw new MathError('the probability must be strictly between 0 and 1');
+  return numOut(newOut(), -Math.log(1 - p) / posArg(lam, '\u03bb'), 'x');
+});
+function negBinPmf(k, r, p) {
+  return Math.exp(lgamma(k + r) - lgamma(k + 1) - lgamma(r) + r * Math.log(p) + k * Math.log(1 - p));
+}
+defCmd('negbinpdf negbinomialpdf', (n) => {
+  needArgs(n, 3, 3, 'k (the failures), r (the successes needed) and p: negbinpdf(3, 2, 0.5)');
+  const [k, r, p] = n.args.map(numArg);
+  if (!Number.isInteger(k) || k < 0 || !Number.isInteger(r) || r < 1 || !(p > 0 && p <= 1)) throw new MathError('k \u2265 0 and r \u2265 1 must be whole numbers and 0 < p \u2264 1');
+  const out = newOut();
+  out.work.push('P(X = k) = C(k + r \u2212 1, k)\u00b7p\u02b3\u00b7(1 \u2212 p)\u1d4f: k failures before the r-th success;  mean ' + fmtNum((r * (1 - p)) / p) + ', variance ' + fmtNum((r * (1 - p)) / (p * p)));
+  return pOut(out, 'P(X = ' + k + ')', negBinPmf(k, r, p));
+});
+defCmd('negbincdf negbinomialcdf', (n) => {
+  needArgs(n, 3, 3, 'k, r and p');
+  const [k, r, p] = n.args.map(numArg);
+  if (!Number.isInteger(k) || k < 0 || !Number.isInteger(r) || r < 1 || !(p > 0 && p <= 1)) throw new MathError('k \u2265 0 and r \u2265 1 must be whole numbers and 0 < p \u2264 1');
+  let s = 0;
+  for (let i = 0; i <= k; i++) s += negBinPmf(i, r, p);
+  return pOut(newOut(), 'P(X \u2264 ' + k + ')', Math.min(s, 1));
+});
+
+// ---- two-sample, paired, ANOVA, correlation, variance tests ---------------------------------------------------------------------------------------
+/** Two samples given as 6 numbers (m1, s1, n1, m2, s2, n2) or as two lists. */
+function twoSamples(args, label) {
+  if (args[0] && args[0].t === 'list') {
+    if (!args[1] || args[1].t !== 'list') throw new MathError(label + ' needs two lists, e.g. ' + label + '([1, 2, 3], [2, 4, 7])');
+    const mk = (node) => {
+      const vs = dataOf([node], label);
+      if (vs.length < 2) throw new MathError('each sample needs at least 2 values');
+      return { mean: qFloat(sumQ(vs).div(qInt(vs.length))), s: Math.sqrt(qFloat(sampleVar(vs, false))), n: vs.length };
+    };
+    return { a: mk(args[0]), b: mk(args[1]), rest: args.slice(2) };
+  }
+  if (args.length < 6) throw new MathError(label + ' needs m1, s1, n1, m2, s2, n2 (or two lists)');
+  const v = args.slice(0, 6).map(numArg);
+  return { a: { mean: v[0], s: v[1], n: v[2] }, b: { mean: v[3], s: v[4], n: v[5] }, rest: args.slice(6) };
+}
+function welch(a, b, pooled) {
+  const v1 = (a.s * a.s) / a.n;
+  const v2 = (b.s * b.s) / b.n;
+  if (pooled) {
+    const df = a.n + b.n - 2;
+    const sp2 = ((a.n - 1) * a.s * a.s + (b.n - 1) * b.s * b.s) / df;
+    const se = Math.sqrt(sp2 * (1 / a.n + 1 / b.n));
+    return { se, df, sp: Math.sqrt(sp2) };
+  }
+  return { se: Math.sqrt(v1 + v2), df: (v1 + v2) ** 2 / ((v1 * v1) / (a.n - 1) + (v2 * v2) / (b.n - 1)) };
+}
+function ttest2Cmd(pooled) {
+  return (n) => {
+  const { a, b } = twoSamples(n.args, 'ttest2');
+  const { se, df, sp } = welch(a, b, pooled);
+  const t = (a.mean - b.mean) / se;
+  const cdf = tCdf(t, df);
+  const out = newOut();
+  out.work.push((pooled ? 'Pooled-variance t test: sp = ' + fmtNum(sp) + ', ' : 'Welch t test (unequal variances): ') + 'x\u0304\u2081 \u2212 x\u0304\u2082 = ' + fmtNum(a.mean - b.mean) + ',  SE = ' + fmtNum(se) + ',  df = ' + fmtNum(df) + (pooled ? '' : '  (use ttest2pooled for the equal-variance version)'));
+  return testOut(out, t, 't', 2 * (1 - tCdf(Math.abs(t), df)), cdf, 1 - cdf, 't = (x\u0304\u2081 \u2212 x\u0304\u2082)/SE');
+  };
+}
+defCmd('ttest2 twosamplet', ttest2Cmd(false));
+defCmd('ttest2pooled', ttest2Cmd(true));
+function tinterval2Cmd(pooled) {
+  return (n) => {
+  const { a, b, rest } = twoSamples(n.args, 'tinterval2');
+  if (!rest.length) throw new MathError('tinterval2 also needs the confidence level at the end, e.g. tinterval2([..], [..], 0.95)');
+  const c = levelOf(rest[0]);
+  const { se, df } = welch(a, b, pooled);
+  const t = invCdf((x) => tCdf(x, df), (1 + c) / 2, -5, 5);
+  const out = newOut();
+  out.work.push((pooled ? 'pooled' : 'Welch') + ' df = ' + fmtNum(df) + ',  SE = ' + fmtNum(se) + ',  difference of means x\u0304\u2081 \u2212 x\u0304\u2082 = ' + fmtNum(a.mean - b.mean));
+  return intervalOut(out, a.mean - b.mean, t * se, t, 't*', c);
+  };
+}
+defCmd('tinterval2 twosampleinterval', tinterval2Cmd(false));
+defCmd('tinterval2pooled', tinterval2Cmd(true));
+defCmd('pairedt ttestpaired pairedttest', (n) => {
+  needArgs(n, 2, 2, 'two lists of paired measurements: pairedt([before], [after])');
+  const { xs, ys } = twoLists(n, 'pairedt');
+  const d = xs.map((x, i) => x.sub(ys[i]));
+  const nn = d.length;
+  const md = qFloat(sumQ(d).div(qInt(nn)));
+  const sd = Math.sqrt(qFloat(sampleVar(d, false)));
+  const df = nn - 1;
+  if (sd === 0) throw new MathError('all differences are equal, so the standard error is 0');
+  const t = md / (sd / Math.sqrt(nn));
+  const cdf = tCdf(t, df);
+  const out = newOut();
+  out.work.push('differences d = first \u2212 second: ' + d.map((v) => v.toString()).join(', '));
+  out.work.push('mean difference = ' + fmtNum(md) + ',  s_d = ' + fmtNum(sd) + ',  df = ' + df);
+  return testOut(out, t, 't', 2 * (1 - tCdf(Math.abs(t), df)), cdf, 1 - cdf, 't = d\u0304/(s_d/\u221an)');
+});
+defCmd('ztest2', (n) => {
+  needArgs(n, 6, 6, 'm1, \u03c31, n1, m2, \u03c32, n2');
+  const [m1, s1, n1, m2, s2, n2] = n.args.map(numArg);
+  const z = (m1 - m2) / Math.sqrt((s1 * s1) / n1 + (s2 * s2) / n2);
+  return testOut(newOut(), z, 'z', 2 * normCdf(-Math.abs(z)), normCdf(z), 1 - normCdf(z), 'z = (x\u0304\u2081 \u2212 x\u0304\u2082)/\u221a(\u03c3\u2081\u00b2/n\u2081 + \u03c3\u2082\u00b2/n\u2082)');
+});
+defCmd('prop2test twoproptest', (n) => {
+  needArgs(n, 4, 4, 'x1, n1, x2, n2');
+  const [x1, n1, x2, n2] = n.args.map(numArg);
+  const p1 = x1 / n1;
+  const p2 = x2 / n2;
+  const pp = (x1 + x2) / (n1 + n2);
+  const z = (p1 - p2) / Math.sqrt(pp * (1 - pp) * (1 / n1 + 1 / n2));
+  return testOut(newOut(), z, 'z', 2 * normCdf(-Math.abs(z)), normCdf(z), 1 - normCdf(z), 'p\u0302\u2081 = ' + fmtNum(p1) + ', p\u0302\u2082 = ' + fmtNum(p2) + ', pooled p\u0302 = ' + fmtNum(pp) + ';  z = (p\u0302\u2081 \u2212 p\u0302\u2082)/\u221a(p\u0302(1 \u2212 p\u0302)(1/n\u2081 + 1/n\u2082))');
+});
+defCmd('prop2interval twopropinterval', (n) => {
+  needArgs(n, 5, 5, 'x1, n1, x2, n2 and the confidence level');
+  const [x1, n1, x2, n2] = n.args.slice(0, 4).map(numArg);
+  const c = levelOf(n.args[4]);
+  const p1 = x1 / n1;
+  const p2 = x2 / n2;
+  const z = invNorm((1 + c) / 2);
+  const out = newOut();
+  out.work.push('p\u0302\u2081 \u2212 p\u0302\u2082 = ' + fmtNum(p1 - p2) + ';  margin = z*\u00b7\u221a(p\u0302\u2081(1 \u2212 p\u0302\u2081)/n\u2081 + p\u0302\u2082(1 \u2212 p\u0302\u2082)/n\u2082)');
+  return intervalOut(out, p1 - p2, z * Math.sqrt((p1 * (1 - p1)) / n1 + (p2 * (1 - p2)) / n2), z, 'z*', c);
+});
+defCmd('anova onewayanova', (n) => {
+  if (n.args.length < 2 || n.args.some((a) => a.t !== 'list')) throw new MathError('anova needs two or more lists, one per group: anova([4,5,6], [7,8,9], [1,2,3])');
+  const groups = n.args.map((a) => dataOf([a], 'anova'));
+  const k = groups.length;
+  const N = groups.reduce((s, g) => s + g.length, 0);
+  if (N - k < 1) throw new MathError('the groups need more observations');
+  const all = groups.flat();
+  const grand = sumQ(all).div(qInt(N));
+  const ssb = sumQ(groups.map((g) => {
+    const m = sumQ(g).div(qInt(g.length));
+    return m.sub(grand).mul(m.sub(grand)).mul(qInt(g.length));
+  }));
+  const ssw = sumQ(groups.map((g) => {
+    const m = sumQ(g).div(qInt(g.length));
+    return sumQ(g.map((v) => v.sub(m).mul(v.sub(m))));
+  }));
+  const dfb = k - 1;
+  const dfw = N - k;
+  const msb = ssb.div(qInt(dfb));
+  const msw = ssw.div(qInt(dfw));
+  const out = newOut();
+  if (msw.isZero()) throw new MathError('there is no variation inside the groups, so F is undefined');
+  const F = qFloat(msb.div(msw));
+  const p = 1 - fCdf(F, dfb, dfw);
+  out.answer.push('F = ' + fmtNum(F) + ' (df ' + dfb + ', ' + dfw + '),  p-value = ' + fmtP(p));
+  out.work.push('source        SS               df    MS               F');
+  out.work.push('between       ' + qText(ssb).padEnd(16) + String(dfb).padEnd(6) + qText(msb).padEnd(16) + fmtNum(F));
+  out.work.push('within        ' + qText(ssw).padEnd(16) + String(dfw).padEnd(6) + qText(msw));
+  out.work.push('total         ' + qText(ssb.add(ssw)).padEnd(16) + String(N - 1));
+  out.work.push('group means: ' + groups.map((g) => qText(sumQ(g).div(qInt(g.length)))).join(', ') + ';  grand mean ' + qText(grand));
+  out.notes.push('Reject H0 (all group means equal) when the p-value is below the significance level \u03b1.');
+  out.value = { num: p };
+  return out;
+});
+defCmd('corrtest correlationtest', (n) => {
+  const { xs, ys } = twoLists(n, 'corrtest');
+  const nn = xs.length;
+  if (nn < 3) throw new MathError('at least 3 pairs are needed');
+  const { sxx, syy, sxy } = sums2(xs, ys);
+  if (sxx.isZero() || syy.isZero()) throw new MathError('one of the lists is constant, so the correlation is undefined');
+  const r = (sxy.sign() < 0 ? -1 : 1) * Math.sqrt(qFloat(sxy.mul(sxy).div(sxx.mul(syy))));
+  const df = nn - 2;
+  const t = (r * Math.sqrt(df)) / Math.sqrt(Math.max(1 - r * r, 1e-300));
+  const cdf = tCdf(t, df);
+  const out = newOut();
+  out.work.push('r = ' + fmtNum(r) + ',  n = ' + nn);
+  return testOut(out, t, 't', 2 * (1 - tCdf(Math.abs(t), df)), cdf, 1 - cdf, 't = r\u221a(n \u2212 2)/\u221a(1 \u2212 r\u00b2),  df = n \u2212 2 = ' + df + ';  H0: \u03c1 = 0');
+});
+defCmd('varinterval sdinterval', (n) => {
+  needArgs(n, 3, 3, 'the sample standard deviation s, n and the confidence level: varinterval(2.5, 20, 0.95)  (or [data] and the level)');
+  let s;
+  let nn;
+  let c;
+  if (n.args[0].t === 'list') {
+    const vs = dataOf([n.args[0]], 'varinterval');
+    s = Math.sqrt(qFloat(sampleVar(vs, false)));
+    nn = vs.length;
+    c = levelOf(n.args[1]);
+  } else {
+    s = numArg(n.args[0]);
+    nn = numArg(n.args[1]);
+    c = levelOf(n.args[2]);
+  }
+  const df = nn - 1;
+  const lo = invCdf((x) => chi2Cdf(x, df), (1 - c) / 2, 0, df + 10);
+  const hi = invCdf((x) => chi2Cdf(x, df), (1 + c) / 2, 0, df + 10);
+  const out = newOut();
+  out.answer.push(fmtNum(c * 100) + '% confidence interval for \u03c3\u00b2: (' + fmtNum((df * s * s) / hi) + ', ' + fmtNum((df * s * s) / lo) + ')');
+  out.answer.push('for \u03c3: (' + fmtNum(Math.sqrt((df * s * s) / hi)) + ', ' + fmtNum(Math.sqrt((df * s * s) / lo)) + ')');
+  out.work.push('df = ' + df + ',  \u03c7\u00b2(left) = ' + fmtNum(lo) + ',  \u03c7\u00b2(right) = ' + fmtNum(hi) + ';  interval for \u03c3\u00b2 = ((n \u2212 1)s\u00b2/\u03c7\u00b2right, (n \u2212 1)s\u00b2/\u03c7\u00b2left)');
+  return out;
+});
+defCmd('vartest chisqvartest', (n) => {
+  needArgs(n, 3, 3, 'the sample standard deviation s, n and the hypothesised \u03c30: vartest(2.5, 20, 2)');
+  const [s, nn, s0] = n.args.map(numArg);
+  const df = nn - 1;
+  const chi = (df * s * s) / (s0 * s0);
+  const cdf = chi2Cdf(chi, df);
+  const out = newOut();
+  out.answer.push('\u03c7\u00b2 = ' + fmtNum(chi) + ' (df ' + df + ')');
+  out.answer.push('p-value: two-tailed ' + fmtP(2 * Math.min(cdf, 1 - cdf)) + ',  left-tailed ' + fmtP(cdf) + ',  right-tailed ' + fmtP(1 - cdf));
+  out.work.push('\u03c7\u00b2 = (n \u2212 1)s\u00b2/\u03c30\u00b2;  H0: \u03c3 = ' + fmtNum(s0));
+  out.value = { num: 2 * Math.min(cdf, 1 - cdf) };
+  return out;
+});
+defCmd('ftest2 variancetest', (n) => {
+  needArgs(n, 4, 4, 'the sample standard deviations and sizes: ftest2(s1, n1, s2, n2)');
+  const [s1, n1, s2, n2] = n.args.map(numArg);
+  const F = (s1 * s1) / (s2 * s2);
+  const cdf = fCdf(F, n1 - 1, n2 - 1);
+  const out = newOut();
+  out.answer.push('F = s\u2081\u00b2/s\u2082\u00b2 = ' + fmtNum(F) + ' (df ' + (n1 - 1) + ', ' + (n2 - 1) + ')');
+  out.answer.push('p-value: two-tailed ' + fmtP(2 * Math.min(cdf, 1 - cdf)) + ',  left-tailed ' + fmtP(cdf) + ',  right-tailed ' + fmtP(1 - cdf));
+  out.value = { num: 2 * Math.min(cdf, 1 - cdf) };
+  return out;
+});
+defCmd('samplesize samplesizemean', (n) => {
+  needArgs(n, 3, 3, '\u03c3, the margin of error E and the confidence level: samplesize(15, 3, 0.95)');
+  const [sg, E] = n.args.slice(0, 2).map(numArg);
+  const c = levelOf(n.args[2]);
+  const z = invNorm((1 + c) / 2);
+  const need = Math.ceil((z * sg / E) ** 2 - 1e-12);
+  const out = newOut();
+  out.answer.push('n = ' + need + '  (round up)');
+  out.work.push('n = (z*\u00b7\u03c3/E)\u00b2 = (' + fmtNum(z) + '\u00b7' + fmtNum(sg) + '/' + fmtNum(E) + ')\u00b2 = ' + fmtNum((z * sg / E) ** 2));
+  out.value = { q: qInt(need) };
+  return out;
+});
+defCmd('samplesizeprop', (n) => {
+  needArgs(n, 2, 3, 'the margin of error E, the confidence level and optionally an estimate p (default 0.5)');
+  const E = numArg(n.args[0]);
+  const c = levelOf(n.args[1]);
+  const p = n.args[2] ? numArg(n.args[2]) : 0.5;
+  const z = invNorm((1 + c) / 2);
+  const raw = (z * z * p * (1 - p)) / (E * E);
+  const need = Math.ceil(raw - 1e-12);
+  const out = newOut();
+  out.answer.push('n = ' + need + '  (round up)');
+  out.work.push('n = z*\u00b2\u00b7p(1 \u2212 p)/E\u00b2 = ' + fmtNum(z) + '\u00b2\u00b7' + fmtNum(p) + '\u00b7' + fmtNum(1 - p) + '/' + fmtNum(E) + '\u00b2 = ' + fmtNum(raw));
+  out.value = { q: qInt(need) };
+  return out;
+});
+defCmd('clt samplingdist', (n) => {
+  needArgs(n, 4, 5, '\u03bc, \u03c3, n and x (or a, b): clt(100, 15, 36, 105)');
+  const [mu, sg, nn] = n.args.slice(0, 3).map(numArg);
+  const rest = n.args.slice(3).map(numArg);
+  const se = sg / Math.sqrt(nn);
+  const out = newOut();
+  out.work.push('The sample mean has mean ' + fmtNum(mu) + ' and standard error \u03c3/\u221an = ' + fmtNum(se) + ' (normal for large n, or any n if the population is normal)');
+  if (rest.length === 1) return pOut(out, 'P(x\u0304 \u2264 ' + fmtNum(rest[0]) + ')', normCdf((rest[0] - mu) / se));
+  return pOut(out, 'P(' + fmtNum(rest[0]) + ' \u2264 x\u0304 \u2264 ' + fmtNum(rest[1]) + ')', normCdf((rest[1] - mu) / se) - normCdf((rest[0] - mu) / se));
+});
+defCmd('binomnormal normalapprox', (n) => {
+  needArgs(n, 3, 4, 'n, p and k (or a, b) with the continuity correction: binomnormal(100, 0.5, 55)');
+  const [nn, p] = n.args.slice(0, 2).map(numArg);
+  const ks = n.args.slice(2).map(numArg);
+  const mu = nn * p;
+  const sg = Math.sqrt(nn * p * (1 - p));
+  const out = newOut();
+  out.work.push('Normal approximation: mean np = ' + fmtNum(mu) + ', sd \u221a(np(1 \u2212 p)) = ' + fmtNum(sg) + (nn * p >= 10 && nn * (1 - p) >= 10 ? '' : '  (warning: np or n(1 \u2212 p) is below 10, so the approximation is rough)'));
+  if (ks.length === 1) return pOut(out, 'P(X \u2264 ' + ks[0] + ') \u2248', normCdf((ks[0] + 0.5 - mu) / sg));
+  return pOut(out, 'P(' + ks[0] + ' \u2264 X \u2264 ' + ks[1] + ') \u2248', normCdf((ks[1] + 0.5 - mu) / sg) - normCdf((ks[0] - 0.5 - mu) / sg));
+});
+
+// ---- descriptive statistics ---------------------------------------------------------------------------------------------------------------------------------
+defCmd('outliers outlier', (n) => {
+  const vs = sortQ(dataOf(n.args, 'outliers'));
+  const { q1, q3 } = quartiles(vs);
+  const iqr = q3.sub(q1);
+  const k = qFloat(iqr);
+  const lo = q1.sub(iqr.mul(new Q(3n, 2n)));
+  const hi = q3.add(iqr.mul(new Q(3n, 2n)));
+  const out = newOut();
+  const outs = vs.filter((v) => v.sub(lo).sign() < 0 || v.sub(hi).sign() > 0);
+  out.answer.push(outs.length ? 'outliers: ' + outs.map((v) => v.toString()).join(', ') : 'no outliers');
+  out.work.push('Q1 = ' + qText(q1) + ', Q3 = ' + qText(q3) + ', IQR = ' + qText(iqr) + ';  fences: Q1 \u2212 1.5\u00b7IQR = ' + qText(lo) + ',  Q3 + 1.5\u00b7IQR = ' + qText(hi));
+  void k;
+  return out;
+});
+defCmd('fivenum fivenumber', (n) => {
+  const vs = sortQ(dataOf(n.args, 'fivenum'));
+  const { q1, q2, q3 } = quartiles(vs);
+  const out = newOut();
+  out.answer.push('min ' + vs[0].toString() + ',  Q1 ' + qText(q1) + ',  median ' + qText(q2) + ',  Q3 ' + qText(q3) + ',  max ' + vs[vs.length - 1].toString());
+  return out;
+});
+defCmd('mad meanabsdev', (n) => {
+  const vs = dataOf(n.args, 'mad');
+  const m = sumQ(vs).div(qInt(vs.length));
+  const mean = sumQ(vs.map((v) => v.sub(m).abs())).div(qInt(vs.length));
+  const med = medianQ(sortQ(vs));
+  const medAbs = medianQ(sortQ(vs.map((v) => v.sub(med).abs())));
+  const out = newOut();
+  out.answer.push('mean absolute deviation = ' + qText(mean));
+  out.answer.push('median absolute deviation = ' + qText(medAbs));
+  out.work.push('mean absolute deviation = \u03a3|x \u2212 mean|/n (mean = ' + qText(m) + ');  median absolute deviation = median of |x \u2212 median| (median = ' + qText(med) + ')');
+  out.value = { q: mean };
+  return out;
+});
+defCmd('skewness kurtosis moments', (n) => {
+  const vs = dataOf(n.args, n.fn);
+  const N = vs.length;
+  if (N < 3) throw new MathError('at least 3 values are needed');
+  const m = sumQ(vs).div(qInt(N));
+  const mk = (k) => sumQ(vs.map((v) => v.sub(m).pow(k))).div(qInt(N));
+  const m2 = mk(2);
+  if (m2.isZero()) throw new MathError('all values are equal');
+  const g1 = qFloat(mk(3)) / qFloat(m2) ** 1.5;
+  const g2 = qFloat(mk(4)) / qFloat(m2) ** 2 - 3;
+  const out = newOut();
+  const G1 = (g1 * Math.sqrt(N * (N - 1))) / (N - 2);
+  out.answer.push('skewness g\u2081 = ' + fmtNum(g1) + '  (sample-adjusted G\u2081 = ' + fmtNum(G1) + ')');
+  if (N >= 4) out.answer.push('excess kurtosis g\u2082 = ' + fmtNum(g2) + '  (sample-adjusted G\u2082 = ' + fmtNum((((N - 1) / ((N - 2) * (N - 3))) * ((N + 1) * g2 + 6))) + ')');
+  out.work.push('g\u2081 = m\u2083/m\u2082^(3/2),  g\u2082 = m\u2084/m\u2082\u00b2 \u2212 3 with m\u2096 = \u03a3(x \u2212 mean)\u1d4f/n');
+  out.value = { num: g1 };
+  return out;
+});
+defCmd('geomean geometricmean', (n) => {
+  const vs = dataOf(n.args, 'geomean');
+  if (vs.some((v) => v.sign() <= 0)) throw new MathError('the geometric mean needs positive numbers');
+  const prod = vs.reduce((s, v) => s.mul(v), Q1);
+  const S = simp(sPow(sN(prod), sN(new Q(1n, BigInt(vs.length)))));
+  const out = newOut();
+  out.answer.push(symText(S));
+  out.work.push('(product of the ' + vs.length + ' values)^(1/' + vs.length + ') with product ' + prod.toString());
+  out.value = { S };
+  return out;
+});
+defCmd('harmean harmonicmean', (n) => {
+  const vs = dataOf(n.args, 'harmean');
+  if (vs.some((v) => v.isZero())) throw new MathError('the harmonic mean needs non-zero numbers');
+  const out = newOut();
+  out.work.push('n / \u03a3(1/x)');
+  return qvOut(out, qInt(vs.length).div(sumQ(vs.map((v) => v.inv()))));
+});
+defCmd('rms rootmeansquare', (n) => {
+  const vs = dataOf(n.args, 'rms');
+  const q = sumQ(vs.map((v) => v.mul(v))).div(qInt(vs.length));
+  const S = qSqrtS(q);
+  const out = newOut();
+  out.answer.push(symText(S));
+  out.work.push('\u221a(\u03a3x\u00b2/n) with mean of squares ' + qText(q));
+  out.value = { S };
+  return out;
+});
+defCmd('cv coefficientofvariation', (n) => {
+  const vs = dataOf(n.args, 'cv');
+  const m = sumQ(vs).div(qInt(vs.length));
+  if (m.isZero()) throw new MathError('the mean is 0, so the coefficient of variation is undefined');
+  const s = Math.sqrt(qFloat(sampleVar(vs, false)));
+  const out = newOut();
+  out.answer.push('CV = s/mean = ' + fmtNum((s / qFloat(m)) * 100) + ' %');
+  out.work.push('mean = ' + qText(m) + ', sample standard deviation s = ' + fmtNum(s));
+  return out;
+});
+defCmd('wmean weightedmean', (n) => {
+  needArgs(n, 2, 2, 'the values and the weights: wmean([80, 90], [1, 3])');
+  const xs = listArg(n.args[0], 'wmean');
+  const ws = listArg(n.args[1], 'wmean');
+  if (xs.length !== ws.length) throw new MathError('give one weight for each value');
+  const tw = sumQ(ws);
+  if (tw.isZero()) throw new MathError('the weights add up to 0');
+  const out = newOut();
+  out.work.push('\u03a3(w\u00b7x)/\u03a3w = ' + sumQ(xs.map((x, i) => x.mul(ws[i]))).toString() + '/' + tw.toString());
+  return qvOut(out, sumQ(xs.map((x, i) => x.mul(ws[i]))).div(tw));
+});
+defCmd('zscores', (n) => {
+  const vs = dataOf(n.args, 'zscores');
+  const m = sumQ(vs).div(qInt(vs.length));
+  const v = sampleVar(vs, false);
+  if (v.isZero()) throw new MathError('all values are equal');
+  const sd = qSqrtS(v);
+  const out = newOut();
+  out.answer.push(vs.map((x) => fmtS(simp(sDiv(sN(x.sub(m)), sd)))).join(',  '));
+  out.work.push('z = (x \u2212 mean)/s with mean ' + qText(m) + ' and s = ' + symText(sd) + ' (sample standard deviation)');
+  return out;
+});
+defCmd('percentrank', (n) => {
+  needArgs(n, 2, 2, 'the data list and a value: percentrank([2,4,4,5,9], 5)');
+  const vs = listArg(n.args[0], 'percentrank');
+  const x = constQ(n.args[1]);
+  const below = vs.filter((v) => v.sub(x).sign() < 0).length;
+  const equal = vs.filter((v) => v.eq(x)).length;
+  const out = newOut();
+  out.answer.push('percentile rank of ' + x.toString() + ' = ' + fmtNum(((below + equal / 2) / vs.length) * 100) + ' %   (' + below + ' below, ' + equal + ' equal, of ' + vs.length + ')');
+  out.work.push('(number below + \u00bd\u00b7number equal)/n \u00d7 100');
+  return out;
+});
+defCmd('freqtable frequencytable histogram', (n) => {
+  needArgs(n, 2, 3, 'the data list and the class width (and optionally the first class start): freqtable([..], 5)');
+  const vs = sortQ(listArg(n.args[0], 'freqtable'));
+  const w = constQ(n.args[1]);
+  if (w.sign() <= 0) throw new MathError('the class width must be positive');
+  const start = n.args[2] ? constQ(n.args[2]) : floorQ(vs[0].div(w)).mul(w);
+  const classes = [];
+  for (let lo = start; lo.sub(vs[vs.length - 1]).sign() <= 0; lo = lo.add(w)) {
+    if (classes.length > 60) throw new MathError('too many classes: choose a larger class width');
+    classes.push({ lo, hi: lo.add(w), f: 0 });
+  }
+  vs.forEach((v) => {
+    const c = classes.find((k) => v.sub(k.lo).sign() >= 0 && v.sub(k.hi).sign() < 0);
+    if (c) c.f++;
+  });
+  const out = newOut();
+  let cum = 0;
+  out.answer.push('class            freq   rel.freq   cum.freq');
+  classes.forEach((k) => {
+    cum += k.f;
+    out.answer.push((k.lo.toString() + ' \u2013 <' + k.hi.toString()).padEnd(17) + String(k.f).padEnd(7) + fmtNum(k.f / vs.length).padEnd(11) + cum);
+  });
+  out.work.push('n = ' + vs.length + ' values; each class includes its lower limit and excludes its upper limit');
+  return out;
+});
+defCmd('stemleaf stemandleaf', (n) => {
+  const vs = sortQ(dataOf(n.args, 'stemleaf'));
+  if (vs.some((v) => !v.isInt() || v.sign() < 0)) throw new MathError('stem-and-leaf plots here need whole numbers that are not negative');
+  const stems = new Map();
+  vs.forEach((v) => {
+    const s = (v.n / 10n).toString();
+    stems.set(s, (stems.get(s) || []).concat([(v.n % 10n).toString()]));
+  });
+  const first = Number(vs[0].n / 10n);
+  const last = Number(vs[vs.length - 1].n / 10n);
+  const out = newOut();
+  out.answer.push('stem | leaves');
+  for (let s = first; s <= last; s++) out.answer.push(String(s).padStart(4) + ' | ' + (stems.get(String(s)) || []).join(' '));
+  out.work.push('key: 3 | 4 means 34;  n = ' + vs.length);
+  return out;
+});
+defCmd('grouped groupeddata', (n) => {
+  needArgs(n, 2, 2, 'the class midpoints and the frequencies: grouped([5, 15, 25], [3, 7, 2])');
+  const xs = listArg(n.args[0], 'grouped');
+  const fs = listArg(n.args[1], 'grouped');
+  if (xs.length !== fs.length) throw new MathError('give one frequency for each midpoint');
+  const N = sumQ(fs);
+  const m = sumQ(xs.map((x, i) => x.mul(fs[i]))).div(N);
+  const ss = sumQ(xs.map((x, i) => x.sub(m).mul(x.sub(m)).mul(fs[i])));
+  const out = newOut();
+  out.answer.push('mean = ' + qText(m));
+  if (N.sub(Q1).sign() > 0) out.answer.push('sample variance = ' + qText(ss.div(N.sub(Q1))) + ',  sample sd = ' + sqrtQText(ss.div(N.sub(Q1))));
+  out.answer.push('population variance = ' + qText(ss.div(N)) + ',  population sd = ' + sqrtQText(ss.div(N)));
+  out.work.push('N = \u03a3f = ' + N.toString() + ';  mean = \u03a3(f\u00b7x)/N;  variance = \u03a3 f(x \u2212 mean)\u00b2/(N or N \u2212 1)');
+  out.value = { q: m };
+  return out;
+});
+function ranksOf(vs) {
+  const idx = vs.map((v, i) => ({ v, i })).sort((a, b) => a.v.sub(b.v).sign());
+  const r = new Array(vs.length);
+  let i = 0;
+  while (i < idx.length) {
+    let j = i;
+    while (j + 1 < idx.length && idx[j + 1].v.eq(idx[i].v)) j++;
+    const avg = new Q(BigInt(i + j + 2), 2n);
+    for (let k = i; k <= j; k++) r[idx[k].i] = avg;
+    i = j + 1;
+  }
+  return r;
+}
+defCmd('ranks rankdata', (n) => {
+  const vs = dataOf(n.args, 'rank');
+  const out = newOut();
+  out.answer.push(ranksOf(vs).map((r) => r.toString()).join(', '));
+  out.work.push('rank 1 = smallest; tied values share the average of their ranks');
+  return out;
+});
+defCmd('spearman spearmanrho', (n) => {
+  const { xs, ys } = twoLists(n, 'spearman');
+  const rx = ranksOf(xs);
+  const ry = ranksOf(ys);
+  const { sxx, syy, sxy } = sums2(rx, ry);
+  if (sxx.isZero() || syy.isZero()) throw new MathError('one of the lists is constant');
+  const r2 = sxy.mul(sxy).div(sxx.mul(syy));
+  const S = sxy.sign() < 0 ? sNeg(qSqrtS(r2)) : qSqrtS(r2);
+  const out = newOut();
+  out.answer.push('\u03c1 = ' + symText(S));
+  out.work.push('Pearson correlation of the ranks: x ranks ' + rx.map((r) => r.toString()).join(', ') + ';  y ranks ' + ry.map((r) => r.toString()).join(', '));
+  out.value = { S };
+  return out;
+});
+defCmd('kendall kendalltau', (n) => {
+  const { xs, ys } = twoLists(n, 'kendall');
+  let conc = 0;
+  let disc = 0;
+  let tx = 0;
+  let ty = 0;
+  for (let i = 0; i < xs.length; i++) {
+    for (let j = i + 1; j < xs.length; j++) {
+      const a = xs[i].sub(xs[j]).sign();
+      const b = ys[i].sub(ys[j]).sign();
+      if (a === 0 && b === 0) continue;
+      if (a === 0) tx++;
+      else if (b === 0) ty++;
+      else if (a === b) conc++;
+      else disc++;
+    }
+  }
+  const denom = Math.sqrt((conc + disc + tx) * (conc + disc + ty));
+  if (!denom) throw new MathError('Kendall\'s tau is undefined for these lists');
+  const out = newOut();
+  out.answer.push('\u03c4_b = ' + fmtNum((conc - disc) / denom));
+  out.work.push(conc + ' concordant pairs, ' + disc + ' discordant pairs (ties handled by \u03c4_b)');
+  return out;
+});
+
+// ---- regression ---------------------------------------------------------------------------------------------------------------------------------------------------
+defCmd('multireg multipleregression multilinreg', (n) => {
+  needArgs(n, 2, 3, 'the rows of predictors and the y list: multireg([[1,2],[2,1],[3,5],[4,3]], [3,4,9,8])');
+  if (n.args[0].t !== 'list' || !n.args[0].items.length || n.args[0].items.some((r) => r.t !== 'list')) throw new MathError('the first argument is a list of rows, one per observation, e.g. [[1,2],[2,1],[3,5]]');
+  const X = n.args[0].items.map((r) => [Q1].concat(dataOf([r], 'multireg')));
+  const y = listArg(n.args[1], 'multireg');
+  if (X.length !== y.length) throw new MathError('give one y value for each row');
+  const p = X[0].length;
+  if (X.some((r) => r.length !== p)) throw new MathError('all rows need the same number of predictors');
+  if (X.length <= p) throw new MathError('more observations than coefficients are needed (' + X.length + ' rows, ' + p + ' coefficients with the intercept)');
+  const A = [];
+  const b = [];
+  for (let i = 0; i < p; i++) {
+    A.push([]);
+    for (let j = 0; j < p; j++) A[i].push(sumQ(X.map((r) => r[i].mul(r[j]))));
+    b.push(sumQ(X.map((r, k) => r[i].mul(y[k]))));
+  }
+  const c = solveSquare(A, b);
+  if (!c) throw new MathError('the predictors are linearly dependent, so the coefficients are not determined');
+  const pred = X.map((r) => sumQ(r.map((v, j) => v.mul(c[j]))));
+  const sse = sumQ(y.map((v, k) => v.sub(pred[k]).mul(v.sub(pred[k]))));
+  const my = sumQ(y).div(qInt(y.length));
+  const sst = sumQ(y.map((v) => v.sub(my).mul(v.sub(my))));
+  const out = newOut();
+  out.answer.push('y = ' + c.map((v, j) => (j === 0 ? v.toString() : (v.sign() < 0 ? '\u2212 ' + v.abs().toString() : '+ ' + v.toString()) + '\u00b7x' + j)).join(' '));
+  out.work.push('Normal equations (X\u1d40X)\u03b2 = X\u1d40y solved exactly, with a column of ones for the intercept');
+  out.work.push('SSE = ' + qText(sse) + (sst.isZero() ? '' : ',  R\u00b2 = ' + qText(Q1.sub(sse.div(sst)))));
+  out.work.push('fitted values: ' + pred.map((v) => fmtNum(qFloat(v))).join(', '));
+  if (n.args[2]) {
+    const x0 = dataOf([n.args[2]], 'multireg');
+    if (x0.length !== p - 1) throw new MathError('the prediction point needs ' + (p - 1) + ' values');
+    const yh = c[0].add(sumQ(x0.map((v, j) => v.mul(c[j + 1]))));
+    out.answer.push('prediction at [' + x0.map((v) => v.toString()).join(', ') + '] = ' + qText(yh));
+  }
+  return out;
+});
+function linearized(xs, ys, fx, fy, what) {
+  const X = xs.map(fx);
+  const Y = ys.map(fy);
+  const N = X.length;
+  const mx = X.reduce((s, v) => s + v, 0) / N;
+  const my = Y.reduce((s, v) => s + v, 0) / N;
+  const sxx = X.reduce((s, v) => s + (v - mx) ** 2, 0);
+  const sxy = X.reduce((s, v, i) => s + (v - mx) * (Y[i] - my), 0);
+  const syy = Y.reduce((s, v) => s + (v - my) ** 2, 0);
+  if (sxx === 0) throw new MathError(what + ': all the x values are equal');
+  const b = sxy / sxx;
+  return { a: my - b * mx, b, r2: syy === 0 ? 1 : (sxy * sxy) / (sxx * syy) };
+}
+function curveFit(kind) {
+  return (n) => {
+    const { xs, ys } = twoLists(n, kind);
+    const X = xs.map(qFloat);
+    const Y = ys.map(qFloat);
+    const out = newOut();
+    let fit;
+    if (kind === 'expreg') {
+      if (Y.some((v) => v <= 0)) throw new MathError('exponential regression needs positive y values');
+      fit = linearized(X, Y, (v) => v, Math.log, kind);
+      out.answer.push('y = ' + fmtNum(Math.exp(fit.a)) + ' \u00b7 ' + fmtNum(Math.exp(fit.b)) + '^x    (= ' + fmtNum(Math.exp(fit.a)) + ' \u00b7 e^(' + fmtNum(fit.b) + 'x))');
+      out.work.push('Fit ln y = ln a + x\u00b7ln b by least squares;  R\u00b2 of the linearised fit = ' + fmtNum(fit.r2));
+    } else if (kind === 'powerreg') {
+      if (X.some((v) => v <= 0) || Y.some((v) => v <= 0)) throw new MathError('power regression needs positive x and y values');
+      fit = linearized(X, Y, Math.log, Math.log, kind);
+      out.answer.push('y = ' + fmtNum(Math.exp(fit.a)) + ' \u00b7 x^' + fmtNum(fit.b));
+      out.work.push('Fit ln y = ln a + b\u00b7ln x by least squares;  R\u00b2 of the linearised fit = ' + fmtNum(fit.r2));
+    } else {
+      if (X.some((v) => v <= 0)) throw new MathError('logarithmic regression needs positive x values');
+      fit = linearized(X, Y, Math.log, (v) => v, kind);
+      out.answer.push('y = ' + fmtNum(fit.a) + ' + ' + fmtNum(fit.b) + ' \u00b7 ln(x)');
+      out.work.push('Fit y = a + b\u00b7ln x by least squares;  R\u00b2 = ' + fmtNum(fit.r2));
+    }
+    if (n.args[2]) {
+      const x0 = numArg(n.args[2]);
+      const yh = kind === 'expreg' ? Math.exp(fit.a + fit.b * x0) : kind === 'powerreg' ? Math.exp(fit.a) * x0 ** fit.b : fit.a + fit.b * Math.log(x0);
+      out.answer.push('prediction at x = ' + fmtNum(x0) + ': y \u2248 ' + fmtNum(yh));
+      out.value = { num: yh };
+    }
+    return out;
+  };
+}
+defCmd('expreg exponentialregression', curveFit('expreg'));
+defCmd('powerreg powerregression', curveFit('powerreg'));
+defCmd('logreg logarithmicregression', curveFit('logreg'));
+
+// ---- Markov chains, coupon collector --------------------------------------------------------------------------------------------------------------------------
+defCmd('markov markovchain', (n) => {
+  needArgs(n, 1, 3, 'the transition matrix (rows add up to 1) and optionally the number of steps and a starting distribution: markov([[0.9,0.1],[0.5,0.5]], 3, [1,0])');
+  if (n.args[0].t !== 'list' || n.args[0].items.some((r) => r.t !== 'list')) throw new MathError('the transition matrix is written like [[0.9, 0.1], [0.5, 0.5]]');
+  const P = n.args[0].items.map((r) => dataOf([r], 'markov'));
+  const m = P.length;
+  if (m < 2 || m > 10 || P.some((r) => r.length !== m)) throw new MathError('the matrix must be square, between 2\u00d72 and 10\u00d710');
+  P.forEach((r, i) => {
+    if (r.some((v) => v.sign() < 0)) throw new MathError('probabilities cannot be negative');
+    if (!sumQ(r).eq(Q1)) throw new MathError('row ' + (i + 1) + ' adds up to ' + sumQ(r).toString() + ', not 1');
+  });
+  const out = newOut();
+  // stationary distribution: \u03c0(P \u2212 I) = 0 with \u03a3\u03c0 = 1
+  const A = [];
+  for (let j = 0; j < m; j++) A.push(P.map((r, i) => (i === j ? r[j].sub(Q1) : r[j])).concat([Q0]));
+  A.push(new Array(m).fill(Q1).concat([Q1]));
+  const { M, pivots, inconsistent } = rrefQ(A, m);
+  if (!inconsistent && pivots.length === m) {
+    const pi = M.slice(0, m).map((r) => r[m]);
+    out.answer.push('stationary distribution \u03c0 = [' + pi.map((v) => v.toString()).join(', ') + ']  (\u2248 [' + pi.map((v) => fmtNum(qFloat(v))).join(', ') + '])');
+    out.work.push('Solve \u03c0P = \u03c0 with \u03a3\u03c0\u1d62 = 1 exactly');
+  } else {
+    out.answer.push('no single stationary distribution (the chain has more than one closed class)');
+  }
+  const absorbing = P.map((r, i) => (r[i].eq(Q1) ? i + 1 : 0)).filter(Boolean);
+  if (absorbing.length) out.work.push('absorbing state' + (absorbing.length > 1 ? 's' : '') + ': ' + absorbing.join(', '));
+  if (n.args[1]) {
+    const steps = Number(intArg(n.args[1]));
+    if (steps < 0 || steps > 200) throw new MathError('use between 0 and 200 steps');
+    let v = n.args[2] ? listArg(n.args[2], 'markov') : P.map((_, i) => (i === 0 ? Q1 : Q0));
+    if (v.length !== m) throw new MathError('the starting distribution needs ' + m + ' entries');
+    for (let s = 0; s < steps; s++) v = v.map((_, j) => sumQ(v.map((x, i) => x.mul(P[i][j]))));
+    out.answer.push('after ' + steps + ' step' + (steps === 1 ? '' : 's') + ': [' + v.map((x) => x.toString()).join(', ') + ']  (\u2248 [' + v.map((x) => fmtNum(qFloat(x))).join(', ') + '])');
+  }
+  return out;
+});
+defCmd('coupon couponcollector', (n) => {
+  needArgs(n, 1, 1, 'the number of different coupons n: coupon(10)');
+  const nn = intArg(n.args[0]);
+  if (nn < 1n || nn > 2000n) throw new MathError('n must be between 1 and 2000');
+  let h = Q0;
+  for (let k = 1n; k <= nn; k++) h = h.add(new Q(1n, k));
+  const e = h.mul(new Q(nn));
+  const out = newOut();
+  out.answer.push('expected number of draws = n\u00b7H\u2099 = ' + (nn <= 60n ? qText(e) : '\u2248 ' + fmtNum(qFloat(e))));
+  out.work.push('n\u00b7(1 + 1/2 + \u2026 + 1/n) with n = ' + nn);
+  out.value = { num: qFloat(e) };
+  return out;
+});
 
 // ======================================================================
 // 90. Routing of command statements (integrate(...), det(...), matrices, ODEs ...)

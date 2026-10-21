@@ -9,6 +9,8 @@ HELP.index = [
   '  equations   equations, systems, inequalities, formulas ("solve for t"), complex numbers',
   '  calculus    integrate, diff, limit, taylor, sum, product, tangent lines, curve study, areas and volumes',
   '  ode         differential equations (first order, linear of any order, systems) and Laplace transforms',
+  '  curves      parametric and polar curves (slope, length, area), curvature, velocity, line integrals, potential functions, coordinate systems',
+  '  numerical   Euler / Runge-Kutta, trapezoid / Simpson rules, bisection / secant, interpolation, splines, curve fitting',
   '  algebra     factor, expand, simplify, apart, gcd, lcm, divide, complex numbers',
   '  matrix      determinant, inverse, eigenvalues, rank, systems, vectors',
   '  number      primes, divisors, modular arithmetic, counting, sequences, sets, number bases',
@@ -55,6 +57,23 @@ HELP.calculus = [
   '  areabetween(f, g, x)  or  areabetween(f, g, x, a, b)   volumerev(f, x, a, b)  volumerev(f, g, x, a, b)  (about the x-axis)',
   '  shells(f, x, a, b)  (about the y-axis)   arclength(f, x, a, b)   surfacearea of revolution: surfacearearev(f, x, a, b)   avgvalue(f, x, a, b)',
   '  differential equations and Laplace transforms:  help ode',
+].join('\n');
+HELP.curves = [
+  'PARAMETRIC AND POLAR CURVES, MOTION IN SPACE, LINE INTEGRALS',
+  '  parametric:  paramdiff(x(t), y(t), t, t0)  (dy/dx, d²y/dx², tangent line)   paramlength(x(t), y(t), t, a, b)  or  paramlength([x(t), y(t), z(t)], t, a, b)   paramarea(x(t), y(t), t, a, b)',
+  '  polar:  polararea(r, t, a, b)   polarlength(r, t, a, b)   polarslope(r, t, t0)      e.g. polararea(1 + cos(t), t, 0, 2*pi)    (t stands for the angle θ)',
+  '  coordinates:  topolar(x, y)  torect(r, θ)  tocylindrical(x, y, z)  fromcylindrical(r, θ, z)  tospherical(x, y, z)  fromspherical(ρ, φ, θ)',
+  '  motion:  velocity([x(t), y(t), z(t)], t, t0) [acceleration, speed]   curvature([x(t), y(t)], t, t0)  or  curvature(f, x, x0)   tnb([x(t), y(t), z(t)], t, t0)  (T, N, B, curvature, torsion)',
+  '  fields:  lineintegral([P, Q], [x(t), y(t)], t, a, b)  (∫F·dr)   lineintegral(f, [x(t), y(t)], t, a, b)  (∫f ds)   potential([P, Q, R])  (conservative? potential function)',
+  '  see also: grad, curl, divergence in  help multivar;  arclength(f, x, a, b)  for y = f(x)',
+].join('\n');
+HELP.numerical = [
+  'NUMERICAL METHODS (the iterations are done in exact fractions while the numbers stay rational)',
+  "  ODE y' = f(x, y):  euler(f, x0, y0, h, xend)   heun(...) [improvedeuler]   rk2(...) [midpointmethod]   rk4(...) [rungekutta]   e.g. euler(x + y, 0, 1, 0.1, 0.5)",
+  '  integrals:  trapezoid(f, a, b, n) [trapezoidrule, trapezoidal]  simpson(f, a, b, n)  midpointrule(f, a, b, n)  leftsum / rightsum(f, a, b, n)  riemann(f, a, b, n, left|right|mid)   (also the exact value, the error and the error bound)',
+  '              trapezoidn(f, a, b, tol)  simpsonn(f, a, b, tol)  midpointn(f, a, b, tol)   smallest n that guarantees an error below tol',
+  '  roots:  bisection(f, a, b, steps)  secant(f, x0, x1, steps)  falseposition(f, a, b, steps)  fixedpoint(g, x0, steps)  newton(f, x, x0, steps)',
+  '  data:  interpolate([0,1,2], [1,3,7], 1.5) [newtoninterp]  polyfit(xs, ys, degree, x0)  spline(xs, ys, x0) [naturalspline]  difftable([1,4,9,16])  numdiff(f, x0, h) [finitedifference]',
 ].join('\n');
 HELP.ode = [
   'DIFFERENTIAL EQUATIONS (write the equation as it is; add initial conditions after a comma or semicolon: y(0) = 1, y\'(0) = 0)',
@@ -122,12 +141,17 @@ HELP.stats = [
   '  normalcdf(x)  normalcdf(x, mean, sd)  normalcdf(a, b, mean, sd)  (use oo for infinity)   normalpdf   invnorm(p, mean, sd)   zcrit(95)',
   '  tcdf(t, df) invt(p, df) tcrit(0.95, df)   chi2cdf(x, df) invchi2(p, df)   fcdf(f, d1, d2)   expcdf(rate, x) [exponentialcdf]',
   '  zinterval(mean, sigma, n, 0.95)   tinterval(mean, s, n, 0.95)  or tinterval([data], 0.95)   propinterval(x, n, 0.95)',
+  '  more distributions (pdf / cdf):  unifpdf unifcdf(x, a, b)  exppdf(x, rate) invexp(p, rate)  gammapdf gammacdf(x, shape, scale) invgamma  betapdf betacdf(x, a, b) invbeta  weibullpdf weibullcdf(x, k, lambda)  lognormpdf lognormcdf(x, mu, sigma)  tpdf chi2pdf fpdf  invf(p, d1, d2)  negbinpdf negbincdf(k, r, p)',
+  '  two samples:  ttest2(m1, s1, n1, m2, s2, n2)  or  ttest2([data1], [data2])  (Welch)   ttest2pooled(...)   tinterval2(..., 0.95) tinterval2pooled   pairedt([before], [after])   ztest2(m1, s1, n1, m2, s2, n2)   prop2test(x1, n1, x2, n2)   prop2interval(x1, n1, x2, n2, 0.95)',
+  '  other tests:  anova([g1], [g2], [g3])   corrtest(xs, ys)   vartest(s, n, sigma0)   ftest2(s1, n1, s2, n2)   varinterval(s, n, 0.95)   samplesize(sigma, E, conf)   samplesizeprop(E, conf, p)   clt(mu, sigma, n, x)   binomnormal(n, p, k)',
+  '  descriptive:  outliers(list)  fivenum  mad  skewness  kurtosis  geomean  harmean  rms  cv  wmean([values], [weights])  zscores  percentrank(list, x)  freqtable(list, width)  stemleaf(list)  grouped([midpoints], [freqs])  ranks  spearman(xs, ys)  kendall(xs, ys)',
+  '  regression:  multireg([[x1, x2], ...], [y...], [x1, x2])   expreg  powerreg  logreg (xs, ys, x0)     Markov chains: markov([[0.9,0.1],[0.5,0.5]], 3, [1,0])     coupon(n)',
   '  ztest(mean, mu0, sigma, n)   ttest(mean, s, n, mu0)  or ttest([data], mu0)   proptest(x, n, p0)   chisqtest([[10,20],[30,40]])  or  chisqtest(observed, expected)',
 ].join('\n');
 HELP.geometry = [
   'GEOMETRY',
   '  circle(r) circle(d=10)  sphere(r)  cylinder(r, h)  cone(r, h)  box(l, w, h)  cube(s)  pyramid(B, h)  rectangle(w, h)  square(s)',
-  '  trapezoid(a, b, h)  parallelogram(b, h)  rhombus(p, q)  ellipse(a, b)  sector(r, degrees)  polygon(n, side)  hypotenuse(a, b)  leg(c, a)',
+  '  trapezoid(a, b, h) [trapezium]  parallelogram(b, h)  rhombus(p, q)  ellipse(a, b)  sector(r, degrees)  polygon(n, side)  hypotenuse(a, b)  leg(c, a)',
   '  triangle(a, b, c)  or named parts  triangle(a=3, b=4, C=60)  (sides a b c, angles A B C in degrees; SSS SAS ASA AAS SSA)',
   '  righttriangle(a=3, b=4)   righttriangle(c=10, A=30)',
   '  distance([1,2],[4,6])  midpoint(P, Q)  slope(P, Q)  line(P, Q)  pointlinedistance(x0, y0, a, b, c)  polygonarea([0,0],[4,0],[4,3])  centroid(P, Q, R)',
@@ -151,7 +175,7 @@ HELP.plot = [
 ].join('\n');
 const HELP_ALIAS = {
   '': 'index', help: 'index', commands: 'index', all: 'index', topics: 'index', input: 'syntax', notation: 'syntax', solve: 'equations', inequalities: 'equations', systems: 'equations', formulas: 'equations',
-  diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
+  diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', parametric: 'curves', polar: 'curves', motion: 'curves', vectorfields: 'curves', lineintegrals: 'curves', coordinates: 'curves', numerics: 'numerical', numericalmethods: 'numerical', 'numerical methods': 'numerical', euler: 'numerical', rungekutta: 'numerical', quadrature: 'numerical', integration: 'calculus', interpolation: 'numerical', rootfinding: 'numerical', splines: 'numerical', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
   discrete: 'number', counting: 'number', probability: 'stats', statistics: 'stats', geometry: 'geometry', conic: 'geometry', conics: 'geometry', triangles: 'geometry',
   finance: 'units', chemistry: 'units', physics: 'units', conversion: 'units', graph: 'plot', plots: 'plot', plotting: 'plot', graphs: 'plot',
 };

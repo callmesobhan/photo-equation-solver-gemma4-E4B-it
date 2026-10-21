@@ -635,7 +635,7 @@ defCmd('inversefunction finverse inverse_function', (n) => {
   out.work.push('Swap: y = ' + fmtS(S) + ' and solve for ' + v + ', then rename y as ' + v);
   return out;
 });
-defCmd('compose composition', (n) => {
+defCmd('compose', (n) => {
   needArgs(n, 2, 3, 'f, g and optionally the variable');
   const f = fromAst(n.args[0]);
   const g = fromAst(n.args[1]);

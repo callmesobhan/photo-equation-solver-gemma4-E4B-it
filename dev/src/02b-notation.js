@@ -7,8 +7,11 @@
 
 /** Registry of command names (filled by the modules that implement them). */
 const COMMANDS = {};
-function defCmd(names, fn) {
-  names.split(' ').forEach((n) => { COMMANDS[n] = fn; });
+function defCmd(names, fn, replaces) {
+  names.split(' ').forEach((n) => {
+    if (COMMANDS[n] && !replaces) throw new Error('command name registered twice: ' + n); // caught by every test, never reaches users
+    COMMANDS[n] = fn;
+  });
 }
 
 /** End of an expression that runs to the end of the statement (stops at ; , newline or a relation). */

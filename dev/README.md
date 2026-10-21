@@ -42,6 +42,9 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `14-plot.js` | Graphs drawn on a canvas and returned as a PNG |
 | `15-help.js` | Built-in `help` text (checked by the documentation test) |
 | `16-linprog.js` | Linear programming by exact corner-point enumeration |
+| `17-numerical.js` | Euler / Heun / Runge-Kutta steppers, Riemann / trapezoid / midpoint / Simpson rules with error bounds, bisection / secant / false position / fixed point, interpolation, splines, least-squares polynomials |
+| `18-curves.js` | Parametric and polar curves, coordinate systems, velocity / curvature / TNB frame, line integrals, potential functions |
+| `19-stats2.js` | More distributions, two-sample / paired / ANOVA / correlation / variance tests, sample sizes, descriptive measures, rank correlation, multiple and curve regression, Markov chains |
 | `90-dispatch.js` | Routing of command statements |
 | `99-main.js` | `window.ai_edge_gallery_get_result` entry point and request parsing |
 
@@ -49,7 +52,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 
 | File | What it checks |
 |------|----------------|
-| `cases.mjs` + `run-cases.mjs` | 517 hand-written input → expected output cases |
+| `cases.mjs` + `run-cases.mjs` | 568 hand-written input → expected output cases |
 | `doc-test.mjs` | every example in `SKILL.md` runs; every command appears in the built-in help |
 | `props.mjs`, `gen_expr.py`, `gen_poly.py` | random expressions / polynomials / systems against Fraction and numpy |
 | `cas-props.mjs`, `gen_cas.py` | the symbolic core against sympy |
@@ -62,6 +65,9 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `ode-battery.mjs`, `ode-verify.mjs`, `mathexpr.mjs` | 94 differential equations and systems: every printed answer is parsed by an independent evaluator (`mathexpr.mjs`) and substituted back into the equation with numerical derivatives (implicit answers by implicit differentiation) |
 | `ode-fuzz.mjs` | ~600 random equations per seed from the textbook families (linear, separable, Bernoulli, homogeneous, exact, constant-coefficient order 2-3, Euler, variation of parameters): any answer that fails the substitution is a bug |
 | `calc-random-battery.mjs` | random limits, Taylor polynomials, definite integrals of rational functions (with rational and irrational poles: "diverges" must be reported exactly when a pole lies inside) and finite sums, checked by direct numerical evaluation |
+| `numerical-battery.mjs`, `gen_numerical.py` | ODE steppers, quadrature rules, interpolation, splines, least squares and root finders against exact fractions / numpy / scipy |
+| `curves-battery.mjs`, `gen_curves.py` | parametric / polar / vector calculus against sympy and scipy.integrate |
+| `stats2-battery.mjs`, `gen_stats2.py` | extra distributions, tests, descriptive measures and regressions against scipy.stats / numpy |
 | `eq-battery.mjs` | random rational / radical / exponential / logarithmic / absolute-value / polynomial equations (every solution substituted, no sign change of lhs − rhs missed) and inequalities (the printed set agrees with the inequality at hundreds of random points) |
 | `rational-battery.mjs` | random rational functions with non-monic and repeated factors: `apart`, `integrate` and `ilaplace` answers are checked numerically |
 | `linalg-battery.mjs`, `gen_linalg.py` | linear algebra against sympy |
