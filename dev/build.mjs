@@ -17,9 +17,17 @@ let body = parts.map((f) => fs.readFileSync(path.join(srcDir, f), 'utf8').trimEn
 body = body.replace(/[^\x00-\x7e]/g, (c) => '\\u' + c.charCodeAt(0).toString(16).padStart(4, '0'));
 if (/[^\x00-\x7e]/.test(body.replace(/\\u[0-9a-f]{4}/g, ''))) throw new Error('non-ASCII left over');
 
-const testHook = expose
-  ? "\nwindow.__test = { Q, qInt, polyRoots, parseExpression, normalizeText, splitStatements, cleanStatement, evalRF, evalNum, rfConstQ, rfConst, recognize, solveProblem, simplifySqrt, toFraction, showRaw, polyText, MathError, NotAlgebraic, collectVars, pdivmod, pmul, padd, peval, pevalNum, toIntPoly };"
-  : '';
+// For the tests only (--expose): export every top-level function / class / const of the page.
+const names = [...body.matchAll(/^(?:async\s+)?(?:function\s*\*?|class|const|let)\s+([A-Za-z_$][\w$]*)/gm)].map((m) => m[1]);
+const seen = new Map();
+for (const f of parts) {
+  const text = fs.readFileSync(path.join(srcDir, f), 'utf8');
+  for (const m of text.matchAll(/^(?:async\s+)?(?:function\s*\*?|class|const|let)\s+([A-Za-z_$][\w$]*)/gm)) {
+    if (seen.has(m[1])) throw new Error('duplicate top-level name "' + m[1] + '" in ' + f + ' (first in ' + seen.get(m[1]) + ')');
+    seen.set(m[1], f);
+  }
+}
+const testHook = expose ? '\nwindow.__test = { ' + [...new Set(names)].join(', ') + ' };' : '';
 
 const html = `<!--
   Photo Equation Solver - AI Edge Gallery skill script.

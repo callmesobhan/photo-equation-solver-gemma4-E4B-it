@@ -19,10 +19,7 @@ function usesTrig(n) {
 
 // ---- statements -----------------------------------------------------------------
 function parseStatement(text) {
-  const re = /<=|>=|!=|=|<|>/g;
-  const ops = [];
-  let m;
-  while ((m = re.exec(text))) ops.push({ op: m[0], i: m.index });
+  const ops = topLevelRelations(text);
   if (!ops.length) return { kind: 'expr', node: parseExpression(text) };
   const pieces = [];
   let from = 0;
@@ -48,7 +45,7 @@ function parseStatement(text) {
 }
 const REL_SHOW = { '<=': ' ≤ ', '>=': ' ≥ ', '!=': ' ≠ ', '<': ' < ', '>': ' > ', '=': ' = ' };
 function showStatement(st) {
-  if (st.kind === 'expr') return showRaw(st.node);
+  if (st.kind === 'expr') return readAsNode(st.node);
   if (st.kind === 'eq') return showRaw(st.lhs) + ' = ' + showRaw(st.rhs);
   return st.nodes.map(showRaw).reduce((acc, s, k) => acc + (k ? REL_SHOW[st.ops[k - 1]] : '') + s, '');
 }
@@ -816,7 +813,10 @@ function compareConstants(lhs, op, rhs) {
 function solveProblem(text, solveFor) {
   const parts = splitStatements(stripAsk(normalizeText(text))).map(cleanStatement).filter(Boolean);
   if (!parts.length) throw new MathError('no math was found in the input');
-  const sts = parts.map(parseStatement);
+  let sts = parts.map(parseStatement);
+  const special = trySpecial(sts, solveFor);
+  if (special) return special;
+  sts = sts.map(resolveCommandsStatement);
   const readAs = sts.map(showStatement).join(';  ');
   const kinds = new Set(sts.map((s) => s.kind));
   if (kinds.size > 1) throw new MathError('equations, inequalities and plain expressions cannot be mixed in one problem; send them as separate problems');

@@ -142,6 +142,14 @@ function callNum(fn, a) {
     case 'sqrt': return Math.sqrt(x);
     case 'cbrt': return Math.cbrt(x);
     case 'root': return a.length > 1 ? powNum(a[1], 1 / x) : NaN;
+    case 'zeta': {
+      if (!(x > 1)) return NaN;
+      const N = 24;
+      let s = 0;
+      for (let k = 1; k < N; k++) s += Math.pow(k, -x);
+      return s + Math.pow(N, 1 - x) / (x - 1) + 0.5 * Math.pow(N, -x) + (x * Math.pow(N, -x - 1)) / 12 - (x * (x + 1) * (x + 2) * Math.pow(N, -x - 3)) / 720;
+    }
+    case 'fact': return factorial(x);
     case 'abs': return Math.abs(x);
     case 'floor': return Math.floor(x);
     case 'ceil': return Math.ceil(x);
@@ -156,11 +164,12 @@ function evalNum(n, env) {
       if (v === undefined) throw new MathError('unknown variable ' + n.name);
       return v;
     }
-    case 'const': return n.name === 'pi' ? Math.PI : Math.E;
+    case 'const': return n.name === 'pi' ? Math.PI : n.name === 'oo' ? Infinity : Math.E;
     case 'neg': return -evalNum(n.a, env);
+    case 'list': case 'named': case 'dvar': throw new MathError('this cannot be used as a number here');
     case 'pct': return evalNum(n.a, env) / 100;
     case 'fact': return factorial(evalNum(n.a, env));
-    case 'call': return callNum(n.fn, n.args.map((x) => evalNum(x, env)));
+    case 'call': return n.cmd ? commandNumber(n, env) : callNum(n.fn, n.args.map((x) => evalNum(x, env)));
     default: {
       const a = evalNum(n.a, env);
       const b = evalNum(n.b, env);
