@@ -1,7 +1,8 @@
-# Photo Equation Solver
+# Photo Math Solver
 
-Take a photo of an equation, a system of equations, an inequality or an arithmetic
-problem, and get an **exact** answer - with no internet and no cloud service.
+Take a photo of a math problem - an equation, an integral, a matrix, a triangle, a
+statistics question, a chemical equation - and get an **exact** answer, with no internet
+and no cloud service.
 
 ![JS](https://img.shields.io/badge/JS-0a9396) ![Image](https://img.shields.io/badge/Vision-0466c8) ![Offline](https://img.shields.io/badge/Offline-2dc653)
 
@@ -9,35 +10,44 @@ problem, and get an **exact** answer - with no internet and no cloud service.
 
 ```text
  photo ──► Gemma reads the math (vision) ──► plain text ──► run_js ──► exact solver ──► answer
-           on-device LLM                     "2x^2-5x+3=0"  hidden      pure JS, no
-                                                            webview     network
+           on-device LLM                     "integrate(x*e^x, x, 0, 1)"  hidden       pure JS, no
+                                                                          webview      network
 ```
 
 Small on-device models are good at *reading* a picture and bad at *calculating*.
-So the model only transcribes the math into plain text, and a deterministic solver
-bundled in `scripts/index.html` does all the maths with exact fractions. The answer
-always starts with a **"Read as"** line that shows how the picture was read, so a
-misread digit is easy to spot.
+So the model only transcribes the math into plain text (or into one of the commands
+below), and a deterministic solver bundled in `scripts/index.html` does all the maths
+with exact fractions and symbolic expressions. The answer always starts with a
+**"Read as"** line that shows how the picture was read, so a misread digit is easy to spot.
 
-Everything runs on the phone. `scripts/index.html` is a single self-contained file:
-no CDN, no `fetch`, no API key, no secret.
+Everything runs on the phone. `scripts/index.html` is a single self-contained file
+(about 450 KB): no CDN, no `fetch`, no API key, no secret. Ask it for `help` (or
+`help calculus`, `help stats`, ...) and it lists every command - offline too - so
+`SKILL.md` can stay short.
 
-## What it can solve
+## What it can do
 
-| You send | Example | Answer |
-|----------|---------|--------|
-| Arithmetic, fractions, roots, powers, `!`, `%` | `3/4 + 5/6` | `19/12 (≈ 1.5833333)` |
-| Linear / quadratic / any polynomial equation | `2x^2 - 5x + 3 = 0` | `x = 1`, `x = 3/2`; exact surds `(-1 + √5)/2`; complex roots |
-| Equations with fractions (excluded values are rejected) | `(x^2-4)/(x-2) = 4` | `no solution` (x = 2 is not allowed) |
-| Systems of linear equations (exact) | `x + y = 10; x - y = 2` | `x = 6, y = 4`; also "no solution" / "infinitely many" |
-| Non-linear systems, up to 3 unknowns (numeric) | `x + y = 7; x^2 + y^2 = 25` | `x = 3, y = 4` and `x = 4, y = 3` |
-| Trig, exponential, log, root, absolute value | `sin(x) = 1/2` | `x = π/6 + 2πk`, `x = 5π/6 + 2πk` |
-| Inequalities, one unknown | `x^2 - 5x + 6 >= 0` | `x ≤ 2 or x ≥ 3`, `(-∞, 2] ∪ [3, ∞)` |
-| One equation, several unknowns | `2x + 3y = 12` (`solve_for: y`) | `y = 4 - (2/3)x` |
-| Several problems in one photo | `problems: [...]` | answered one by one |
+| Area | Examples (what the model sends) |
+|------|---------------------------------|
+| **Equations** | linear, quadratic, any polynomial, rational, radical, exponential, logarithmic, trigonometric, absolute value; systems (exact when linear); inequalities; `2x^2 - 5x + 3 = 0`, `x + y = 7; x^2 + y^2 = 25`, `x^2 - 5x + 6 >= 0` |
+| **Formulas** | solve for any letter: `v = u + a*t` (t), `d = v*t + a*t^2/2` (t), `1/f = 1/u + 1/v` (v), `A = P*e^(r*t)` (t) |
+| **Calculus** | `integrate(f, x)` (checked by differentiating), definite and improper integrals, `diff(f, x, n)`, `limit(f, x, a)` (one-sided, at infinity), `taylor`, `sum` / `product` (finite and infinite, convergence reported), differential equations (first order linear and separable, constant-coefficient of any order with forcing and initial conditions) |
+| **Algebra** | `factor`, `expand`, `simplify`, `apart` (partial fractions), `gcd`/`lcm`, polynomial division, exact radicals |
+| **Complex numbers** | `(3+4i)(1-2i)`, `sqrt(-4)`, `e^(i*pi)`, `(1+i)^10`, `polar`, `conj`, `nthroots(8, 3)`, `z^2 = 3+4i`, `(2+i)z = 3-i` |
+| **Linear algebra** (exact fractions) | `det`, `inv`, `rank`, `rref`, `nullspace`, `charpoly`, `eigen`, `diagonalize`, `lu`, `linsolve`, `A*B`, `A^-1`, `dot`, `cross`, `norm`, `angle` |
+| **Number theory and counting** | `isprime`, `factor(n)`, `divisors`, `totient`, `mod`, `modinv`, `modpow`, `crt`, `x ≡ 2 (mod 3), x ≡ 3 (mod 5)`, `diophantine`, `ncr`, `npr`, `multiset`, `catalan`, `fibonacci`, `partitions`, `sequence(2,6,12,20)` (next terms and formula), base conversion, sets |
+| **Statistics and probability** | mean/median/mode/variance/stdev/quartiles/`summary`, `correlation`, `linreg`, binomial, Poisson, geometric, hypergeometric, normal, t, chi-square, F distributions and their inverses, confidence intervals, z/t/proportion/chi-square tests, `bayes`, `expect` |
+| **Geometry** | areas, volumes, surface areas of the usual shapes, triangles from any 3 parts (SSS, SAS, ASA, AAS, SSA incl. the ambiguous case), right triangles, distance/midpoint/slope/line, polygon area, **conic sections** (circle, ellipse, parabola, hyperbola: center, radius, foci, vertices, directrix, asymptotes from the equation) |
+| **Units** | `convert 5 km to miles`, `72 °F to °C`, `60 mph to km/h`, `2.5 GB to MB` (length, mass, time, area, volume, speed, force, pressure, energy, power, data, angle, temperature) |
+| **Finance** | `compound`, `continuous`, `loan` (payment, total interest), `annuityfv`/`annuitypv`, `npv`, `irr`, `effrate`, `doubletime`, `pctchange` |
+| **Chemistry** | `molarmass(Ca(OH)2)`, `percentcomp`, `moles`, `grams`, **`balance H2 + O2 -> H2O`**, `ph` |
+| **Physics** | `suvat(u=0, a=9.8, t=3)` (any 3 of s,u,v,a,t), `projectile`, `freefall`; any other formula by solving it for a letter |
+| **Graphs** | `plot(sin(x), x, -2*pi, 2*pi)`, up to six curves, `plotparam`, `plotpolar`; the picture is returned to the chat with the zeros, extrema and y-intercept listed |
 
-Not supported: calculus (derivatives, integrals), matrices, word problems (the model has
-to turn them into equations first), complex-number input, inequalities with trig.
+Not supported: word problems (the model has to turn them into an equation or command
+first), differential equations beyond the types above, symbolic integration of
+functions with no closed form (the answer says so and gives a numeric value for
+definite integrals), 3-D graphs.
 
 ## Install
 
@@ -58,7 +68,7 @@ You need the model **Gemma-4-E4B-it** in the **Agent Skills** task.
    - **Create / edit a skill** (if your version has it) - name `photo-equation-solver`,
      paste the description and the text below the second `---` of `SKILL.md` as the
      instructions, and paste the whole `scripts/index.html` as the script `index.html`.
-     *(fully offline)*
+     *(fully offline; the script is large, so paste from a file rather than retyping)*
    - **Load skill from URL** - host the folder on a real web host (GitHub Pages with an
      empty `.nojekyll` file; not `raw.githubusercontent.com`) and enter the folder URL.
      Check that `<url>/SKILL.md` shows the raw text. *(needs internet at run time)*
@@ -70,26 +80,29 @@ source is not in this repository, so its labels may differ slightly.
 ## Use it
 
 1. In **Agent Skills**, tap the image button and take or choose a photo of the math.
-2. Type something short such as *"solve this"*.
+2. Type something short such as *"solve this"*, *"find the determinant"* or *"plot this"*.
 3. Check the **Read as** line against your photo. If it is wrong, retake the photo.
 
-Tips for a good photo: fill the frame with the equation, hold the phone parallel to the
+Tips for a good photo: fill the frame with the math, hold the phone parallel to the
 page, good even light, dark ink on white paper, one problem (or one system) per photo.
 Neat handwriting works; cramped or slanted handwriting is where misreads happen.
 
 If you tap the tool-call panel in the chat you can see exactly what text the model sent
-to the solver, and the console log of the script.
+to the solver. Typing `help` as the equation shows every command.
 
 ## Notation the solver understands
 
 You normally never type this yourself - the model writes it from the picture - but it
 helps to know how the text is read:
 
-- `^` power (`x^2`, also `x²`, `x**2`), `sqrt()`, `cbrt()`, `abs()` or `|x|`, `pi`/`π`, `e`
+- `^` power (`x^2`, also `x²`, `x**2`), `sqrt()`, `cbrt()`, `root(n, x)`, `abs()` or `|x|`, `pi`/`π`, `e`, `i`
 - `sin cos tan cot sec csc asin acos atan sinh cosh tanh`, `ln`, `log` (base 10), `log2`, `log_b(x)`, `exp`, `n!`, `50%`, `30°`
 - implicit multiplication (`2x`, `3(x+1)`, `xy`) and `× · * ÷ /`
 - division and multiplication go left to right: `1/2x` means `(1/2)·x`; write `1/(2x)` if you mean that
-- LaTeX such as `\frac{a}{b}` and `\sqrt{x}`, unicode `− × ÷ √ π ≤ ≥ ≠ ½`, and mixed numbers `3 1/2` are tolerated
+- letters keep their case, so `F = m*a` and `E = m*c^2` stay as written; subscripts: `R_1`, `x_0`
+  (`R1` and `R2` together are read as `R_1`, `R_2`)
+- printed notation: `∫_a^b f dx`, `lim_{x→a}`, `Σ_{k=1}^n`, `d/dx`, `dy/dx`, `y''`, `pmatrix` matrices, `\frac{a}{b}`, unicode `− × ÷ √ π ≤ ≥ ≠ ½ ≡`
+- commands are written `name(arguments)`; named arguments are allowed: `triangle(a=3, b=4, C=60)`
 - systems: separate equations with `;`, a new line, `,` or `and`
 
 ## Limits worth knowing
@@ -101,12 +114,21 @@ helps to know how the text is read:
 - Non-linear systems are found numerically from a grid of starting points, so a solution
   far from the origin can be missed (a note says so).
 - Polynomial roots of degree 3 and up that have no rational root are numeric (8 digits).
+- Normal/t/chi-square probabilities are double-precision numbers (about 8 digits shown).
+- A rate written as `5` or `5%` means 5 percent; `0.05` also means 5 percent.
+- Quartiles use the "median of the halves" method taught in most textbooks; `percentile`
+  interpolates linearly. Other software can differ in the last digit for small samples.
+- Unit factors are the exact definitions (1 in = 0.0254 m, 1 lb = 0.45359237 kg, US gallon, ...);
+  a "year" is 365.25 days. Without the word "convert", ambiguous short units such as
+  `in` or `m` are only read as units when the sentence is clear.
+- Capital letters are separate variables from small letters (`R` ≠ `r`), and a lone `e`
+  is Euler's number, so use a capital `E` for energy.
 
 ## Files
 
 ```text
 photo-equation-solver/
-├── SKILL.md            instructions + examples for the model
+├── SKILL.md            instructions + examples for the model (kept short on purpose)
 ├── README.md           this file
 └── scripts/
     └── index.html      the solver (generated; source and tests live in the repo's dev/ folder)
@@ -114,17 +136,22 @@ photo-equation-solver/
 
 ## Testing status
 
-Automated, on a desktop (see `dev/run-all.sh` in the repository):
+Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
 
-- 236 hand-written cases (arithmetic, equations, systems, inequalities, messy transcriptions, errors)
-- property tests against independent oracles: 1,200 random expressions vs Python `Fraction`,
-  800 random polynomials vs `numpy.roots`, 400 polynomials with known rational roots,
-  395 random linear systems, 600 quadratics, 252 trigonometric equations
-- fuzzing with thousands of random garbage strings: no crash, no hang, no `NaN` in output
+- 468 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
+  geometry, units, chemistry, finance, graphs, messy transcriptions, errors)
+- calculus against **sympy** and **scipy**: 130 antiderivatives (each also verified by differentiating),
+  42 definite/improper integrals, 43 limits, 22 sums, 593 random symbolic expressions
+- discrete maths and statistics against sympy / scipy / numpy / exact fractions: about 1,800 checks per run
+- linear algebra against sympy: about 880 checks per run
+- geometry, triangles, units, chemistry, finance and complex numbers against **pint**,
+  **periodictable**, **numpy-financial** and Python `complex`: about 1,250 checks per run
+- property tests against Python `Fraction` and `numpy.roots`; fuzzing with random garbage and with
+  every command called with random arguments (tens of thousands of calls): no crash, no hang, no `NaN`
 - the page loaded in real Chromium with the network disabled, called exactly like the app
-  calls it: zero network requests, no errors
+  calls it: zero network requests, no errors, and graphs come back as real PNG images
 
 **Not yet tested:** the full loop on a real phone with Gemma-4-E4B-it (how well the model
-transcribes your handwriting and follows `SKILL.md`), and the iOS install menus. If the
-model misreads a symbol consistently, adjust the "How to write the equation" rules in
-`SKILL.md`; that file is plain text.
+transcribes your handwriting and follows `SKILL.md`, and whether it picks the right command),
+and the iOS install menus. If the model misreads a symbol or picks a wrong command
+consistently, adjust the rules in `SKILL.md`; that file is plain text.

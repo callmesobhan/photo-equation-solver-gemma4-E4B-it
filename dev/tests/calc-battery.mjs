@@ -76,7 +76,8 @@ let okD = 0;
 for (let i = 0; i < DEFINITE.length; i++) {
   const [s, a, b] = DEFINITE[i];
   const t = await text(`integrate(${s}, x, ${a}, ${b})`);
-  const want = oracle.definite[i].value;
+  // scipy's adaptive quadrature is inaccurate for this slowly decaying tail; the exact value is 1/ln(2)
+  const want = s === '1/(x*ln(x)^2)' && a === '2' && b === 'oo' ? 1 / Math.log(2) : oracle.definite[i].value;
   const got = num(t);
   const good = want === null ? (got === 'div' || got === null) : (typeof got === 'number' && Math.abs(got - want) <= 1e-6 * (1 + Math.abs(want)));
   if (good) okD++; else say(`✗ ∫ ${a}..${b} ${s}:  got ${(/^Answer: (.*)$/m.exec(t) || [, t.slice(0, 80)])[1]}  scipy ${want}`);
@@ -114,4 +115,4 @@ for (let i = 0; i < SUMS.length; i++) {
   if (good) okS++; else say(`✗ Σ ${a}..${b} ${s}:  got ${line}  sympy ${want}`);
 }
 console.log(`${okS}/${totS} agree`);
-process.exit(0);
+process.exit(bad ? 1 : 0);

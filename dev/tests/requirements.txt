@@ -1,0 +1,7 @@
+# Python oracles for the test batteries (optional; the batteries are skipped when missing)
+numpy
+sympy
+scipy
+pint
+periodictable
+numpy-financial

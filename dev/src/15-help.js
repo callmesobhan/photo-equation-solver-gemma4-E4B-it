@@ -60,16 +60,16 @@ HELP.algebra = [
 ].join('\n');
 HELP.matrix = [
   'LINEAR ALGEBRA (exact fractions)   matrix = [[1,2],[3,4]],  vector = [1,2,3]',
-  '  det(A) inv(A) transpose(A) trace(A) rank(A) rref(A) nullspace(A) colspace(A) charpoly(A)',
-  '  eigen(A)  (eigenvalues + eigenvectors)   diagonalize(A)   lu(A)   linsolve(A, b)   A*B   A^3   A^-1   2A + B',
-  '  dot(u, v) cross(u, v) norm(v) normalize(v) angle(u, v) proj(u, v)',
+  '  det(A) inv(A) transpose(A) trace(A) rank(A) rref(A) nullspace(A) [kernel] colspace(A) [columnspace] charpoly(A)',
+  '  eigen(A) [eig]  (eigenvalues + eigenvectors)   diagonalize(A)   lu(A)   linsolve(A, b)   A*B   A^3   A^-1   2A + B',
+  '  dot(u, v) cross(u, v) norm(v) [magnitude, length] normalize(v) angle(u, v) proj(u, v) [projection]',
   '  A system  2x + y = 5; x - y = 1  can also be written directly as equations.',
 ].join('\n');
 HELP.number = [
   'NUMBER THEORY, COUNTING, SEQUENCES, SETS',
   '  isprime(n) nextprime(n) prevprime(n) primes(a, b) primepi(n) factor(n) divisors(n) totient(n) sigma(n) numdivisors(n) mobius(n) radical(n) digitsum(n)',
   '  mod(a, m)  or  17 mod 5       modinv(a, m)   modpow(b, e, m)   orderof(a, m)   primitiveroot(p)   legendre(a, p)',
-  '  crt([2,3],[3,5])  or  x ≡ 2 (mod 3), x ≡ 3 (mod 5)       3x ≡ 4 (mod 7)       diophantine(3x + 5y, 1)  (3x+5y=1 in integers)',
+  '  crt([2,3],[3,5])  or  x ≡ 2 (mod 3), x ≡ 3 (mod 5)       3x ≡ 4 (mod 7)  =  congruence(3x, 4, 7) [solvecongruence]       diophantine(3x + 5y, 1)  (3x+5y=1 in integers)',
   '  factorial(n)  ncr(n, k)  (or 5 choose 2, C(5,2), 5C2)   npr(n, k)   multiset(n, k)   multinomial(2,3,1)   catalan(n)',
   '  fibonacci(n) lucas(n) derangements(n) stirling1(n,k) stirling2(n,k) bell(n) partitions(n)',
   '  sequence(2, 6, 12, 20)   next terms + general term (arithmetic, geometric, polynomial, Fibonacci-type)',
@@ -79,12 +79,12 @@ HELP.number = [
 ].join('\n');
 HELP.stats = [
   'STATISTICS (data as a list: mean([2,4,4,5]) or mean(2,4,4,5))',
-  '  mean median mode variance (sample) popvariance stdev (sample) popstdev iqr quartiles percentile(list, p) summary(list) zscore(x, mean, sd) max min',
+  '  mean median mode variance (sample) popvariance stdev (sample) popstdev iqr quartiles percentile(list, p) summary(list) datarange(list) [spread] zscore(x, mean, sd) max min',
   '  correlation(xs, ys)   covariance(xs, ys)   linreg(xs, ys)   linreg(xs, ys, x0) predicts y at x0',
   '  expect([values], [probabilities])   bayes(P(A), P(B|A), P(B|not A))',
   '  binompdf(n, p, k) binomcdf(n, p, k)  (binomcdf(n, p, a, b) = P(a <= X <= b))   poissonpdf(lambda, k) poissoncdf   geometpdf(p, k) geometcdf   hyperpdf(N, K, n, k)',
   '  normalcdf(x)  normalcdf(x, mean, sd)  normalcdf(a, b, mean, sd)  (use oo for infinity)   normalpdf   invnorm(p, mean, sd)   zcrit(95)',
-  '  tcdf(t, df) invt(p, df) tcrit(0.95, df)   chi2cdf(x, df) invchi2(p, df)   fcdf(f, d1, d2)',
+  '  tcdf(t, df) invt(p, df) tcrit(0.95, df)   chi2cdf(x, df) invchi2(p, df)   fcdf(f, d1, d2)   expcdf(rate, x) [exponentialcdf]',
   '  zinterval(mean, sigma, n, 0.95)   tinterval(mean, s, n, 0.95)  or tinterval([data], 0.95)   propinterval(x, n, 0.95)',
   '  ztest(mean, mu0, sigma, n)   ttest(mean, s, n, mu0)  or ttest([data], mu0)   proptest(x, n, p0)   chisqtest([[10,20],[30,40]])  or  chisqtest(observed, expected)',
 ].join('\n');
