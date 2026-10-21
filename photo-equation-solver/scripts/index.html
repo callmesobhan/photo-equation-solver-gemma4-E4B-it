@@ -1,0 +1,2154 @@
+<!--
+  Photo Equation Solver - AI Edge Gallery skill script.
+  Fully self-contained: no network access, no external libraries.
+  The model reads the equation from the photo; this page does the maths exactly.
+-->
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Equation Solver</title>
+  </head>
+  <body>
+    <script>
+(function () {
+'use strict';
+// ======================================================================
+// 1. Errors and exact arithmetic (BigInt rationals, rational polynomials)
+// ======================================================================
+
+/** A problem the user can act on (bad input, undefined result, ...). */
+class MathError extends Error {}
+/** Internal signal: the expression cannot be handled in exact rational arithmetic. */
+class NotAlgebraic extends Error {}
+
+const babs = (a) => (a < 0n ? -a : a);
+function bgcd(a, b) {
+  a = babs(a);
+  b = babs(b);
+  while (b) {
+    const t = a % b;
+    a = b;
+    b = t;
+  }
+  return a;
+}
+const bitLen = (n) => (n === 0n ? 0 : babs(n).toString(16).length * 4);
+const MAX_BITS = 40000;
+
+function isqrt(n) {
+  if (n < 2n) return n;
+  let x = 1n << BigInt((n.toString(2).length >> 1) + 1);
+  for (;;) {
+    const y = (x + n / x) >> 1n;
+    if (y >= x) return x;
+    x = y;
+  }
+}
+
+/** floor(n^(1/k)) for n >= 0, k >= 1. */
+function iroot(n, k) {
+  if (k === 1) return n;
+  if (n < 2n) return n;
+  const K = BigInt(k);
+  let x = 1n << BigInt(Math.ceil(n.toString(2).length / k) + 1);
+  for (;;) {
+    const y = ((K - 1n) * x + n / x ** (K - 1n)) / K;
+    if (y >= x) return x;
+    x = y;
+  }
+}
+
+class Q {
+  constructor(n, d) {
+    if (d === undefined) d = 1n;
+    if (d === 0n) throw new MathError('division by zero');
+    if (d < 0n) {
+      n = -n;
+      d = -d;
+    }
+    const g = bgcd(n, d);
+    if (g > 1n) {
+      n /= g;
+      d /= g;
+    }
+    if (bitLen(n) > MAX_BITS || bitLen(d) > MAX_BITS) throw new MathError('number too large');
+    this.n = n;
+    this.d = d;
+  }
+  add(o) { return new Q(this.n * o.d + o.n * this.d, this.d * o.d); }
+  sub(o) { return new Q(this.n * o.d - o.n * this.d, this.d * o.d); }
+  mul(o) { return new Q(this.n * o.n, this.d * o.d); }
+  div(o) { return new Q(this.n * o.d, this.d * o.n); }
+  neg() { return new Q(-this.n, this.d); }
+  inv() { return new Q(this.d, this.n); }
+  abs() { return new Q(babs(this.n), this.d); }
+  isZero() { return this.n === 0n; }
+  isInt() { return this.d === 1n; }
+  sign() { return this.n > 0n ? 1 : this.n < 0n ? -1 : 0; }
+  cmp(o) {
+    const l = this.n * o.d;
+    const r = o.n * this.d;
+    return l < r ? -1 : l > r ? 1 : 0;
+  }
+  eq(o) { return this.n === o.n && this.d === o.d; }
+  /** Integer power (k is a JS integer, may be negative). */
+  pow(k) {
+    if (k === 0) return Q1;
+    const big = Math.max(bitLen(this.n), bitLen(this.d));
+    if (big > 4 && big * Math.abs(k) > MAX_BITS) throw new MathError('number too large');
+    const e = BigInt(Math.abs(k));
+    const r = new Q(this.n ** e, this.d ** e);
+    return k < 0 ? r.inv() : r;
+  }
+  toNumber() {
+    const a = Number(this.n);
+    const b = Number(this.d);
+    if (isFinite(a) && isFinite(b)) return a / b;
+    const s = BigInt(Math.max(bitLen(this.n), bitLen(this.d)) - 900);
+    return Number(this.n >> s) / Number(this.d >> s);
+  }
+  toString() { return this.d === 1n ? this.n.toString() : this.n + '/' + this.d; }
+}
+const Q0 = new Q(0n);
+const Q1 = new Q(1n);
+const qInt = (n) => new Q(BigInt(n));
+
+/** Exact value of a decimal literal such as "12", "0.25", ".5", "1.5e-3". */
+function qFromLiteral(s) {
+  const m = /^(\d*)(?:\.(\d*))?(?:e([+-]?\d+))?$/i.exec(s);
+  if (!m || (!m[1] && !m[2])) throw new MathError('bad number "' + s + '"');
+  const frac = m[2] || '';
+  const n = BigInt((m[1] || '') + frac || '0');
+  const ex = (m[3] ? parseInt(m[3], 10) : 0) - frac.length;
+  if (Math.abs(ex) > 300) throw new MathError('exponent too large in "' + s + '"');
+  return ex >= 0 ? new Q(n * 10n ** BigInt(ex)) : new Q(n, 10n ** BigInt(-ex));
+}
+
+/** Exact k-th root of a rational, or null when it is not a perfect power. */
+function qRoot(q, k) {
+  const neg = q.sign() < 0;
+  if (neg && k % 2 === 0) return null;
+  const n = babs(q.n);
+  const rn = iroot(n, k);
+  const rd = iroot(q.d, k);
+  const K = BigInt(k);
+  if (rn ** K !== n || rd ** K !== q.d) return null;
+  return new Q(neg ? -rn : rn, rd);
+}
+
+// ---- polynomials with rational coefficients, index = power ----------------
+const ptrim = (p) => {
+  while (p.length && p[p.length - 1].isZero()) p.pop();
+  return p;
+};
+function padd(a, b) {
+  const r = [];
+  for (let i = 0, n = Math.max(a.length, b.length); i < n; i++) r.push((a[i] || Q0).add(b[i] || Q0));
+  return ptrim(r);
+}
+function psub(a, b) {
+  const r = [];
+  for (let i = 0, n = Math.max(a.length, b.length); i < n; i++) r.push((a[i] || Q0).sub(b[i] || Q0));
+  return ptrim(r);
+}
+function pmul(a, b) {
+  if (!a.length || !b.length) return [];
+  const r = new Array(a.length + b.length - 1).fill(Q0);
+  for (let i = 0; i < a.length; i++) {
+    if (a[i].isZero()) continue;
+    for (let j = 0; j < b.length; j++) r[i + j] = r[i + j].add(a[i].mul(b[j]));
+  }
+  return ptrim(r);
+}
+const pscale = (a, q) => ptrim(a.map((c) => c.mul(q)));
+/** Polynomial long division; returns [quotient, remainder]. b must be non-zero. */
+function pdivmod(a, b) {
+  const r = a.slice();
+  const qt = new Array(Math.max(a.length - b.length + 1, 0)).fill(Q0);
+  const lb = b[b.length - 1];
+  while (r.length >= b.length) {
+    const k = r.length - b.length;
+    const c = r[r.length - 1].div(lb);
+    qt[k] = c;
+    for (let i = 0; i < b.length; i++) r[i + k] = r[i + k].sub(c.mul(b[i]));
+    ptrim(r);
+  }
+  return [ptrim(qt), r];
+}
+const pmonic = (p) => (p.length ? pscale(p, p[p.length - 1].inv()) : p);
+function pgcd(a, b) {
+  while (b.length) {
+    const r = pdivmod(a, b)[1];
+    a = b;
+    b = r;
+  }
+  return pmonic(a);
+}
+function peval(p, x) {
+  let r = Q0;
+  for (let i = p.length - 1; i >= 0; i--) r = r.mul(x).add(p[i]);
+  return r;
+}
+function pevalNum(p, x) {
+  let r = 0;
+  for (let i = p.length - 1; i >= 0; i--) r = r * x + p[i].toNumber();
+  return r;
+}
+
+// ---- rational functions n/d (d monic, gcd removed) --------------------------
+function rf(n, d) {
+  if (!d.length) throw new MathError('division by zero');
+  if (!n.length) return { n: [], d: [Q1] };
+  const g = pgcd(n, d);
+  if (g.length > 1) {
+    n = pdivmod(n, g)[0];
+    d = pdivmod(d, g)[0];
+  }
+  const lc = d[d.length - 1];
+  if (!lc.eq(Q1)) {
+    const inv = lc.inv();
+    n = pscale(n, inv);
+    d = pscale(d, inv);
+  }
+  return { n, d };
+}
+const rfConst = (q) => ({ n: q.isZero() ? [] : [q], d: [Q1] });
+const rfIsConst = (a) => a.n.length <= 1 && a.d.length === 1;
+const rfConstQ = (a) => (a.n.length ? a.n[0] : Q0);
+const rfAdd = (a, b) => rf(padd(pmul(a.n, b.d), pmul(b.n, a.d)), pmul(a.d, b.d));
+const rfSub = (a, b) => rf(psub(pmul(a.n, b.d), pmul(b.n, a.d)), pmul(a.d, b.d));
+const rfMul = (a, b) => rf(pmul(a.n, b.n), pmul(a.d, b.d));
+const rfNeg = (a) => ({ n: pscale(a.n, qInt(-1)), d: a.d });
+/** Division; polynomials we divided by are recorded in dom (their roots are excluded values). */
+function rfDiv(a, b, dom) {
+  if (!b.n.length) throw new MathError('division by zero');
+  if (b.n.length > 1) dom.push(b.n);
+  return rf(pmul(a.n, b.d), pmul(a.d, b.n));
+}
+function rfPow(a, k, dom) {
+  if (rfIsConst(a)) return rfConst(rfConstQ(a).pow(k));
+  const m = Math.abs(k);
+  if (m > 64) throw new MathError('exponent too large');
+  let r = rfConst(Q1);
+  for (let i = 0; i < m; i++) r = rfMul(r, a);
+  return k < 0 ? rfDiv(rfConst(Q1), r, dom) : r;
+}
+
+// ======================================================================
+// 2. Text normalisation, tokenizer, parser, pretty printer
+// ======================================================================
+
+const SUPERSCRIPT = {
+  '\u2070': '0', '\u00b9': '1', '\u00b2': '2', '\u00b3': '3', '\u2074': '4', '\u2075': '5',
+  '\u2076': '6', '\u2077': '7', '\u2078': '8', '\u2079': '9', '\u207a': '+', '\u207b': '-',
+};
+const VULGAR = {
+  '\u00bd': '1/2', '\u2153': '1/3', '\u2154': '2/3', '\u00bc': '1/4', '\u00be': '3/4',
+  '\u2155': '1/5', '\u2156': '2/5', '\u2157': '3/5', '\u2158': '4/5', '\u2159': '1/6',
+  '\u215a': '5/6', '\u215b': '1/8', '\u215c': '3/8', '\u215d': '5/8', '\u215e': '7/8',
+};
+const GREEK = {
+  '\u03b1': 'a', '\u03b2': 'b', '\u03b3': 'g', '\u03b4': 'd', '\u03b8': 't', '\u03bb': 'l',
+  '\u03bc': 'm', '\u03c6': 'f', '\u03c9': 'w', '\u03c1': 'r', '\u03c3': 's',
+};
+const VULGAR_CLASS = '[' + Object.keys(VULGAR).join('') + ']';
+
+/** Index of the brace matching the one at s[i] (open/close given), or -1. */
+function matchBracket(s, i, open, close) {
+  let depth = 0;
+  for (let j = i; j < s.length; j++) {
+    if (s[j] === open) depth++;
+    else if (s[j] === close && --depth === 0) return j;
+  }
+  return -1;
+}
+
+/** Replace LaTeX constructs (\frac, \sqrt, \cdot, ...) by plain text. */
+function convertLatex(s) {
+  s = s.replace(/\\begin\{[a-z*]+\}|\\end\{[a-z*]+\}/gi, '').replace(/\\\\/g, ';');
+  for (let guard = 0; guard < 60; guard++) {
+    const m = /\\[dt]?frac\s*\{/.exec(s);
+    if (!m) break;
+    const a0 = m.index + m[0].length - 1;
+    const a1 = matchBracket(s, a0, '{', '}');
+    const b0 = a1 < 0 ? -1 : s.indexOf('{', a1);
+    const b1 = b0 < 0 || s.slice(a1 + 1, b0).trim() ? -1 : matchBracket(s, b0, '{', '}');
+    if (b1 < 0) break;
+    s = s.slice(0, m.index) + '((' + s.slice(a0 + 1, a1) + ')/(' + s.slice(b0 + 1, b1) + '))' + s.slice(b1 + 1);
+  }
+  for (let guard = 0; guard < 60; guard++) {
+    const m = /\\sqrt\s*(?:\[([^\]]*)\])?\s*\{/.exec(s);
+    if (!m) break;
+    const a0 = m.index + m[0].length - 1;
+    const a1 = matchBracket(s, a0, '{', '}');
+    if (a1 < 0) break;
+    const inner = s.slice(a0 + 1, a1);
+    s = s.slice(0, m.index) + (m[1] ? 'root(' + m[1] + ',' + inner + ')' : 'sqrt(' + inner + ')') + s.slice(a1 + 1);
+  }
+  return s
+    .replace(/\\(?:left|right|big|Big|bigg|Bigg|displaystyle|quad|qquad|,|;|!|:| )/g, ' ')
+    .replace(/\\(?:cdot|times|ast)\b/g, '*')
+    .replace(/\\div\b/g, '/')
+    .replace(/\\(?:leq?|leqslant)\b/g, '<=')
+    .replace(/\\(?:geq?|geqslant)\b/g, '>=')
+    .replace(/\\(?:neq?)\b/g, '!=')
+    .replace(/\\[()[\]]/g, ' ')
+    .replace(/\\([a-z]+)/gi, '$1')
+    .replace(/\$/g, ' ');
+}
+
+/** log_b(x) / log_{b}(x) -> log(x,b) */
+function convertLogBase(s) {
+  for (let guard = 0; guard < 20; guard++) {
+    const m = /log_\s*\(?\s*([a-z0-9.]+)\s*\)?\s*/.exec(s);
+    if (!m) break;
+    let j = m.index + m[0].length;
+    let arg;
+    if (s[j] === '(') {
+      const k = matchBracket(s, j, '(', ')');
+      if (k < 0) break;
+      arg = s.slice(j + 1, k);
+      j = k + 1;
+    } else {
+      const t = /^-?[a-z0-9.]+/.exec(s.slice(j));
+      if (!t) break;
+      arg = t[0];
+      j += t[0].length;
+    }
+    s = s.slice(0, m.index) + 'log(' + arg + ',' + m[1] + ')' + s.slice(j);
+  }
+  return s;
+}
+
+/** Character-level clean-up: unicode math, LaTeX, abs bars. Keeps ; and newlines. */
+function normalizeText(raw) {
+  let s = String(raw);
+  s = s.replace(/[\u2070\u00b9\u00b2\u00b3\u2074-\u207b]+/g, (m) =>
+    '^(' + Array.from(m).map((c) => SUPERSCRIPT[c] || '').join('') + ')');
+  s = s.replace(new RegExp('(\\d)\\s*(' + VULGAR_CLASS + ')', 'g'), (_, d, f) => '(' + d + '+' + VULGAR[f] + ')');
+  s = s.replace(new RegExp(VULGAR_CLASS, 'g'), (f) => '(' + VULGAR[f] + ')');
+  s = s.normalize('NFKC');
+  s = s
+    .replace(/[\u2212\u2012\u2013\u2014\u2015\ufe63]/g, '-')
+    .replace(/[\u00d7\u2715\u2716\u2a2f\u00b7\u22c5\u2219\u2022\u2217]/g, '*')
+    .replace(/[\u00f7\u2215\u2044]/g, '/')
+    .replace(/[\u2264\u2a7d\u2266]/g, '<=')
+    .replace(/[\u2265\u2a7e\u2267]/g, '>=')
+    .replace(/\u2260/g, '!=')
+    .replace(/\u221a/g, 'sqrt')
+    .replace(/\u221b/g, 'cbrt')
+    .replace(/\u03c0/g, 'pi')
+    .replace(/[\u201c\u201d\u2018\u2019]/g, '')
+    .replace(/[\u03b1\u03b2\u03b3\u03b4\u03b8\u03bb\u03bc\u03c6\u03c9\u03c1\u03c3]/g, (c) => GREEK[c]);
+  s = s.replace(/(\d+(?:\.\d+)?|[a-zA-Z])\s*\u00b0/g, '($1*pi/180)').replace(/\u00b0/g, '*pi/180');
+  if (/[\\$]/.test(s)) s = convertLatex(s);
+  // A lone opening brace in front of a system of equations.
+  if (/^\s*[{[]/.test(s) && (s.match(/[{[]/g) || []).length > (s.match(/[}\]]/g) || []).length) s = s.replace(/^\s*[{[]/, '');
+  s = s.replace(/\{/g, '(').replace(/\}/g, ')');
+  s = s.replace(/\*\*/g, '^').replace(/=>/g, '>=').replace(/=</g, '<=').replace(/==/g, '=').replace(/\u2192|->/g, '=');
+  s = s.replace(/([\d)])[ \t]+[xX][ \t]+([\d(])/g, '$1*$2');
+  s = s.replace(/(^|[^\d.\/])(\d+)[ \t]+(\d+)[ \t]*\/[ \t]*(\d+)(?![\d.])/g, '$1($2+$3/$4)');
+  s = s.toLowerCase().replace(/%\s*of\s+/g, '% * ');
+  s = convertLogBase(s);
+  if ((s.match(/\|/g) || []).length % 2 === 0) {
+    let open = true;
+    s = s.replace(/\|/g, () => ((open = !open) ? ')' : 'abs('));
+  }
+  return s;
+}
+
+const HAS_REL = /<=|>=|!=|=|<|>/;
+const countRel = (p) => (p.match(/<=|>=|!=|=|<|>/g) || []).length;
+
+/** Split into separate statements (system of equations / several relations). */
+function splitStatements(s) {
+  let parts = s.split(/[;\n\r]+|\band\b|&/).map((p) => p.trim()).filter(Boolean);
+  if (parts.length === 1 && countRel(parts[0]) >= 2 && parts[0].includes(',')) {
+    const pieces = [];
+    let depth = 0;
+    let cur = '';
+    for (const ch of parts[0]) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) {
+        pieces.push(cur);
+        cur = '';
+      } else cur += ch;
+    }
+    pieces.push(cur);
+    const trimmed = pieces.map((p) => p.trim()).filter(Boolean);
+    if (trimmed.length > 1 && trimmed.every((p) => HAS_REL.test(p))) parts = trimmed;
+  }
+  return parts;
+}
+
+/** Remove "Solve:", numbering, trailing "= ?" etc. from one statement. */
+/** Drop a trailing question such as ", find x", "(x = ?)" or ", x = ?". */
+function stripAsk(p) {
+  p = p.replace(/\s+$/, '');
+  p = p.replace(/[,;]?\s*\(\s*[a-z]\s*(?:=\s*\?*|\?+)\s*\)\s*[.?]*$/, '');
+  p = p.replace(/[,;.]?\s*(?:and\s+)?(?:find|solve\s+for|determine|calculate|compute|what\s+is)\s+(?:the\s+value\s+of\s+)?[a-z]\s*[?.]*$/, '');
+  p = p.replace(/[,;]\s*[a-z]\s*=?\s*\?+$/, '');
+  return p;
+}
+
+function cleanStatement(p) {
+  p = stripAsk(p);
+  p = p.replace(/^\s*(?:please\s+)?(?:solve(?:\s+for\s+[a-z])?|find|evaluate|calculate|compute|simplify|what\s+is|answer)\b\s*[:,]?\s*/, '');
+  p = p.replace(/^\s*(?:\d{1,2}|[a-z])[.)]\s+/, '');
+  p = p.replace(/^\s*[a-z][a-z ]*:\s*/, '');
+  p = p.replace(/[\s=?_\u25a1\u25a2.]+$/, '');
+  p = p.replace(/^[\s,]+|[\s,]+$/g, '');
+  return p.replace(/\s+/g, ' ').trim();
+}
+
+// ---- tokenizer ---------------------------------------------------------------
+const FN_NAMES = ['arcsin', 'arccos', 'arctan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'sqrt',
+  'cbrt', 'root', 'sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'log10', 'log2', 'log', 'ln', 'lg', 'exp',
+  'abs', 'floor', 'ceil'].sort((a, b) => b.length - a.length);
+const FN_ALIAS = { arcsin: 'asin', arccos: 'acos', arctan: 'atan', lg: 'log10' };
+
+function tokenize(s) {
+  const toks = [];
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === ' ' || c === '\t') {
+      i++;
+      continue;
+    }
+    const rest = s.slice(i);
+    let tok;
+    if (/[0-9.]/.test(c)) {
+      const m = /^(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/.exec(rest);
+      if (!m) throw new MathError('unexpected "' + c + '"');
+      tok = { t: 'num', v: m[0] };
+      i += m[0].length;
+    } else if (/[a-z]/.test(c)) {
+      const fn = FN_NAMES.find((f) => rest.startsWith(f));
+      if (fn) {
+        tok = { t: 'fn', v: FN_ALIAS[fn] || fn };
+        i += fn.length;
+      } else if (rest.startsWith('pi')) {
+        tok = { t: 'const', v: 'pi' };
+        i += 2;
+      } else if (c === 'e') {
+        tok = { t: 'const', v: 'e' };
+        i++;
+      } else {
+        tok = { t: 'id', v: c };
+        i++;
+      }
+    } else if ('+-*/^!%'.includes(c)) {
+      tok = { t: 'op', v: c };
+      i++;
+    } else if (c === '(') {
+      tok = { t: 'lp', v: c };
+      i++;
+    } else if (c === ')') {
+      tok = { t: 'rp', v: c };
+      i++;
+    } else if (c === ',') {
+      tok = { t: 'comma', v: c };
+      i++;
+    } else {
+      throw new MathError('unexpected character "' + c + '"');
+    }
+    toks.push(tok);
+  }
+  return toks;
+}
+
+// ---- parser (recursive descent) ----------------------------------------------
+function parseExpression(src) {
+  const toks = tokenize(src);
+  let i = 0;
+  const peek = () => toks[i];
+  const fail = (msg) => {
+    throw new MathError(msg + ' in "' + src + '"');
+  };
+  const isOp = (tk, v) => !!tk && tk.t === 'op' && tk.v === v;
+  const startsPrimary = (tk) => !!tk && (tk.t === 'num' || tk.t === 'id' || tk.t === 'const' || tk.t === 'fn' || tk.t === 'lp');
+  if (!toks.length) fail('nothing to read');
+
+  function expr() {
+    let left = term();
+    while (isOp(peek(), '+') || isOp(peek(), '-')) {
+      const op = toks[i++].v;
+      left = { t: 'bin', op, a: left, b: term() };
+    }
+    return left;
+  }
+  function term() {
+    let left = unary();
+    for (;;) {
+      const tk = peek();
+      if (isOp(tk, '*') || isOp(tk, '/')) {
+        i++;
+        left = { t: 'bin', op: tk.v, a: left, b: unary() };
+      } else if (startsPrimary(tk)) {
+        if (tk.t === 'num' && toks[i - 1].t === 'num') fail('two numbers next to each other (' + toks[i - 1].v + ' ' + tk.v + ')');
+        left = { t: 'bin', op: '*', a: left, b: unary() };
+      } else break;
+    }
+    return left;
+  }
+  function unary() {
+    if (isOp(peek(), '-')) {
+      i++;
+      return { t: 'neg', a: unary() };
+    }
+    if (isOp(peek(), '+')) {
+      i++;
+      return unary();
+    }
+    return power();
+  }
+  function power() {
+    const base = postfix();
+    if (isOp(peek(), '^')) {
+      i++;
+      return { t: 'bin', op: '^', a: base, b: powerOperand() };
+    }
+    return base;
+  }
+  function powerOperand() {
+    if (isOp(peek(), '-')) {
+      i++;
+      return { t: 'neg', a: powerOperand() };
+    }
+    if (isOp(peek(), '+')) {
+      i++;
+      return powerOperand();
+    }
+    return power();
+  }
+  function postfix() {
+    let a = atom();
+    while (isOp(peek(), '!') || isOp(peek(), '%')) {
+      a = { t: toks[i].v === '!' ? 'fact' : 'pct', a };
+      i++;
+    }
+    return a;
+  }
+  function atom() {
+    const tk = toks[i++];
+    if (!tk) fail('the expression ends too early');
+    switch (tk.t) {
+      case 'num': return { t: 'num', q: qFromLiteral(tk.v), f: Number(tk.v), text: tk.v.replace(/^\./, '0.') };
+      case 'id': return { t: 'var', name: tk.v };
+      case 'const': return { t: 'const', name: tk.v };
+      case 'lp': {
+        const e = expr();
+        if (!peek() || peek().t !== 'rp') fail('missing ")"');
+        i++;
+        return e;
+      }
+      case 'fn': return fnCall(tk.v);
+      default: return fail('unexpected "' + tk.v + '"');
+    }
+  }
+  function fnCall(name) {
+    let exp = null;
+    if (isOp(peek(), '^')) {
+      i++;
+      let neg = false;
+      if (isOp(peek(), '-')) {
+        i++;
+        neg = true;
+      } else if (isOp(peek(), '+')) i++;
+      exp = atom();
+      if (neg) exp = { t: 'neg', a: exp };
+    }
+    let args;
+    if (peek() && peek().t === 'lp') {
+      i++;
+      args = [expr()];
+      while (peek() && peek().t === 'comma') {
+        i++;
+        args.push(expr());
+      }
+      if (!peek() || peek().t !== 'rp') fail('missing ")"');
+      i++;
+    } else {
+      args = [bareArg(name)];
+    }
+    let node = { t: 'call', fn: name, args };
+    if (exp) {
+      if (exp.t === 'neg' && exp.a.t === 'num' && exp.a.text === '1' && ['sin', 'cos', 'tan'].includes(name)) {
+        node = { t: 'call', fn: 'a' + name, args };
+      } else node = { t: 'bin', op: '^', a: node, b: exp };
+    }
+    return node;
+  }
+  /** Argument written without parentheses: sin x, sin 2x, ln x^2, sqrt 5 ... */
+  function bareArg(name) {
+    let neg = false;
+    if (isOp(peek(), '-')) {
+      i++;
+      neg = true;
+    }
+    let node = null;
+    if (peek() && peek().t === 'num') node = atom();
+    const tk = peek();
+    if (tk && (tk.t === 'id' || tk.t === 'const' || tk.t === 'lp' || tk.t === 'fn')) {
+      let f = atom();
+      if (isOp(peek(), '^')) {
+        i++;
+        f = { t: 'bin', op: '^', a: f, b: powerOperand() };
+      }
+      node = node ? { t: 'bin', op: '*', a: node, b: f } : f;
+    } else if (node && isOp(peek(), '^')) {
+      i++;
+      node = { t: 'bin', op: '^', a: node, b: powerOperand() };
+    }
+    if (!node) fail('"' + name + '" needs an argument');
+    return neg ? { t: 'neg', a: node } : node;
+  }
+
+  const node = expr();
+  if (i < toks.length) fail('unexpected "' + toks[i].v + '"');
+  return node;
+}
+
+/** Variable names used in an expression tree. */
+function collectVars(n, set) {
+  switch (n.t) {
+    case 'var': set.add(n.name); break;
+    case 'neg': case 'fact': case 'pct': collectVars(n.a, set); break;
+    case 'bin': collectVars(n.a, set); collectVars(n.b, set); break;
+    case 'call': n.args.forEach((a) => collectVars(a, set)); break;
+    default: break;
+  }
+  return set;
+}
+
+// ---- pretty printer (shows the user how the text was read) --------------------
+const SUP_DIGITS = '\u2070\u00b9\u00b2\u00b3\u2074\u2075\u2076\u2077\u2078\u2079';
+const toSup = (str) => Array.from(str).map((c) => (c === '-' ? '\u207b' : SUP_DIGITS[+c])).join('');
+const PREC = { '+': 1, '-': 1, '*': 2, '/': 2, '^': 4 };
+const precOf = (n) => (n.t === 'bin' ? PREC[n.op] : n.t === 'neg' ? 3 : 6);
+function show(n, ctx) {
+  const s = showRaw(n);
+  return precOf(n) < ctx ? '(' + s + ')' : s;
+}
+function showRaw(n) {
+  switch (n.t) {
+    case 'num': return n.text;
+    case 'var': return n.name;
+    case 'const': return n.name === 'pi' ? '\u03c0' : 'e';
+    case 'neg': return '-' + show(n.a, n.a.t === 'neg' ? 7 : 3);
+    case 'fact': return show(n.a, 6) + '!';
+    case 'pct': return show(n.a, 6) + '%';
+    case 'call': return showCall(n);
+    default: break;
+  }
+  const { op } = n;
+  if (op === '+') return show(n.a, 1) + ' + ' + show(n.b, n.b.t === 'neg' ? 7 : 1);
+  if (op === '-') return show(n.a, 1) + ' - ' + show(n.b, n.b.t === 'neg' ? 7 : 2);
+  if (op === '*') {
+    const l = show(n.a, n.a.t === 'bin' && n.a.op === '/' ? 7 : 2);
+    const r = show(n.b, n.b.t === 'neg' || (n.b.t === 'bin' && n.b.op === '/') ? 7 : 2);
+    const implicit = /[0-9a-z\u03c0)!%\u2070-\u2079\u00b2\u00b3\u00b9]$/.test(l) && /^[a-z\u03c0\u221a(]/.test(r);
+    return l + (implicit ? '' : '\u00b7') + r;
+  }
+  if (op === '/') return show(n.a, 2) + '/' + show(n.b, n.b.t === 'neg' ? 7 : 3);
+  // power
+  const base = show(n.a, 5);
+  const e = n.b;
+  if (e.t === 'num' && /^\d{1,2}$/.test(e.text)) return base + toSup(e.text);
+  if (e.t === 'neg' && e.a.t === 'num' && /^\d{1,2}$/.test(e.a.text)) return base + toSup('-' + e.a.text);
+  const es = showRaw(e);
+  return base + '^' + (precOf(e) >= 6 && !/\s/.test(es) ? es : '(' + es + ')');
+}
+function showCall(n) {
+  const a = n.args;
+  const one = () => (a[0].t === 'num' || a[0].t === 'var' || a[0].t === 'const' ? showRaw(a[0]) : '(' + showRaw(a[0]) + ')');
+  if (n.fn === 'sqrt') return '\u221a' + one();
+  if (n.fn === 'abs') return '|' + showRaw(a[0]) + '|';
+  const names = { asin: 'arcsin', acos: 'arccos', atan: 'arctan', log10: 'log' };
+  return (names[n.fn] || n.fn) + '(' + a.map(showRaw).join(', ') + ')';
+}
+
+// ======================================================================
+// 3. Evaluators (exact + floating point) and number presentation
+// ======================================================================
+
+/** Exact evaluation into a rational function of the variables bound in env (Map name -> rf). */
+function evalRF(n, env, dom) {
+  switch (n.t) {
+    case 'num': return rfConst(n.q);
+    case 'var': {
+      const v = env.get(n.name);
+      if (!v) throw new NotAlgebraic('variable ' + n.name);
+      return v;
+    }
+    case 'const': throw new NotAlgebraic('constant');
+    case 'neg': return rfNeg(evalRF(n.a, env, dom));
+    case 'pct': return rfDiv(evalRF(n.a, env, dom), rfConst(qInt(100)), dom);
+    case 'fact': {
+      const a = evalRF(n.a, env, dom);
+      if (!rfIsConst(a)) throw new NotAlgebraic('factorial of a variable');
+      const q = rfConstQ(a);
+      if (!q.isInt() || q.sign() < 0 || q.n > 400n) throw new NotAlgebraic('factorial');
+      let r = 1n;
+      for (let k = 2n; k <= q.n; k++) r *= k;
+      return rfConst(new Q(r));
+    }
+    case 'bin': {
+      const a = evalRF(n.a, env, dom);
+      const b = evalRF(n.b, env, dom);
+      switch (n.op) {
+        case '+': return rfAdd(a, b);
+        case '-': return rfSub(a, b);
+        case '*': return rfMul(a, b);
+        case '/': return rfDiv(a, b, dom);
+        default: return rfPowNode(a, b, dom);
+      }
+    }
+    case 'call': return rfCall(n, env, dom);
+    default: throw new NotAlgebraic('node');
+  }
+}
+
+function rfPowNode(a, b, dom) {
+  if (!rfIsConst(b)) throw new NotAlgebraic('variable exponent');
+  const e = rfConstQ(b);
+  if (e.isInt()) {
+    if (babs(e.n) > 10000n) throw new MathError('exponent too large');
+    const k = Number(e.n);
+    if (rfIsConst(a)) {
+      const aq = rfConstQ(a);
+      if (aq.isZero() && k <= 0) throw new MathError(k === 0 ? '0^0 is undefined' : 'division by zero');
+      return rfConst(aq.pow(k));
+    }
+    return rfPow(a, k, dom);
+  }
+  if (!rfIsConst(a) || e.d > 12n) throw new NotAlgebraic('fractional power');
+  const root = qRoot(rfConstQ(a), Number(e.d));
+  if (!root) throw new NotAlgebraic('irrational power');
+  if (root.isZero() && e.sign() < 0) throw new MathError('division by zero');
+  return rfConst(root.pow(Number(e.n)));
+}
+
+function rfCall(n, env, dom) {
+  const args = n.args.map((x) => evalRF(x, env, dom));
+  if (!args.every(rfIsConst)) throw new NotAlgebraic('function of a variable');
+  const q = rfConstQ(args[args.length - 1]);
+  let k;
+  if (n.fn === 'sqrt') k = 2;
+  else if (n.fn === 'cbrt') k = 3;
+  else if (n.fn === 'root' && args.length === 2) {
+    const kq = rfConstQ(args[0]);
+    if (!kq.isInt() || kq.sign() <= 0 || kq.n > 12n) throw new NotAlgebraic('root index');
+    k = Number(kq.n);
+  } else if (n.fn === 'abs') return rfConst(q.abs());
+  else throw new NotAlgebraic('function ' + n.fn);
+  const r = qRoot(q, k);
+  if (!r) throw new NotAlgebraic('irrational root');
+  return rfConst(r);
+}
+
+// ---- floating point ----------------------------------------------------------
+function toFraction(x, maxDen) {
+  if (!isFinite(x)) return null;
+  const sgn = x < 0 ? -1 : 1;
+  const v = Math.abs(x);
+  let h1 = 1;
+  let h0 = 0;
+  let k1 = 0;
+  let k0 = 1;
+  let b = v;
+  for (let it = 0; it < 40; it++) {
+    const a = Math.floor(b);
+    const h2 = a * h1 + h0;
+    const k2 = a * k1 + k0;
+    if (k2 > maxDen || !isFinite(h2)) break;
+    h0 = h1; h1 = h2; k0 = k1; k1 = k2;
+    if (Math.abs(v - h1 / k1) < 1e-12 * Math.max(1, v)) return { p: sgn * h1, q: k1 };
+    const f = b - a;
+    if (f < 1e-14) break;
+    b = 1 / f;
+  }
+  return null;
+}
+
+function powNum(a, b) {
+  if (a < 0 && !Number.isInteger(b)) {
+    const fr = toFraction(b, 99);
+    if (fr && fr.q % 2 === 1) {
+      const r = Math.pow(-a, b);
+      return fr.p % 2 === 0 ? r : -r;
+    }
+    return NaN;
+  }
+  return Math.pow(a, b);
+}
+function factorial(x) {
+  if (!Number.isInteger(x) || x < 0 || x > 170) return NaN;
+  let r = 1;
+  for (let k = 2; k <= x; k++) r *= k;
+  return r;
+}
+function callNum(fn, a) {
+  const x = a[0];
+  switch (fn) {
+    case 'sin': return Math.sin(x);
+    case 'cos': return Math.cos(x);
+    case 'tan': return Math.tan(x);
+    case 'cot': return 1 / Math.tan(x);
+    case 'sec': return 1 / Math.cos(x);
+    case 'csc': return 1 / Math.sin(x);
+    case 'asin': return Math.asin(x);
+    case 'acos': return Math.acos(x);
+    case 'atan': return Math.atan(x);
+    case 'sinh': return Math.sinh(x);
+    case 'cosh': return Math.cosh(x);
+    case 'tanh': return Math.tanh(x);
+    case 'exp': return Math.exp(x);
+    case 'ln': return Math.log(x);
+    case 'log10': return Math.log10(x);
+    case 'log2': return Math.log2(x);
+    case 'log': return a.length > 1 ? Math.log(x) / Math.log(a[1]) : Math.log10(x);
+    case 'sqrt': return Math.sqrt(x);
+    case 'cbrt': return Math.cbrt(x);
+    case 'root': return a.length > 1 ? powNum(a[1], 1 / x) : NaN;
+    case 'abs': return Math.abs(x);
+    case 'floor': return Math.floor(x);
+    case 'ceil': return Math.ceil(x);
+    default: throw new MathError('unknown function ' + fn);
+  }
+}
+function evalNum(n, env) {
+  switch (n.t) {
+    case 'num': return n.f;
+    case 'var': {
+      const v = env[n.name];
+      if (v === undefined) throw new MathError('unknown variable ' + n.name);
+      return v;
+    }
+    case 'const': return n.name === 'pi' ? Math.PI : Math.E;
+    case 'neg': return -evalNum(n.a, env);
+    case 'pct': return evalNum(n.a, env) / 100;
+    case 'fact': return factorial(evalNum(n.a, env));
+    case 'call': return callNum(n.fn, n.args.map((x) => evalNum(x, env)));
+    default: {
+      const a = evalNum(n.a, env);
+      const b = evalNum(n.b, env);
+      switch (n.op) {
+        case '+': return a + b;
+        case '-': return a - b;
+        case '*': return a * b;
+        case '/': return a / b;
+        default: return powNum(a, b);
+      }
+    }
+  }
+}
+
+// ---- presentation of numbers ----------------------------------------------------
+/** ~8 significant digits, no trailing zeros. */
+function fmtNum(x) {
+  if (x === 0 || Object.is(x, -0)) return '0';
+  if (!isFinite(x)) return String(x);
+  return String(Number(x.toPrecision(8)));
+}
+
+/** Square-free decomposition D = s^2 * r (for moderately sized D). */
+function simplifySqrt(D) {
+  let s = 1n;
+  let r = D;
+  if (bitLen(D) > 56) return { s, r };
+  for (let p = 2n; p * p * p <= r; p += p === 2n ? 1n : 2n) {
+    const pp = p * p;
+    while (r % pp === 0n) {
+      r /= pp;
+      s *= p;
+    }
+  }
+  const t = isqrt(r);
+  if (t * t === r) {
+    s *= t;
+    r = 1n;
+  }
+  return { s, r };
+}
+
+/** s*sqrt(r)/q text with reduction, sign handled by caller. */
+function radicalText(s, r, q) {
+  const g = bgcd(s, q);
+  s /= g;
+  q /= g;
+  return (s === 1n ? '' : String(s)) + '\u221a' + r + (q === 1n ? '' : '/' + q);
+}
+
+/** Try to give a floating value a short exact name (fraction, multiple of pi, root, ln). */
+function recognize(x) {
+  if (!isFinite(x)) return null;
+  if (Math.abs(x) < 1e-12) return { text: '0', rational: true, val: 0 };
+  const fr = toFraction(x, 1000);
+  if (fr) return { text: fr.q === 1 ? String(fr.p) : fr.p + '/' + fr.q, rational: true, val: fr.p / fr.q };
+  const pf = toFraction(x / Math.PI, 24);
+  if (pf) {
+    const a = Math.abs(pf.p);
+    const body = (a === 1 ? '' : String(a)) + '\u03c0' + (pf.q === 1 ? '' : '/' + pf.q);
+    return { text: (pf.p < 0 ? '-' : '') + body, val: (pf.p * Math.PI) / pf.q };
+  }
+  const f2 = Math.abs(x) < 1000 ? toFraction(x * x, 200) : null;
+  if (f2 && f2.p > 0 && f2.p * f2.q <= 100000) {
+    const m = BigInt(f2.p) * BigInt(f2.q);
+    const { s, r } = simplifySqrt(m);
+    if (r > 1n) return { text: (x < 0 ? '-' : '') + radicalText(s, r, BigInt(f2.q)), val: (x < 0 ? -1 : 1) * Math.sqrt(f2.p / f2.q) };
+  }
+  if (x > 0 && x < 7) {
+    const ex = Math.exp(x);
+    const ri = Math.round(ex);
+    if (ri >= 2 && ri <= 1000 && Math.abs(ex - ri) < 1e-9 * ex) return { text: 'ln(' + ri + ')', val: Math.log(ri) };
+  }
+  return null;
+}
+
+/** "=" when the printed decimal is exact, "\u2248" otherwise. */
+function approxSym(x) {
+  const d = fmtNum(x);
+  return Math.abs(Number(d) - x) <= 1e-15 * Math.abs(x) ? '=' : '\u2248';
+}
+
+/** "exact (\u2248 decimal)" style text for a real number. */
+function describeNumber(x) {
+  const rec = recognize(x);
+  if (rec && rec.rational && !rec.text.includes('/')) return rec.text;
+  if (rec) return rec.text + ' (' + approxSym(x) + ' ' + fmtNum(x) + ')';
+  return '\u2248 ' + fmtNum(x);
+}
+
+// ---- polynomial printing -------------------------------------------------------
+function polyText(P, v) {
+  if (!P.length) return '0';
+  let out = '';
+  for (let k = P.length - 1; k >= 0; k--) {
+    const c = P[k];
+    if (c.isZero()) continue;
+    const neg = c.sign() < 0;
+    const a = c.abs();
+    let mag;
+    const varPart = k === 0 ? '' : k === 1 ? v : v + (k <= 9 ? toSup(String(k)) : '^' + k);
+    if (k === 0) mag = a.toString();
+    else if (a.eq(Q1)) mag = varPart;
+    else if (a.isInt()) mag = a.toString() + varPart;
+    else mag = '(' + a.toString() + ')' + varPart;
+    if (!out) out = (neg ? '-' : '') + mag;
+    else out += (neg ? ' - ' : ' + ') + mag;
+  }
+  return out;
+}
+
+// ======================================================================
+// 4. Polynomial roots: exact where possible (rational roots, quadratics),
+//    numeric (Aberth) otherwise.
+// ======================================================================
+
+/** Q[] -> BigInt[] (low -> high), primitive, positive leading coefficient. */
+function toIntPoly(P) {
+  let l = 1n;
+  for (const c of P) l = (l / bgcd(l, c.d)) * c.d;
+  let ints = P.map((c) => c.n * (l / c.d));
+  let g = 0n;
+  for (const c of ints) g = bgcd(g, c);
+  if (g > 1n) ints = ints.map((c) => c / g);
+  if (ints[ints.length - 1] < 0n) ints = ints.map((c) => -c);
+  return ints;
+}
+const intsToPoly = (ints) => ints.map((c) => new Q(c));
+
+function divisorsOf(n) {
+  if (n > 1000000000000n) return null;
+  const m = Number(n);
+  const lo = [];
+  const hi = [];
+  for (let d = 1; d * d <= m; d++) {
+    if (m % d === 0) {
+      lo.push(d);
+      if (d * d !== m) hi.push(m / d);
+    }
+  }
+  return lo.concat(hi.reverse());
+}
+const gcdNum = (a, b) => {
+  while (b) [a, b] = [b, a % b];
+  return a;
+};
+
+function evalHomog(a, p, q) {
+  const n = a.length - 1;
+  const qpow = [1n];
+  for (let i = 1; i <= n; i++) qpow.push(qpow[i - 1] * q);
+  let r = 0n;
+  let pp = 1n;
+  for (let k = 0; k <= n; k++) {
+    r += a[k] * pp * qpow[n - k];
+    pp *= p;
+  }
+  return r;
+}
+
+/** Rational root theorem. Returns a Q root of the integer polynomial or null. */
+function findRationalRoot(ints) {
+  const n = ints.length - 1;
+  const ps = divisorsOf(babs(ints[0]));
+  const qs = divisorsOf(babs(ints[n]));
+  if (!ps || !qs || ps.length * qs.length > 300000) return null;
+  const af = ints.map(Number);
+  const usable = af.every(isFinite);
+  for (const q of qs) {
+    for (const p of ps) {
+      if (gcdNum(p, q) !== 1) continue;
+      for (const sgn of [1, -1]) {
+        const x = (sgn * p) / q;
+        if (usable) {
+          let f = 0;
+          let scale = 0;
+          for (let k = n; k >= 0; k--) {
+            f = f * x + af[k];
+            scale = scale * Math.abs(x) + Math.abs(af[k]);
+          }
+          if (Math.abs(f) > 1e-6 * scale) continue;
+        }
+        if (evalHomog(ints, BigInt(sgn * p), BigInt(q)) === 0n) return new Q(BigInt(sgn * p), BigInt(q));
+      }
+    }
+  }
+  return null;
+}
+
+// ---- complex helpers for Aberth iteration -----------------------------------------
+const cadd = (a, b) => [a[0] + b[0], a[1] + b[1]];
+const csub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+const cmul = (a, b) => [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]];
+const cdiv = (a, b) => {
+  const d = b[0] * b[0] + b[1] * b[1];
+  return [(a[0] * b[0] + a[1] * b[1]) / d, (a[1] * b[0] - a[0] * b[1]) / d];
+};
+const cabs = (a) => Math.hypot(a[0], a[1]);
+
+/** All complex roots of an integer polynomial (low -> high), degree >= 1. */
+function numericPolyRoots(ints) {
+  const n = ints.length - 1;
+  const lead = Number(ints[n]);
+  const a = ints.map((c) => Number(c) / lead);
+  if (!a.every(isFinite)) throw new MathError('coefficients are too large for a numeric solution');
+  let R = 0;
+  for (let k = 0; k < n; k++) R = Math.max(R, Math.pow(Math.abs(a[k]), 1 / (n - k)));
+  R = Math.max(R, 1e-3);
+  const z = [];
+  for (let k = 0; k < n; k++) {
+    const ang = (2 * Math.PI * k) / n + 0.7;
+    z.push([R * Math.cos(ang), R * Math.sin(ang)]);
+  }
+  const evalPD = (x) => {
+    let p = [a[n], 0];
+    let dp = [0, 0];
+    for (let k = n - 1; k >= 0; k--) {
+      dp = cadd(cmul(dp, x), p);
+      p = cadd(cmul(p, x), [a[k], 0]);
+    }
+    return [p, dp];
+  };
+  for (let iter = 0; iter < 500; iter++) {
+    let maxStep = 0;
+    for (let k = 0; k < n; k++) {
+      const [p, dp] = evalPD(z[k]);
+      if (p[0] === 0 && p[1] === 0) continue;
+      let ratio;
+      if (dp[0] === 0 && dp[1] === 0) ratio = [1e-6, 1e-6];
+      else ratio = cdiv(p, dp);
+      let s = [0, 0];
+      for (let j = 0; j < n; j++) {
+        if (j !== k) s = cadd(s, cdiv([1, 0], csub(z[k], z[j])));
+      }
+      const w = cdiv(ratio, csub([1, 0], cmul(ratio, s)));
+      z[k] = csub(z[k], w);
+      maxStep = Math.max(maxStep, cabs(w) / (1 + cabs(z[k])));
+    }
+    if (maxStep < 1e-15) break;
+  }
+  return z;
+}
+
+/** Text for (a + b*sqrt(r)) / c style quadratic roots. imag => b*sqrt(-r). */
+function quadRootText(a, b, r, c, imag) {
+  const ab = babs(b);
+  let sq;
+  if (imag) sq = (ab === 1n ? '' : String(ab)) + 'i' + (r === 1n ? '' : '\u221a' + r);
+  else sq = (ab === 1n ? '' : String(ab)) + '\u221a' + r;
+  let num;
+  if (a === 0n) num = (b < 0n ? '-' : '') + sq;
+  else num = a + (b < 0n ? ' - ' : ' + ') + sq;
+  if (c === 1n) return num;
+  return a === 0n ? num + '/' + c : '(' + num + ')/' + c;
+}
+
+/**
+ * Roots of a polynomial with rational coefficients.
+ * Returns { real: [{val, text, q, mult}], complex: [{re, im, text}], notes: [] }.
+ */
+function polyRoots(P) {
+  const notes = [];
+  const real = [];
+  const complex = [];
+  const addRational = (q, mult) => {
+    const ex = real.find((r) => r.q && r.q.eq(q));
+    if (ex) ex.mult += mult;
+    else real.push({ val: q.toNumber(), text: q.toString(), q, mult });
+  };
+  let ints = toIntPoly(P);
+  let zeros = 0;
+  while (ints.length > 1 && ints[0] === 0n) {
+    ints = ints.slice(1);
+    zeros++;
+  }
+  if (zeros) addRational(Q0, zeros);
+  let rationalFound = 0;
+  while (ints.length - 1 >= 3) {
+    const r = findRationalRoot(ints);
+    if (!r) break;
+    addRational(r, 1);
+    rationalFound++;
+    const quo = pdivmod(intsToPoly(ints), [r.n === 0n ? Q0 : new Q(-r.n), new Q(r.d)]);
+    ints = toIntPoly(quo[0]);
+  }
+  if (rationalFound) notes.push('rational roots found with the rational root theorem: ' + real.filter((r) => r.q).map((r) => r.text).join(', '));
+  const deg = ints.length - 1;
+  if (deg === 1) {
+    addRational(new Q(-ints[0], ints[1]), 1);
+  } else if (deg === 2) {
+    const [C, B, A] = ints;
+    const D = B * B - 4n * A * C;
+    if (D === 0n) {
+      addRational(new Q(-B, 2n * A), 2);
+    } else if (D > 0n && isqrt(D) ** 2n === D) {
+      const sq = isqrt(D);
+      addRational(new Q(-B + sq, 2n * A), 1);
+      addRational(new Q(-B - sq, 2n * A), 1);
+    } else {
+      const { s, r } = simplifySqrt(babs(D));
+      const g = bgcd(bgcd(babs(B), s), 2n * A);
+      const a = -B / g;
+      const b = s / g;
+      const c = (2n * A) / g;
+      const sqrtD = Math.sqrt(Number(babs(D)));
+      if (D > 0n) {
+        for (const sg of [1n, -1n]) {
+          const val = (Number(-B) + Number(sg) * sqrtD) / Number(2n * A);
+          real.push({ val, text: quadRootText(a, sg * b, r, c, false), q: null, mult: 1 });
+        }
+      } else {
+        for (const sg of [1n, -1n]) {
+          complex.push({
+            re: Number(-B) / Number(2n * A),
+            im: (Number(sg) * sqrtD) / Number(2n * A),
+            text: quadRootText(a, sg * b, r, c, true),
+            mult: 1,
+          });
+        }
+      }
+    }
+    notes.push('quadratic part: a=' + A + ', b=' + B + ', c=' + C + ', discriminant D = b\u00b2 - 4ac = ' + D);
+  } else if (deg >= 3) {
+    const zs = numericPolyRoots(ints);
+    const used = new Array(zs.length).fill(false);
+    for (let i = 0; i < zs.length; i++) {
+      if (used[i]) continue;
+      let sr = zs[i][0];
+      let si = zs[i][1];
+      let cnt = 1;
+      used[i] = true;
+      for (let j = i + 1; j < zs.length; j++) {
+        if (!used[j] && cabs(csub(zs[i], zs[j])) < 1e-5 * (1 + cabs(zs[i]))) {
+          used[j] = true;
+          sr += zs[j][0];
+          si += zs[j][1];
+          cnt++;
+        }
+      }
+      const re = sr / cnt;
+      const im = si / cnt;
+      if (Math.abs(im) < 1e-8 * (1 + Math.abs(re))) {
+        const rec = recognize(re);
+        real.push({ val: re, text: rec ? rec.text : null, q: null, mult: cnt });
+      } else {
+        complex.push({ re, im, text: null, mult: cnt });
+      }
+    }
+    notes.push('degree ' + deg + ' factor without simple exact roots: solved numerically');
+  }
+  real.sort((x, y) => x.val - y.val);
+  complex.sort((x, y) => x.re - y.re || x.im - y.im);
+  return { real, complex, notes };
+}
+
+// ======================================================================
+// 5. Solvers
+// ======================================================================
+const SCAN_LIMIT = 200;
+const SCAN_BUDGET_MS = 2500; // wall-clock cap for numeric scans (phones are slower than desktops)
+const MAX_SCAN_ROOTS = 300;
+const RF_X = rf([Q0, Q1], [Q1]);
+const TRIG = new Set(['sin', 'cos', 'tan', 'cot', 'sec', 'csc']);
+
+const newOut = () => ({ answer: [], work: [], check: null, notes: [] });
+
+function usesTrig(n) {
+  if (n.t === 'call') return TRIG.has(n.fn) || n.args.some(usesTrig);
+  if (n.t === 'bin') return usesTrig(n.a) || usesTrig(n.b);
+  if (n.t === 'neg' || n.t === 'fact' || n.t === 'pct') return usesTrig(n.a);
+  return false;
+}
+
+// ---- statements -----------------------------------------------------------------
+function parseStatement(text) {
+  const re = /<=|>=|!=|=|<|>/g;
+  const ops = [];
+  let m;
+  while ((m = re.exec(text))) ops.push({ op: m[0], i: m.index });
+  if (!ops.length) return { kind: 'expr', node: parseExpression(text) };
+  const pieces = [];
+  let from = 0;
+  for (const o of ops) {
+    pieces.push(text.slice(from, o.i).trim());
+    from = o.i + o.op.length;
+  }
+  pieces.push(text.slice(from).trim());
+  pieces.forEach((p, k) => {
+    if (!p) throw new MathError('something is missing ' + (k < ops.length ? 'before' : 'after') + ' "' + ops[Math.min(k, ops.length - 1)].op + '" in "' + text + '"');
+  });
+  const nodes = pieces.map(parseExpression);
+  if (ops.length === 1) {
+    return ops[0].op === '=' ? { kind: 'eq', lhs: nodes[0], rhs: nodes[1] }
+      : { kind: 'rel', conds: [{ lhs: nodes[0], op: ops[0].op, rhs: nodes[1] }], nodes, ops: ops.map((o) => o.op) };
+  }
+  const dir = ops.map((o) => o.op[0]);
+  if (!ops.every((o) => o.op !== '=' && o.op !== '!=') || dir.some((d) => d !== dir[0])) {
+    throw new MathError('cannot read this chain of relations: "' + text + '"');
+  }
+  const conds = ops.map((o, k) => ({ lhs: nodes[k], op: o.op, rhs: nodes[k + 1] }));
+  return { kind: 'rel', conds, nodes, ops: ops.map((o) => o.op) };
+}
+const REL_SHOW = { '<=': ' \u2264 ', '>=': ' \u2265 ', '!=': ' \u2260 ', '<': ' < ', '>': ' > ', '=': ' = ' };
+function showStatement(st) {
+  if (st.kind === 'expr') return showRaw(st.node);
+  if (st.kind === 'eq') return showRaw(st.lhs) + ' = ' + showRaw(st.rhs);
+  return st.nodes.map(showRaw).reduce((acc, s, k) => acc + (k ? REL_SHOW[st.ops[k - 1]] : '') + s, '');
+}
+
+// ---- small helpers ----------------------------------------------------------------
+const sortedVars = (set) => Array.from(set).sort();
+function rootLine(v, r) {
+  let t;
+  const d = fmtNum(r.val);
+  if (r.text) {
+    if (r.q && r.q.isInt()) t = v + ' = ' + r.text;
+    else t = v + ' = ' + r.text + ' (' + approxSym(r.val) + ' ' + d + ')';
+  } else t = v + ' \u2248 ' + d;
+  if (r.mult === 2) t += ' (double root)';
+  else if (r.mult === 3) t += ' (triple root)';
+  else if (r.mult > 3) t += ' (multiplicity ' + r.mult + ')';
+  return t;
+}
+function complexNum(re, im) {
+  const a = Math.abs(re) < 1e-12 ? '' : fmtNum(re);
+  const b = (Math.abs(im) === 1 ? '' : fmtNum(Math.abs(im))) + 'i';
+  if (!a) return (im < 0 ? '-' : '') + b;
+  return a + (im < 0 ? ' - ' : ' + ') + b;
+}
+function complexLine(v, c) {
+  const t = c.text ? v + ' = ' + c.text + ' (\u2248 ' + complexNum(c.re, c.im) + ')' : v + ' \u2248 ' + complexNum(c.re, c.im);
+  return c.mult > 1 ? t + ' (multiplicity ' + c.mult + ')' : t;
+}
+function polyIsZeroAt(P, r) {
+  if (r.q) return peval(P, r.q).isZero();
+  let scale = 0;
+  for (let k = 0; k < P.length; k++) scale += Math.abs(P[k].toNumber()) * Math.pow(Math.abs(r.val), k);
+  return Math.abs(pevalNum(P, r.val)) <= 1e-9 * Math.max(scale, 1e-300);
+}
+function listJoin(items) { return items.join(', '); }
+const MAX_LISTED = 16;
+/** Keep long root lists short: first MAX_LISTED entries plus a count of the rest. */
+function capList(items, max) {
+  const m = max || MAX_LISTED;
+  return items.length <= m ? items : items.slice(0, m).concat(['... and ' + (items.length - m) + ' more']);
+}
+
+/** Residual check of real roots against the original statement. */
+function residualCheck(lhs, rhs, v, roots) {
+  let worst = 0;
+  for (const r of roots) {
+    const env = { [v]: r.val };
+    const l = evalNum(lhs, env);
+    const rr = evalNum(rhs, env);
+    const err = Math.abs(l - rr) / (1 + Math.abs(l) + Math.abs(rr));
+    if (!(err <= 1e-7)) worst = Math.max(worst, isNaN(err) ? Infinity : err);
+  }
+  return worst === 0;
+}
+
+// ---- one unknown: exact rational path --------------------------------------------
+function solveRationalEquation(f, dom, eq, v) {
+  const out = newOut();
+  const N = f.n;
+  const denomRoots = [];
+  for (const P of dom.concat(f.d.length > 1 ? [f.d] : [])) {
+    for (const r of polyRoots(P).real) {
+      if (!denomRoots.some((d) => Math.abs(d.val - r.val) < 1e-9 * (1 + Math.abs(r.val)))) denomRoots.push(r);
+    }
+  }
+  const exclText = denomRoots.map((r) => r.text || fmtNum(r.val));
+  if (!N.length) {
+    out.answer.push('true for every real ' + v + (exclText.length ? ' except ' + v + ' = ' + listJoin(exclText) : '') + ' (the two sides are identical)');
+    return out;
+  }
+  if (N.length === 1) {
+    out.answer.push('no solution');
+    out.work.push('after simplifying, both sides differ by a non-zero constant (' + N[0].toString() + '), so they are never equal' + (exclText.length ? ' (excluded values: ' + v + ' = ' + listJoin(exclText) + ')' : ''));
+    return out;
+  }
+  const deg = N.length - 1;
+  const kind = f.d.length > 1 || dom.length ? 'equation with a fraction' : deg === 1 ? 'linear equation' : deg === 2 ? 'quadratic equation' : deg === 3 ? 'cubic equation' : 'polynomial equation of degree ' + deg;
+  out.work.push('Type: ' + kind);
+  out.work.push('Move everything to one side' + (f.d.length > 1 || dom.length ? ' and clear the denominators' : '') + ': ' + polyText(N, v) + ' = 0');
+  if (exclText.length) out.work.push('Values that make a denominator zero are not allowed: ' + v + ' \u2260 ' + listJoin(exclText));
+  const roots = polyRoots(N);
+  roots.notes.forEach((n) => out.work.push(n));
+  const keep = [];
+  const rejected = [];
+  for (const r of roots.real) (dom.some((P) => polyIsZeroAt(P, r)) ? rejected : keep).push(r);
+  if (rejected.length) out.work.push('Rejected (makes a denominator zero): ' + listJoin(rejected.map((r) => v + ' = ' + (r.text || fmtNum(r.val)))));
+  if (keep.length) {
+    capList(keep.map((r) => rootLine(v, r))).forEach((l) => out.answer.push(l));
+    if (roots.complex.length) out.notes.push('There are also ' + roots.complex.length + ' complex (non-real) solutions: ' + listJoin(capList(roots.complex.map((c) => complexLine(v, c)), 6)));
+    out.check = residualCheck(eq.lhs, eq.rhs, v, keep)
+      ? 'substituting ' + (keep.length > 1 ? 'each solution' : 'the solution') + ' back into the original equation gives equal sides'
+      : 'WARNING: a numeric substitution check did not match; treat the result with caution';
+  } else if (roots.complex.length) {
+    out.answer.push('no real solution');
+    capList(roots.complex.map((c) => 'complex: ' + complexLine(v, c)), 8).forEach((l) => out.answer.push(l));
+  } else {
+    out.answer.push('no solution');
+  }
+  return out;
+}
+
+// ---- one unknown: numeric path (trig, exp, log, roots of x, abs ...) ---------------
+function findPeriod(F) {
+  const xs = [0.3, 0.7, 1.1, 1.9, 2.3, 3.1, 4.2, 5.0, -1.3];
+  for (let k = 12; k >= 1; k--) {
+    const P = (2 * Math.PI) / k;
+    let ok = 0;
+    let bad = false;
+    for (const x of xs) {
+      const a = F(x);
+      const b = F(x + P);
+      if (!isFinite(a) || !isFinite(b)) continue;
+      if (Math.abs(a - b) > 1e-9 * (1 + Math.abs(a))) {
+        bad = true;
+        break;
+      }
+      ok++;
+    }
+    if (!bad && ok >= 5) return P;
+  }
+  return 0;
+}
+function bisect(F, a, b) {
+  let fa = F(a);
+  for (let i = 0; i < 200; i++) {
+    const m = (a + b) / 2;
+    const fm = F(m);
+    if (fm === 0) return m;
+    if ((fa < 0) === (fm < 0)) {
+      a = m;
+      fa = fm;
+    } else b = m;
+    if (b - a <= 1e-15 * Math.max(1, Math.abs(a))) break;
+  }
+  return (a + b) / 2;
+}
+function minimizeAbs(F, a, b) {
+  const g = (Math.sqrt(5) - 1) / 2;
+  let c = b - g * (b - a);
+  let d = a + g * (b - a);
+  let fc = Math.abs(F(c));
+  let fd = Math.abs(F(d));
+  for (let i = 0; i < 120; i++) {
+    if (fc < fd) {
+      b = d; d = c; fd = fc;
+      c = b - g * (b - a);
+      fc = Math.abs(F(c));
+    } else {
+      a = c; c = d; fc = fd;
+      d = a + g * (b - a);
+      fd = Math.abs(F(d));
+    }
+  }
+  return (a + b) / 2;
+}
+function periodText(P) {
+  const fr = toFraction(P / Math.PI, 24);
+  if (!fr) return fmtNum(P);
+  return (fr.p === 1 ? '' : String(fr.p)) + '\u03c0' + (fr.q === 1 ? '' : '/' + fr.q);
+}
+
+/** "2\u03c0k", "\u03c0k", "2\u03c0k/3": the step between periodic solutions. */
+function periodStep(P) {
+  const fr = toFraction(P / Math.PI, 24);
+  if (!fr) return fmtNum(P) + 'k';
+  return (fr.p === 1 ? '' : String(fr.p)) + '\u03c0k' + (fr.q === 1 ? '' : '/' + fr.q);
+}
+
+function solveNumericEquation(eq, v) {
+  const out = newOut();
+  const env = {};
+  const F = (x) => {
+    env[v] = x;
+    return evalNum(eq.lhs, env) - evalNum(eq.rhs, env);
+  };
+  const trig = usesTrig(eq.lhs) || usesTrig(eq.rhs);
+  let P = trig ? findPeriod(F) : 0;
+  const lo = P ? 0 : -SCAN_LIMIT;
+  const hi = P ? P : SCAN_LIMIT;
+  const steps = P ? 6000 : 80000;
+  const h = (hi - lo) / steps;
+  const xs = new Array(steps + 1);
+  const fs = new Array(steps + 1);
+  for (let i = 0; i <= steps; i++) {
+    xs[i] = lo + i * h;
+    fs[i] = F(xs[i]);
+  }
+  const tol = (x) => {
+    env[v] = x;
+    return 1e-9 * (1 + Math.abs(evalNum(eq.lhs, env)) + Math.abs(evalNum(eq.rhs, env)));
+  };
+  let roots = [];
+  const deadline = Date.now() + SCAN_BUDGET_MS;
+  let truncated = false;
+  let refinements = 0;
+  const mid = steps >> 1;
+  for (let k = 0; k <= steps; k++) {
+    if ((k & 255) === 0 && (roots.length > MAX_SCAN_ROOTS || Date.now() > deadline)) {
+      truncated = true;
+      break;
+    }
+    const i = mid + (k & 1 ? (k + 1) >> 1 : -(k >> 1)); // 0, +1, -1, +2, -2 ... around the middle of the window
+    if (i < 0 || i > steps) continue;
+    const f = fs[i];
+    if (!isFinite(f)) continue;
+    if (f === 0) {
+      roots.push(xs[i]);
+      continue;
+    }
+    if (i < steps && isFinite(fs[i + 1]) && fs[i + 1] !== 0 && (f < 0) !== (fs[i + 1] < 0)) {
+      const r = bisect(F, xs[i], xs[i + 1]);
+      if (Math.abs(F(r)) <= 1e-6 * (1 + Math.abs(f) + Math.abs(fs[i + 1]))) roots.push(r);
+    }
+    if (i > 0 && i < steps && isFinite(fs[i - 1]) && isFinite(fs[i + 1]) && (f < 0) === (fs[i - 1] < 0) && (f < 0) === (fs[i + 1] < 0) &&
+        Math.abs(f) <= Math.abs(fs[i - 1]) && Math.abs(f) <= Math.abs(fs[i + 1]) &&
+        Math.abs(f) < 0.5 * Math.max(Math.abs(fs[i - 1]), Math.abs(fs[i + 1])) && ++refinements <= 400) {
+      const m = minimizeAbs(F, xs[i - 1], xs[i + 1]);
+      if (Math.abs(F(m)) <= tol(m)) roots.push(m);
+    }
+  }
+  if (fs.every((f) => isFinite(f) && Math.abs(f) < 1e-12)) {
+    out.answer.push('true for every ' + v + ' (the two sides are identical)');
+    return out;
+  }
+  if (P) roots = roots.map((r) => ((r % P) + P) % P).map((r) => (P - r < 1e-9 ? 0 : r));
+  roots.sort((a, b) => a - b);
+  const uniq = [];
+  for (const r of roots) if (!uniq.length || r - uniq[uniq.length - 1] > 1e-7 * (1 + Math.abs(r))) uniq.push(r);
+  out.work.push('Type: equation with ' + (trig ? 'trigonometric functions' : 'a non-polynomial expression (root, exponential, logarithm, absolute value ...)') + ' - solved numerically (exact names are shown when they are recognised)');
+  // The solution set may repeat faster than the function itself (e.g. sin x = cos x: every pi, not 2 pi).
+  if (P && uniq.length) {
+    for (let m = 12; m >= 2; m--) {
+      const P2 = P / m;
+      const closed = uniq.every((r) => uniq.some((s) => {
+        const d = Math.abs(((r + P2) % P) - s);
+        return Math.min(d, P - d) < 1e-7;
+      }));
+      if (closed) {
+        const base = uniq.filter((r) => r < P2 - 1e-9);
+        uniq.length = 0;
+        uniq.push(...base);
+        P = P2;
+        break;
+      }
+    }
+  }
+  if (truncated) out.notes.push('The search was stopped early because the function oscillates too fast or has too many solutions, so this answer is incomplete.');
+  if (!uniq.length) {
+    out.answer.push(truncated ? 'could not find a solution before the search was stopped' : 'no real solution found' + (P ? '' : ' between ' + v + ' = -' + SCAN_LIMIT + ' and ' + SCAN_LIMIT));
+    return out;
+  }
+  let total = uniq.length;
+  if (total > MAX_LISTED) {
+    uniq.sort((a, b) => Math.abs(a) - Math.abs(b));
+    uniq.length = MAX_LISTED;
+    uniq.sort((a, b) => a - b);
+    out.notes.push('Found ' + total + ' solutions; showing the ' + MAX_LISTED + ' closest to 0.');
+  }
+  for (const r of uniq) {
+    const rec = recognize(r);
+    const d = fmtNum(r);
+    let line;
+    if (P) {
+      if (!rec) line = v + ' \u2248 ' + d + ' + ' + periodStep(P);
+      else if (rec.text === '0') line = v + ' = ' + periodStep(P);
+      else line = v + ' = ' + rec.text + ' + ' + periodStep(P);
+      if (rec && /\u03c0/.test(rec.text)) {
+        const deg = (r * 180) / Math.PI;
+        const dfr = toFraction(deg, 6);
+        if (dfr) line += '  [' + (dfr.q === 1 ? dfr.p : fmtNum(deg)) + '\u00b0 + ' + (360 / Math.round((2 * Math.PI) / P)) + '\u00b0k]';
+      }
+    } else {
+      line = rec ? (rec.rational && !rec.text.includes('/') ? v + ' = ' + rec.text : v + ' = ' + rec.text + ' (' + approxSym(r) + ' ' + d + ')') : v + ' \u2248 ' + d;
+    }
+    out.answer.push(line);
+  }
+  if (P) out.notes.push('The equation repeats every ' + periodText(P) + ' (k is any integer). The solutions listed are those in 0 \u2264 ' + v + ' < ' + periodText(P) + '.');
+  else out.notes.push('Searched for real solutions between ' + v + ' = -' + SCAN_LIMIT + ' and ' + SCAN_LIMIT + '.');
+  out.check = uniq.every((r) => Math.abs(F(r)) <= Math.max(tol(r), 1e-7)) ? 'substituting back gives equal sides (to numerical precision)' : null;
+  return out;
+}
+
+function solveOneUnknown(eq, v) {
+  const dom = [];
+  let f;
+  try {
+    const env = new Map([[v, RF_X]]);
+    f = rfSub(evalRF(eq.lhs, env, dom), evalRF(eq.rhs, env, dom));
+  } catch (e) {
+    if (e instanceof NotAlgebraic) return solveNumericEquation(eq, v);
+    throw e;
+  }
+  return solveRationalEquation(f, dom, eq, v);
+}
+
+// ---- inequalities (one unknown, polynomial / fractional) ----------------------------
+function solveInequalities(conds, v) {
+  const out = newOut();
+  const dom = [];
+  const parts = [];
+  for (const c of conds) {
+    try {
+      const env = new Map([[v, RF_X]]);
+      parts.push({ f: rfSub(evalRF(c.lhs, env, dom), evalRF(c.rhs, env, dom)), op: c.op });
+    } catch (e) {
+      if (e instanceof NotAlgebraic) return solveInequalitiesNumeric(conds, v);
+      throw e;
+    }
+  }
+  const pts = [];
+  const addRoots = (poly, tag, partIdx) => {
+    if (poly.length < 2) return;
+    for (const r of polyRoots(poly).real) {
+      let p = pts.find((q) => Math.abs(q.val - r.val) < 1e-9 * (1 + Math.abs(r.val)));
+      if (!p) {
+        p = { val: r.val, text: r.text || fmtNum(r.val), approx: !r.text, undef: false, zero: new Set() };
+        pts.push(p);
+      }
+      if (tag === 'undef') p.undef = true;
+      else p.zero.add(partIdx);
+    }
+  };
+  parts.forEach((p, k) => {
+    addRoots(p.f.n, 'zero', k);
+    addRoots(p.f.d, 'undef', k);
+  });
+  dom.forEach((P) => addRoots(P, 'undef', -1));
+  pts.sort((a, b) => a.val - b.val);
+  const sat = (s, op) => {
+    switch (op) {
+      case '<': return s < 0;
+      case '>': return s > 0;
+      case '<=': return s <= 0;
+      case '>=': return s >= 0;
+      default: return s !== 0;
+    }
+  };
+  const signAt = (p, t) => Math.sign(pevalNum(p.f.n, t)) * Math.sign(pevalNum(p.f.d, t));
+  const regionOk = (t) => parts.every((p) => sat(signAt(p, t), p.op));
+  const items = [];
+  const testPoints = [];
+  if (!pts.length) testPoints.push(0);
+  else {
+    testPoints.push(pts[0].val - Math.max(1, Math.abs(pts[0].val)));
+    for (let i = 0; i + 1 < pts.length; i++) testPoints.push((pts[i].val + pts[i + 1].val) / 2);
+    testPoints.push(pts[pts.length - 1].val + Math.max(1, Math.abs(pts[pts.length - 1].val)));
+  }
+  for (let i = 0; i < testPoints.length; i++) {
+    items.push({ kind: 'region', ok: regionOk(testPoints[i]) });
+    if (i < pts.length) {
+      const p = pts[i];
+      const ok = !p.undef && parts.every((part, k) => sat(p.zero.has(k) ? 0 : signAt(part, p.val), part.op));
+      items.push({ kind: 'point', ok, p });
+    }
+  }
+  // maximal runs of satisfied items -> intervals
+  const intervals = [];
+  for (let i = 0; i < items.length; ) {
+    if (!items[i].ok) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j + 1 < items.length && items[j + 1].ok) j++;
+    const first = items[i];
+    const last = items[j];
+    const iv = { lo: null, loIncl: false, hi: null, hiIncl: false };
+    if (first.kind === 'point') {
+      iv.lo = first.p;
+      iv.loIncl = true;
+    } else if (i > 0) iv.lo = items[i - 1].p;
+    if (last.kind === 'point') {
+      iv.hi = last.p;
+      iv.hiIncl = true;
+    } else if (j + 1 < items.length) iv.hi = items[j + 1].p;
+    intervals.push(iv);
+    i = j + 1;
+  }
+  out.work.push('Type: inequality; write it as an expression compared with 0 and find where it changes sign');
+  if (pts.length) out.work.push('Critical points (zero or undefined): ' + listJoin(pts.map((p) => v + ' = ' + (p.approx ? '\u2248' : '') + p.text + (p.undef ? ' (undefined)' : ''))));
+  formatIntervals(intervals, v, out);
+  return out;
+}
+
+/** Interval list -> "x < 2 or x \u2265 5" and "(-\u221e, 2) \u222a [5, \u221e)". Endpoints: {val, text, approx}. */
+function formatIntervals(intervals, v, out) {
+  const num = (p) => (p.approx ? '\u2248' : '') + p.text;
+  const isPoint = (iv) => iv.lo && iv.hi && Math.abs(iv.lo.val - iv.hi.val) <= 1e-12 * (1 + Math.abs(iv.lo.val));
+  if (!intervals.length) {
+    out.answer.push('no solution');
+    return;
+  }
+  if (intervals.length === 1 && intervals[0].lo === null && intervals[0].hi === null) {
+    out.answer.push('all real numbers');
+    return;
+  }
+  const setText = intervals.map((iv) => {
+    if (isPoint(iv)) return '{' + num(iv.lo) + '}';
+    return (iv.lo ? (iv.loIncl ? '[' : '(') + num(iv.lo) : '(-\u221e') + ', ' + (iv.hi ? num(iv.hi) + (iv.hiIncl ? ']' : ')') : '\u221e)');
+  }).join(' \u222a ');
+  const condText = intervals.map((iv) => {
+    if (isPoint(iv)) return v + ' = ' + num(iv.lo);
+    if (!iv.lo) return v + (iv.hiIncl ? ' \u2264 ' : ' < ') + num(iv.hi);
+    if (!iv.hi) return v + (iv.loIncl ? ' \u2265 ' : ' > ') + num(iv.lo);
+    return num(iv.lo) + (iv.loIncl ? ' \u2264 ' : ' < ') + v + (iv.hiIncl ? ' \u2264 ' : ' < ') + num(iv.hi);
+  }).join(' or ');
+  out.answer.push(condText);
+  out.answer.push(v + ' \u2208 ' + setText + '  (interval notation)');
+}
+
+/** Inequalities that are not polynomial/fractional (abs, roots, exp, log ...): scan numerically. */
+function solveInequalitiesNumeric(conds, v) {
+  const out = newOut();
+  if (conds.some((c) => usesTrig(c.lhs) || usesTrig(c.rhs))) {
+    throw new MathError('inequalities with trigonometric functions are not supported');
+  }
+  const env = {};
+  // fuzzy: equality is accepted within rounding error (used to decide whether an endpoint is included);
+  // exact: plain comparison (used to locate the endpoints as precisely as possible)
+  const holds = (x, exact) => {
+    env[v] = x;
+    for (const c of conds) {
+      const l = evalNum(c.lhs, env);
+      const r = evalNum(c.rhs, env);
+      if (!isFinite(l) || !isFinite(r)) return false;
+      const d = l - r;
+      const eps = exact ? 0 : 1e-12 * (1 + Math.abs(l) + Math.abs(r));
+      let ok;
+      switch (c.op) {
+        case '<': ok = d < -eps; break;
+        case '>': ok = d > eps; break;
+        case '<=': ok = d <= eps; break;
+        case '>=': ok = d >= -eps; break;
+        default: ok = Math.abs(d) > eps;
+      }
+      if (!ok) return false;
+    }
+    return true;
+  };
+  const N = 80000;
+  const h = (2 * SCAN_LIMIT) / N;
+  const xs = new Array(N + 1);
+  const ts = new Array(N + 1);
+  for (let i = 0; i <= N; i++) {
+    xs[i] = -SCAN_LIMIT + i * h;
+    ts[i] = holds(xs[i], true);
+  }
+  const boundary = (a, b) => {
+    const ta = holds(a, true);
+    for (let i = 0; i < 200; i++) {
+      const m = (a + b) / 2;
+      if (holds(m, true) === ta) a = m;
+      else b = m;
+      if (Math.abs(b - a) <= 1e-15 * Math.max(1, Math.abs(a))) break;
+    }
+    const x = (a + b) / 2;
+    const rec = recognize(x);
+    return rec ? { val: rec.val, text: rec.text, approx: false } : { val: x, text: fmtNum(x), approx: true };
+  };
+  const intervals = [];
+  let edgeNote = false;
+  let truncated = false;
+  const deadline = Date.now() + SCAN_BUDGET_MS;
+  for (let i = 0; i <= N; ) {
+    if (intervals.length > 100 || Date.now() > deadline) {
+      truncated = true;
+      break;
+    }
+    if (!ts[i]) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < N && ts[j + 1]) j++;
+    const iv = { lo: null, loIncl: false, hi: null, hiIncl: false };
+    if (i > 0) {
+      iv.lo = boundary(xs[i - 1], xs[i]);
+      iv.loIncl = holds(iv.lo.val);
+    } else edgeNote = true;
+    if (j < N) {
+      iv.hi = boundary(xs[j], xs[j + 1]);
+      iv.hiIncl = holds(iv.hi.val);
+    } else edgeNote = true;
+    intervals.push(iv);
+    i = j + 1;
+  }
+  out.work.push('Type: inequality with a non-polynomial expression (absolute value, root, exponential, logarithm ...) - solved by scanning for where it changes truth value');
+  if (truncated) out.notes.push('The search was stopped early because the solution set has too many pieces, so this answer is incomplete.');
+  if (edgeNote) out.notes.push('Assumed the solution set continues beyond ' + v + ' = \u00b1' + SCAN_LIMIT + ' where it reaches that edge.');
+  formatIntervals(intervals, v, out);
+  return out;
+}
+
+// ---- several unknowns: exact linear algebra --------------------------------------------
+function affineForm(eq, vars) {
+  const dom = [];
+  const F = (vals) => {
+    const env = new Map(vars.map((name, j) => [name, rfConst(vals[j])]));
+    const r = rfSub(evalRF(eq.lhs, env, dom), evalRF(eq.rhs, env, dom));
+    return rfConstQ(r);
+  };
+  try {
+    const zero = vars.map(() => Q0);
+    const c0 = F(zero);
+    const coef = vars.map((_, j) => F(zero.map((z, k) => (k === j ? Q1 : Q0))).sub(c0));
+    const tests = [[2, 5, -9, 3], [-1, 4, 7, -6], [13, -2, 1, 8], [-7, -3, 11, 2]];
+    for (const t of tests) {
+      const pt = vars.map((_, j) => new Q(BigInt(t[j % 4] + j), BigInt(1 + (j % 3))));
+      let pred = c0;
+      pt.forEach((val, j) => { pred = pred.add(coef[j].mul(val)); });
+      if (!F(pt).eq(pred)) return null;
+    }
+    return { coef, c0 };
+  } catch (e) {
+    if (e instanceof NotAlgebraic || e instanceof MathError) return null;
+    throw e;
+  }
+}
+function linText(c, terms) {
+  let out = '';
+  const nz = terms.filter((t) => !t[0].isZero());
+  if (!c.isZero() || !nz.length) out = c.toString();
+  for (const [q, name] of nz) {
+    const a = q.abs();
+    const mag = a.eq(Q1) ? name : a.isInt() ? a.toString() + name : '(' + a.toString() + ')' + name;
+    if (!out) out = (q.sign() < 0 ? '-' : '') + mag;
+    else out += (q.sign() < 0 ? ' - ' : ' + ') + mag;
+  }
+  return out;
+}
+function rrefQ(rows, ncols) {
+  const M = rows.map((r) => r.slice());
+  const pivots = [];
+  let r = 0;
+  for (let c = 0; c < ncols && r < M.length; c++) {
+    let p = -1;
+    for (let i = r; i < M.length; i++) {
+      if (!M[i][c].isZero()) {
+        p = i;
+        break;
+      }
+    }
+    if (p < 0) continue;
+    [M[r], M[p]] = [M[p], M[r]];
+    const inv = M[r][c].inv();
+    M[r] = M[r].map((x) => x.mul(inv));
+    for (let i = 0; i < M.length; i++) {
+      if (i !== r && !M[i][c].isZero()) {
+        const f = M[i][c];
+        M[i] = M[i].map((x, k) => x.sub(f.mul(M[r][k])));
+      }
+    }
+    pivots.push(c);
+    r++;
+  }
+  const inconsistent = M.some((row) => row.slice(0, ncols).every((x) => x.isZero()) && !row[ncols].isZero());
+  return { M, pivots, inconsistent };
+}
+const qLabel = (q) => (q.isInt() ? q.toString() : q.toString() + ' (' + approxSym(q.toNumber()) + ' ' + fmtNum(q.toNumber()) + ')');
+
+function solveLinear(eqs, vars, forms, solveFor) {
+  const out = newOut();
+  let order = vars.map((_, i) => i);
+  if (solveFor && vars.includes(solveFor)) order = [vars.indexOf(solveFor)].concat(order.filter((i) => vars[i] !== solveFor));
+  const names = order.map((i) => vars[i]);
+  const rows = forms.map((f) => order.map((i) => f.coef[i]).concat([f.c0.neg()]));
+  const { M, pivots, inconsistent } = rrefQ(rows, names.length);
+  out.work.push('Type: ' + (eqs.length === 1 ? 'linear equation with several unknowns' : 'system of ' + eqs.length + ' linear equations in ' + names.length + ' unknowns'));
+  if (inconsistent) {
+    out.answer.push('no solution (the equations contradict each other)');
+    return out;
+  }
+  const free = names.map((_, c) => c).filter((c) => !pivots.includes(c));
+  if (!free.length) {
+    const sol = [];
+    pivots.forEach((c, i) => { sol[c] = M[i][names.length]; });
+    out.answer.push(names.map((nm, c) => nm + ' = ' + qLabel(sol[c])).join(', '));
+    const byName = new Map(names.map((nm, c) => [nm, sol[c]]));
+    const okAll = forms.every((f) => {
+      let s = f.c0;
+      vars.forEach((nm, j) => { s = s.add(f.coef[j].mul(byName.get(nm))); });
+      return s.isZero();
+    });
+    out.check = okAll ? 'substituting the solution into every equation gives equal sides' : null;
+    out.work.push('Solved exactly by Gaussian elimination');
+    return out;
+  }
+  if (eqs.length === 1 && !solveFor) {
+    // express each unknown with a non-zero coefficient in terms of the others
+    vars.forEach((nm, j) => {
+      const c = forms[0].coef[j];
+      if (c.isZero()) return;
+      const terms = vars.map((o, k) => [forms[0].coef[k].neg().div(c), o]).filter((t, k) => k !== j);
+      out.answer.push(nm + ' = ' + linText(forms[0].c0.neg().div(c), terms));
+    });
+    out.notes.push('One equation cannot fix several unknowns; each unknown is given in terms of the others. Add more equations (separated by ";") for numbers.');
+    return out;
+  }
+  const express = (c, i) => names[c] + ' = ' + linText(M[i][names.length], free.map((f) => [M[i][f].neg(), names[f]]));
+  if (solveFor && pivots[0] === 0) {
+    out.answer.push(express(0, 0));
+    out.notes.push(free.map((f) => names[f]).join(', ') + (free.length > 1 ? ' can be any numbers' : ' can be any number') + ' (the equations do not fix ' + (free.length > 1 ? 'them' : 'it') + ').');
+    return out;
+  }
+  pivots.forEach((c, i) => out.answer.push(express(c, i)));
+  out.answer.push(free.map((f) => names[f]).join(', ') + (free.length > 1 ? ' can be any numbers' : ' can be any number'));
+  out.notes.push('The equations do not determine all unknowns, so there are infinitely many solutions.');
+  return out;
+}
+
+// ---- several unknowns: nonlinear systems (numeric) --------------------------------------
+function solveFloatLinear(A, b) {
+  const n = b.length;
+  const M = A.map((r, i) => r.concat([b[i]]));
+  for (let c = 0; c < n; c++) {
+    let p = c;
+    for (let i = c + 1; i < n; i++) if (Math.abs(M[i][c]) > Math.abs(M[p][c])) p = i;
+    if (Math.abs(M[p][c]) < 1e-14) return null;
+    [M[c], M[p]] = [M[p], M[c]];
+    for (let i = c + 1; i < n; i++) {
+      const f = M[i][c] / M[c][c];
+      for (let k = c; k <= n; k++) M[i][k] -= f * M[c][k];
+    }
+  }
+  const x = new Array(n);
+  for (let i = n - 1; i >= 0; i--) {
+    let s = M[i][n];
+    for (let k = i + 1; k < n; k++) s -= M[i][k] * x[k];
+    x[i] = s / M[i][i];
+  }
+  return x;
+}
+function solveNonlinear(eqs, vars) {
+  const out = newOut();
+  const n = vars.length;
+  if (eqs.length !== n) {
+    throw new MathError('there are ' + n + ' unknowns (' + vars.join(', ') + ') but ' + eqs.length + ' equation' + (eqs.length === 1 ? '' : 's') + '; I need the same number of equations as unknowns');
+  }
+  if (n > 3) throw new MathError('at most 3 unknowns are supported for non-linear systems');
+  const env = {};
+  const F = (x) => {
+    vars.forEach((nm, i) => { env[nm] = x[i]; });
+    return eqs.map((e) => evalNum(e.lhs, env) - evalNum(e.rhs, env));
+  };
+  const norm = (a) => Math.max(...a.map(Math.abs));
+  const grid = n === 3 ? [-6, -2, -0.5, 0.5, 2, 6] : [-10, -5, -2.5, -1, -0.3, 0.3, 1, 2.5, 5, 10];
+  const starts = [[]];
+  for (let k = 0; k < n; k++) {
+    const next = [];
+    for (const s of starts) for (const g of grid) next.push(s.concat([g]));
+    starts.splice(0, starts.length, ...next);
+  }
+  const sols = [];
+  for (const s0 of starts) {
+    let x = s0.slice();
+    let fx = F(x);
+    if (!fx.every(isFinite)) continue;
+    for (let it = 0; it < 80 && norm(fx) > 1e-13; it++) {
+      const J = [];
+      for (let j = 0; j < n; j++) {
+        const h = 1e-6 * Math.max(1, Math.abs(x[j]));
+        const xp = x.slice(); xp[j] += h;
+        const xm = x.slice(); xm[j] -= h;
+        const fp = F(xp);
+        const fm = F(xm);
+        J.push(fp.map((v, i) => (v - fm[i]) / (2 * h)));
+      }
+      const A = fx.map((_, i) => J.map((col) => col[i]));
+      if (!A.every((r) => r.every(isFinite))) break;
+      const d = solveFloatLinear(A, fx.map((v) => -v));
+      if (!d) break;
+      let t = 1;
+      let moved = false;
+      for (let ls = 0; ls < 30; ls++) {
+        const xn = x.map((v, i) => v + t * d[i]);
+        const fn = F(xn);
+        if (fn.every(isFinite) && norm(fn) < norm(fx)) {
+          x = xn;
+          fx = fn;
+          moved = true;
+          break;
+        }
+        t /= 2;
+      }
+      if (!moved) break;
+    }
+    if (norm(fx) < 1e-9 && x.every((v) => Math.abs(v) < 1e6) && !sols.some((s) => s.every((v, i) => Math.abs(v - x[i]) < 1e-6 * (1 + Math.abs(v))))) sols.push(x);
+    if (sols.length >= 12) break;
+  }
+  sols.sort((a, b) => a[0] - b[0] || (a[1] || 0) - (b[1] || 0));
+  out.work.push('Type: system of ' + n + ' non-linear equations - solved numerically (Newton\u2019s method from many starting points)');
+  if (!sols.length) {
+    out.answer.push('no real solution found');
+    return out;
+  }
+  for (const s of sols) out.answer.push(vars.map((nm, i) => nm + ' ' + describeEq(s[i])).join(', '));
+  out.notes.push('Only real solutions with |value| \u2264 10 near the search grid are found; there could be others.');
+  return out;
+}
+/** "= 3", "= \u221a2 (\u2248 1.4142136)" or "\u2248 2.3456" for a floating value. */
+function describeEq(x) {
+  const rec = recognize(x);
+  if (!rec) return '\u2248 ' + fmtNum(x);
+  if (rec.rational && !rec.text.includes('/')) return '= ' + rec.text;
+  return '= ' + rec.text + ' (' + approxSym(x) + ' ' + fmtNum(x) + ')';
+}
+
+// ---- plain evaluation ------------------------------------------------------------------
+function evaluateExpression(node) {
+  const out = newOut();
+  const vars = collectVars(node, new Set());
+  if (vars.size > 1) throw new MathError('this is an expression with several unknowns (' + sortedVars(vars).join(', ') + '), not an equation; write "= something" or give the other equations');
+  if (vars.size === 1) {
+    const v = sortedVars(vars)[0];
+    try {
+      const r = evalRF(node, new Map([[v, RF_X]]), []);
+      out.work.push('Type: expression with one unknown, simplified (no equation to solve)');
+      out.answer.push(r.d.length === 1 ? polyText(r.n, v) : '(' + polyText(r.n, v) + ')/(' + polyText(r.d, v) + ')');
+      return out;
+    } catch (e) {
+      if (e instanceof NotAlgebraic) throw new MathError('this expression contains the unknown ' + v + ' but no "="; I cannot simplify it. Write the full equation');
+      throw e;
+    }
+  }
+  out.work.push('Type: arithmetic');
+  try {
+    const q = rfConstQ(evalRF(node, new Map(), []));
+    out.answer.push(qLabel(q));
+    return out;
+  } catch (e) {
+    if (!(e instanceof NotAlgebraic)) throw e;
+  }
+  const val = evalNum(node, {});
+  if (!isFinite(val)) throw new MathError('the result is undefined or not a real number');
+  out.answer.push(describeNumber(val));
+  return out;
+}
+
+function compareConstants(lhs, op, rhs) {
+  const num = (n) => {
+    const x = evalNum(n, {});
+    if (!isFinite(x)) throw new MathError('a side of the statement is undefined or not a real number');
+    return x;
+  };
+  let l;
+  let r;
+  try {
+    const dom = [];
+    const a = rfConstQ(evalRF(lhs, new Map(), dom));
+    const b = rfConstQ(evalRF(rhs, new Map(), dom));
+    const c = a.cmp(b);
+    l = a.toNumber();
+    r = b.toNumber();
+    return { holds: { '=': c === 0, '<': c < 0, '>': c > 0, '<=': c <= 0, '>=': c >= 0, '!=': c !== 0 }[op], l, r };
+  } catch (e) {
+    if (!(e instanceof NotAlgebraic)) throw e;
+  }
+  l = num(lhs);
+  r = num(rhs);
+  const eq = Math.abs(l - r) <= 1e-12 * (1 + Math.abs(l) + Math.abs(r));
+  return { holds: { '=': eq, '<': !eq && l < r, '>': !eq && l > r, '<=': eq || l < r, '>=': eq || l > r, '!=': !eq }[op], l, r };
+}
+
+// ---- driver for one problem -----------------------------------------------------------
+function solveProblem(text, solveFor) {
+  const parts = splitStatements(stripAsk(normalizeText(text))).map(cleanStatement).filter(Boolean);
+  if (!parts.length) throw new MathError('no math was found in the input');
+  const sts = parts.map(parseStatement);
+  const readAs = sts.map(showStatement).join(';  ');
+  const kinds = new Set(sts.map((s) => s.kind));
+  if (kinds.size > 1) throw new MathError('equations, inequalities and plain expressions cannot be mixed in one problem; send them as separate problems');
+  let out;
+  const kind = sts[0].kind;
+  if (kind === 'expr') {
+    if (sts.length > 1) {
+      out = newOut();
+      sts.forEach((st) => {
+        const o = evaluateExpression(st.node);
+        out.answer.push(showRaw(st.node) + ' = ' + o.answer[0]);
+      });
+    } else out = evaluateExpression(sts[0].node);
+  } else if (kind === 'rel') {
+    const conds = [];
+    sts.forEach((s) => conds.push(...s.conds));
+    const vars = new Set();
+    conds.forEach((c) => { collectVars(c.lhs, vars); collectVars(c.rhs, vars); });
+    if (vars.size === 0) {
+      out = newOut();
+      const res = conds.map((c) => compareConstants(c.lhs, c.op, c.rhs));
+      const all = res.every((r) => r.holds);
+      out.answer.push(all ? 'True' : 'False');
+      out.work.push('Left side = ' + fmtNum(res[0].l) + ', right side = ' + fmtNum(res[0].r));
+    } else if (vars.size === 1) {
+      out = solveInequalities(conds, sortedVars(vars)[0]);
+    } else {
+      throw new MathError('inequalities with several unknowns (' + sortedVars(vars).join(', ') + ') are not supported');
+    }
+  } else {
+    const eqs = sts;
+    const vars = new Set();
+    eqs.forEach((e) => { collectVars(e.lhs, vars); collectVars(e.rhs, vars); });
+    const names = sortedVars(vars);
+    if (names.length === 0) {
+      out = newOut();
+      const res = eqs.map((e) => compareConstants(e.lhs, '=', e.rhs));
+      const all = res.every((r) => r.holds);
+      out.answer.push(all ? 'True: both sides are equal (' + fmtNum(res[0].l) + ')' : 'False: ' + fmtNum(res[0].l) + ' \u2260 ' + fmtNum(res[0].r));
+    } else if (names.length === 1 && eqs.length === 1) {
+      out = solveOneUnknown(eqs[0], names[0]);
+    } else {
+      const forms = eqs.map((e) => affineForm(e, names));
+      if (forms.every(Boolean)) out = solveLinear(eqs, names, forms, solveFor);
+      else if (names.length === 1) {
+        // several equations in one unknown: solve the first, keep solutions that satisfy the rest
+        out = solveOneUnknown(eqs[0], names[0]);
+        out.notes.push('Only the first equation was solved; check the solutions against the others.');
+      } else out = solveNonlinear(eqs, names);
+    }
+    if (!out) throw new MathError('could not solve this');
+  }
+  return { readAs, out };
+}
+
+function renderResult(readAs, out) {
+  const lines = ['Read as: ' + readAs];
+  if (out.answer.length === 1) lines.push('Answer: ' + out.answer[0]);
+  else {
+    lines.push('Answer:');
+    out.answer.forEach((a) => lines.push('  ' + a));
+  }
+  if (out.work.length) {
+    lines.push('Working:');
+    out.work.forEach((w) => lines.push('- ' + w));
+  }
+  if (out.check) lines.push('Check: ' + out.check);
+  out.notes.forEach((n) => lines.push('Note: ' + n));
+  return lines.join('\n');
+}
+
+// ======================================================================
+// 6. Entry point used by AI Edge Gallery:  ai_edge_gallery_get_result(data)
+// ======================================================================
+const MAX_PROBLEMS = 8;
+
+/** Accepts {"equation": "..."}, {"problems": [...]}, a bare JSON string, or plain text. */
+function parseRequest(data) {
+  const raw = data === undefined || data === null ? '' : String(data).trim();
+  if (!raw) throw new MathError('no equation was given (the "equation" field is empty)');
+  let obj;
+  try {
+    obj = JSON.parse(raw);
+  } catch (e) {
+    obj = raw;
+  }
+  const problems = [];
+  let solveFor = '';
+  const asText = (x) => (x && typeof x === 'object' ? String(x.equation || x.problem || x.text || '') : String(x === undefined || x === null ? '' : x));
+  if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+    solveFor = String(obj.solve_for || obj.solveFor || obj.variable || obj.unknown || '').trim().toLowerCase();
+    if (Array.isArray(obj.problems)) obj.problems.forEach((p) => problems.push(asText(p)));
+    else if (Array.isArray(obj.equations)) problems.push(obj.equations.map(asText).join(';'));
+    else {
+      const keys = ['equation', 'problem', 'expression', 'math', 'text', 'question', 'input', 'equations', 'expressions'];
+      const k = keys.find((key) => obj[key] !== undefined && obj[key] !== null && obj[key] !== '');
+      if (k) problems.push(asText(obj[k]));
+    }
+  } else if (Array.isArray(obj)) {
+    obj.forEach((p) => problems.push(asText(p)));
+  } else {
+    problems.push(asText(obj));
+  }
+  const list = problems.map((p) => p.trim()).filter(Boolean);
+  if (!list.length) throw new MathError('no equation was given (the "equation" field is empty)');
+  if (list.length > MAX_PROBLEMS) throw new MathError('too many problems at once (maximum ' + MAX_PROBLEMS + ')');
+  return { problems: list, solveFor };
+}
+
+function explain(e) {
+  if (e instanceof MathError) return e.message;
+  if (e instanceof RangeError) return 'the numbers or expression are too large to handle';
+  return 'unexpected failure (' + (e && e.message ? e.message : e) + ')';
+}
+
+function run(data) {
+  const { problems, solveFor } = parseRequest(data);
+  if (problems.length === 1) {
+    const { readAs, out } = solveProblem(problems[0], solveFor);
+    return renderResult(readAs, out);
+  }
+  return problems.map((p, i) => {
+    try {
+      const { readAs, out } = solveProblem(p, solveFor);
+      return 'Problem ' + (i + 1) + '\n' + renderResult(readAs, out);
+    } catch (e) {
+      return 'Problem ' + (i + 1) + '\nRead as: ' + p + '\nError: ' + explain(e);
+    }
+  }).join('\n\n');
+}
+
+const RETRY_HINT = ' Re-read the picture and call the tool again with the math written in plain text (digits, letters, + - * / ^ ( ), sqrt(), pi, =, <, >).';
+
+window['ai_edge_gallery_get_result'] = async (data) => {
+  try {
+    return JSON.stringify({ result: run(data) });
+  } catch (e) {
+    if (!(e instanceof MathError)) console.error(e);
+    return JSON.stringify({ error: 'Could not solve: ' + explain(e) + '.' + RETRY_HINT });
+  }
+};
+})();
+    </script>
+  </body>
+</html>
