@@ -604,7 +604,7 @@ function rrefQ(rows, ncols) {
   const inconsistent = M.some((row) => row.slice(0, ncols).every((x) => x.isZero()) && !row[ncols].isZero());
   return { M, pivots, inconsistent };
 }
-const qLabel = (q) => (q.isInt() ? q.toString() : q.toString() + ' (' + approxSym(q.toNumber()) + ' ' + fmtNum(q.toNumber()) + ')');
+const qLabel = (q) => (q.isInt() ? bigText(q.n) : q.toString() + ' (' + approxSym(q.toNumber()) + ' ' + fmtNum(q.toNumber()) + ')');
 
 function solveLinear(eqs, vars, forms, solveFor) {
   const out = newOut();
@@ -830,6 +830,8 @@ function solveProblem(text, solveFor) {
   const parts = splitStatements(stripAsk(norm)).map(cleanStatement).filter(Boolean);
   if (!parts.length) throw new MathError('no math was found in the input');
   let sts = parts.map(parseStatement);
+  const cxResult = tryComplex(sts, false);
+  if (cxResult) return cxResult;
   const special = trySpecial(sts, solveFor);
   if (special) return special;
   sts = sts.map(resolveCommandsStatement);
@@ -839,13 +841,25 @@ function solveProblem(text, solveFor) {
   let out;
   const kind = sts[0].kind;
   if (kind === 'expr') {
-    if (sts.length > 1) {
-      out = newOut();
-      sts.forEach((st) => {
-        const o = evaluateExpression(st.node);
-        out.answer.push(showRaw(st.node) + ' = ' + o.answer[0]);
-      });
-    } else out = evaluateExpression(sts[0].node);
+    try {
+      if (sts.length > 1) {
+        out = newOut();
+        sts.forEach((st) => {
+          const o = evaluateExpression(st.node);
+          out.answer.push(showRaw(st.node) + ' = ' + o.answer[0]);
+        });
+      } else out = evaluateExpression(sts[0].node);
+    } catch (e) {
+      if (!(e instanceof MathError) || !/not a real number|undefined/.test(e.message)) throw e;
+      let alt = null;
+      try {
+        alt = tryComplex(sts, true);
+      } catch (e2) {
+        alt = null;
+      }
+      if (!alt) throw e;
+      return alt;
+    }
   } else if (kind === 'rel') {
     const conds = [];
     sts.forEach((s) => conds.push(...s.conds));
@@ -875,6 +889,10 @@ function solveProblem(text, solveFor) {
       out.answer.push(all ? 'True: both sides are equal (' + fmtNum(res[0].l) + ')' : 'False: ' + fmtNum(res[0].l) + ' ≠ ' + fmtNum(res[0].r));
     } else if (names.length === 1 && eqs.length === 1) {
       out = solveOneUnknown(eqs[0], names[0]);
+    } else if (names.length === 2 && eqs.length === 1 && !solveFor && conicCoefficients(eqs[0].lhs, eqs[0].rhs)) {
+      out = newOut();
+      out.work.push('Type: conic section (second-degree equation in x and y)');
+      analyzeConic(conicCoefficients(eqs[0].lhs, eqs[0].rhs), out);
     } else if (names.length >= 2 && eqs.length === 1 && !affineForm(eqs[0], names)) {
       out = solveLiteralEquation(eqs[0], names, solveFor);
     } else {

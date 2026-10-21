@@ -551,7 +551,23 @@ function polyArgs(n) {
   const v = singleVarOf(sAdd([a, b]), n.args[2] && varOfArg(n.args[2]));
   return { v, A: toRFS(a, v).n, B: toRFS(b, v).n, a, b };
 }
+/** All arguments whole numbers? (gcd / lcm of three or more numbers) */
+function allIntegerArgs(n) {
+  if (n.args.length < 2) return null;
+  try {
+    const vals = n.args.map(constQ);
+    return vals.every((q) => q.isInt()) ? vals.map((q) => q.n) : null;
+  } catch (e) {
+    return null;
+  }
+}
 defCmd('gcd', (n) => {
+  const many = n.args.length > 2 ? allIntegerArgs(n) : null;
+  if (many) {
+    const out0 = newOut();
+    out0.answer.push(String(many.reduce((a, b) => bgcd(a, b), 0n)));
+    return out0;
+  }
   needArgs(n, 2, 3, 'two numbers or two polynomials');
   const out = newOut();
   const a = fromAst(n.args[0]);
@@ -568,6 +584,12 @@ defCmd('gcd', (n) => {
   return out;
 });
 defCmd('lcm', (n) => {
+  const many = n.args.length > 2 ? allIntegerArgs(n) : null;
+  if (many) {
+    const out0 = newOut();
+    out0.answer.push(String(many.reduce((a, b) => (a === 0n || b === 0n ? 0n : babs(a * b) / bgcd(a, b)), 1n)));
+    return out0;
+  }
   needArgs(n, 2, 3, 'two numbers or two polynomials');
   const out = newOut();
   const a = fromAst(n.args[0]);

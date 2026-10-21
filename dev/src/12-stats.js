@@ -19,7 +19,12 @@ function sqrtQText(q) {
   return symText(simp(sSqrt(sN(q))));
 }
 const qSqrtS = (q) => simp(sSqrt(sN(q)));
+const needFinite = (x) => {
+  if (typeof x === 'number' && !isFinite(x)) throw new MathError('the result is undefined for these inputs (check the numbers)');
+  return x;
+};
 const numOut = (out, x, label) => {
+  needFinite(x);
   out.answer.push((label ? label + ' = ' : '') + fmtNum(x));
   out.value = { num: x };
   return out;
@@ -548,6 +553,7 @@ defCmd('hyperpdf hypergeometric', (n) => {
 
 // ---- continuous distributions (numeric) ---------------------------------------------------------------------------------------
 function pOut(out, label, p) {
+  needFinite(p);
   out.answer.push(label + ' = ' + fmtNum(p));
   out.value = { num: p };
   return out;
@@ -654,6 +660,7 @@ function levelOf(node) {
   return c;
 }
 function intervalOut(out, center, margin, crit, critLabel, level) {
+  [center, margin, crit].forEach(needFinite);
   out.answer.push(fmtNum(level * 100) + '% confidence interval: (' + fmtNum(center - margin) + ', ' + fmtNum(center + margin) + ')');
   out.work.push(critLabel + ' = ' + fmtNum(crit) + ',  margin of error = ' + fmtNum(margin));
   out.work.push('Interval = estimate ± margin = ' + fmtNum(center) + ' ± ' + fmtNum(margin));
@@ -699,6 +706,7 @@ defCmd('propinterval', (n) => {
   return intervalOut(out, ph, z * Math.sqrt((ph * (1 - ph)) / nn), z, 'z*', c);
 });
 function testOut(out, stat, label, p2, pLeft, pRight, extra) {
+  [stat, p2, pLeft, pRight].forEach(needFinite);
   out.answer.push(label + ' = ' + fmtNum(stat));
   out.answer.push('p-value: two-tailed ' + fmtNum(p2) + ',  left-tailed ' + fmtNum(pLeft) + ',  right-tailed ' + fmtNum(pRight));
   if (extra) out.work.push(extra);

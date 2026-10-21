@@ -8,7 +8,14 @@
 /** How the statement is shown in the "Read as" line. */
 function readAsNode(n) {
   const c = n.t === 'call' && n.cmd && COMMANDS[n.fn];
-  return c && c.show ? c.show(n) : showRaw(n);
+  if (c && c.show) {
+    try {
+      return c.show(n);
+    } catch (e) {
+      return showRaw(n); // wrong arguments: the command itself reports the problem
+    }
+  }
+  return showRaw(n);
 }
 
 function statementHas(st, types) {
@@ -20,7 +27,12 @@ function statementHas(st, types) {
 function runCommandCall(n) {
   const c = COMMANDS[n.fn];
   if (!c) throw new MathError('unknown command ' + n.fn);
-  return c(n);
+  try {
+    return c(n);
+  } catch (e) {
+    if (e instanceof NotAlgebraic) throw new MathError(n.fn + ': this kind of expression is not supported here (type help for what ' + n.fn + ' accepts)');
+    throw e;
+  }
 }
 
 /** A command used inside an expression: its single value as a symbolic expression. */

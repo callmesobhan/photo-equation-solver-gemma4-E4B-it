@@ -46,24 +46,30 @@ function explain(e) {
 function run(data) {
   const { problems, solveFor } = parseRequest(data);
   if (problems.length === 1) {
+    const help = helpFor(problems[0]);
+    if (help) return { text: help, image: null };
     const { readAs, out } = solveProblem(problems[0], solveFor);
-    return renderResult(readAs, out);
+    return { text: renderResult(readAs, out), image: out.image || null };
   }
-  return problems.map((p, i) => {
+  let image = null;
+  const text = problems.map((p, i) => {
     try {
       const { readAs, out } = solveProblem(p, solveFor);
+      if (out.image && !image) image = out.image;
       return 'Problem ' + (i + 1) + '\n' + renderResult(readAs, out);
     } catch (e) {
       return 'Problem ' + (i + 1) + '\nRead as: ' + p + '\nError: ' + explain(e);
     }
   }).join('\n\n');
+  return { text, image };
 }
 
 const RETRY_HINT = ' Re-read the picture and call the tool again with the math written in plain text (digits, letters, + - * / ^ ( ), sqrt(), pi, =, <, >).';
 
 window['ai_edge_gallery_get_result'] = async (data) => {
   try {
-    return JSON.stringify({ result: run(data) });
+    const r = run(data);
+    return JSON.stringify(r.image ? { result: r.text, image: { base64: r.image } } : { result: r.text });
   } catch (e) {
     if (!(e instanceof MathError)) console.error(e);
     return JSON.stringify({ error: 'Could not solve: ' + explain(e) + '.' + RETRY_HINT });

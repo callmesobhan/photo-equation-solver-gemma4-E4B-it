@@ -125,7 +125,7 @@ function convertLogBase(s) {
 
 /** Character-level clean-up: unicode math, LaTeX, printed notation, abs bars. Keeps ; and newlines. */
 function normalizeText(raw) {
-  let s = String(raw);
+  let s = convertApplied(String(raw));
   s = s.replace(/[∑Σ]/g, '\u0001S').replace(/[∏Π]/g, '\u0001P');
   s = s.replace(/[⁰¹²³⁴-⁻]+/g, (m) =>
     '^(' + Array.from(m).map((c) => SUPERSCRIPT[c] || '').join('') + ')');
