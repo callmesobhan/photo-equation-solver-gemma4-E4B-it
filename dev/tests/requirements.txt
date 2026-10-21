@@ -5,3 +5,4 @@ scipy
 pint
 periodictable
 numpy-financial
+networkx

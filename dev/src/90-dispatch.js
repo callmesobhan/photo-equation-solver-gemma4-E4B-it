@@ -73,6 +73,8 @@ function resolveCommandsStatement(st) {
 
 /** Returns {readAs, out} for statements that are commands / matrix expressions / ODEs, else null. */
 function trySpecial(sts, solveFor) {
+  const rec = tryRecurrence(sts);
+  if (rec) return rec;
   if (sts.some((s) => statementHas(s, ['dvar']))) return solveODEStatements(sts);
   if (sts.every((s) => s.kind === 'expr') && sts.some((s) => hasCommand(s.node) || hasNode(s.node, ['list']))) {
     if (sts.length === 1) return { readAs: readAsNode(sts[0].node), out: evalCommandNode(sts[0].node) };

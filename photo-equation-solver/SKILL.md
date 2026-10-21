@@ -18,7 +18,7 @@ You only READ the math. The tool does ALL the calculating. Never solve it yourse
    - If the picture holds several separate problems, use `problems` (a list of strings) instead of `equation`.
 3. Reply with the tool's "Read as" line and its "Answer" lines exactly as returned. Add the "Working" and "Check" lines only if the user wants steps. Never change the numbers. If the result comes with a picture (a graph), say that it is shown in the chat.
 4. Ask the user to check that "Read as" matches their picture. If it does not, tell them to retake the photo closer and sharper.
-5. Unsure how to write a command? Call the tool with `{"equation": "help"}` (topics: `help syntax`, `equations`, `calculus`, `ode`, `numerical`, `curves`, `multivar`, `optimize`, `algebra`, `matrix`, `number`, `stats`, `geometry`, `units`, `plot`) and use what it says.
+5. Unsure how to write a command? Call the tool with `{"equation": "help"}` (topics: `help syntax`, `equations`, `calculus`, `ode`, `numerical`, `curves`, `logic`, `multivar`, `optimize`, `algebra`, `matrix`, `number`, `stats`, `geometry`, `units`, `plot`) and use what it says.
 
 ## Writing ordinary math
 
@@ -45,6 +45,7 @@ You only READ the math. The tool does ALL the calculating. Never solve it yourse
 | Formulas | write the equation and set `solve_for`: `v = u + a*t` with `"solve_for": "t"` |
 | Matrices | `[[1,2],[3,4]]` with `det()`, `inv()`, `rank()`, `rref()`, `eigen()`, `linsolve(A, b)`, `A*B`, `A^-1`; vectors `dot([1,2,3],[4,5,6])`, `cross(...)`, `gramschmidt([1,1,0],[1,0,1])` |
 | Numbers | `isprime(97)`, `factor(360)`, `divisors(36)`, `17 mod 5`, `3x ≡ 4 (mod 7)`, `ncr(10,3)`, `npr(10,3)`, `factorial(8)`, `sequence(2,6,12,20)`, `binary(10)`, `dice(2,6,7)`, `birthday(23)`, `arrangements of MISSISSIPPI` |
+| Logic and graphs | `truth table of p and (q or not r)`, `not (p and q) equivalent to (not p) or (not q)`, `graphinfo([[1,2],[2,3],[3,1]])`, `shortestpath([[a,b,4],[a,c,1],[c,b,2]], a, b)`, `mst(...)`, `maxflow(...)`; recurrences `a_n = 5a_(n-1) - 6a_(n-2), a_0 = 1, a_1 = 0`; `euclid(252, 105)`, `cfrac(sqrt(7))`, `pell(61)` |
 | Statistics | `mean(2,4,4,5)`, `stdev(...)`, `linreg([1,2,3],[2,4,7])`, `binompdf(10,0.5,3)`, `normalcdf(a, b, mean, sd)`, `invnorm(0.975)`, `tinterval(52,4,25,0.95)`, `ttest(...)`, `chisqtest(...)` |
 | More statistics | `ttest2([5,6,7,8,9],[3,4,5,6,9])`, `pairedt([10,12,9],[8,11,9])`, `anova([4,5,6],[7,8,9],[1,2,3])`, `prop2test(45,100,30,90)`, `corrtest([1,2,3,4,5],[2,4,5,4,6])`, `outliers([1,2,3,50])`, `multireg([[1,2],[2,1],[3,5],[4,3],[5,6]], [3,4,9,8,12])`, `markov([[0.9,0.1],[0.5,0.5]])`, `gammacdf(2, 3, 1)` |
 | Geometry | `circle(5)`, `cone(3,4)`, `triangle(a=3, b=4, C=60)`, `distance([1,2],[4,6])`; a conic is just written: `x^2 + y^2 - 6x + 4y - 12 = 0` |

@@ -362,7 +362,7 @@ function convertLogBase(s) {
 
 /** Character-level clean-up: unicode math, LaTeX, printed notation, abs bars. Keeps ; and newlines. */
 function normalizeText(raw) {
-  let s = convertApplied(String(raw));
+  let s = convertApplied(convertLogic(String(raw)));
   s = s.replace(/[\u2211\u03a3]/g, '\u0001S').replace(/[\u220f\u03a0]/g, '\u0001P');
   s = s.replace(/[\u2070\u00b9\u00b2\u00b3\u2074-\u207b]+/g, (m) =>
     '^(' + Array.from(m).map((c) => SUPERSCRIPT[c] || '').join('') + ')');
@@ -10142,8 +10142,9 @@ defCmd('powerset subsets', (n) => {
 // ---- text patterns: mod, congruences, bases, choose -----------------------------------------------------------------
 /** Called by normalizeText: turns "17 mod 5", "3x \u2261 4 (mod 7)", "255 to binary", "5 choose 2" into commands. */
 function convertDiscrete(s) {
-  if (!/mod|\u2261|equiv|binary|octal|hex|base|choose|0[xbo][0-9a-f]|integer|diophant|\bc\(|\bp\(|\d[cp]\d|_|anagram|arrang|permut/i.test(s)) return s;
+  if (!/mod|\u2261|equiv|binary|octal|hex|base|choose|0[xbo][0-9a-f]|integer|diophant|\bc\(|\bp\(|\d[cp]\d|_|anagram|arrang|permut|\(\s*n\b/i.test(s)) return s;
   s = convertWordCounting(s);
+  s = convertRecurrenceText(s);
   s = s.replace(/\\equiv/g, '\u2261').replace(/\\pmod\s*\{([^{}]*)\}/g, ' mod $1').replace(/\\bmod/g, ' mod ').replace(/\\pmod\s*(\d+)/g, ' mod $1');
   // congruences  L \u2261 R (mod m)
   s = s.replace(/([^\n;,\u2261]+?)\s*(?:\u2261|\bcongruent\s+to\b)\s*([^\n;,\u2261]+?)\s*[(,]?\s*(?:\bmod\b|\bmodulo\b)\s*(\d+)\s*\)?/gi, (m, l, r, mod) => {
@@ -12424,6 +12425,28 @@ function convertApplied(s) {
   // balancing chemical equations and formula commands
   s = s.replace(/[\u2080-\u2089]/g, (c) => String(c.charCodeAt(0) - 0x2080));
   s = s.replace(/\bbalance\s*(?:the\s+)?(?:equation|reaction)?\s*[:(]?\s*([A-Za-z0-9()\[\]\u00b7+ ]+?(?:->|=>|\u2192|\u27f6|\u21cc|=)[A-Za-z0-9()\[\]\u00b7+ ]+?)\s*(?:\)\s*)?(?=$|[;\n])/gi, (m, rxn) => 'balance(' + chemIndex(rxn.trim().replace(/\)$/, '')) + ')');
+  // a bare reaction such as "H2 + O2 -> H2O": every term a real formula and the same elements on both sides
+  s = s.replace(/^\s*([A-Za-z0-9()\[\]\u00b7+ ]+?)\s*(?:->|=>|\u2192|\u27f6|\u21cc)\s*([A-Za-z0-9()\[\]\u00b7+ ]+?)\s*$/, (m, lhs, rhs) => {
+    const side = (str) => {
+      const els = new Set();
+      str.split('+').forEach((term) => {
+        const f = term.trim();
+        if (!/^[A-Z0-9(\[]/.test(f)) throw new MathError('not a formula');
+        parseFormula(f).forEach((v, e) => els.add(e));
+      });
+      return els;
+    };
+    try {
+      const a = side(lhs);
+      const b = side(rhs);
+      if (a.size !== b.size) return m;
+      let same = true;
+      a.forEach((e) => { if (!b.has(e)) same = false; });
+      return same ? 'balance(' + chemIndex(lhs.trim() + ' -> ' + rhs.trim()) + ')' : m;
+    } catch (err) {
+      return m;
+    }
+  });
   s = s.replace(/\bmolar\s+mass\s+(?:of\s+)?\(?\s*([A-Z][A-Za-z0-9()\[\]\u00b7.*]*)/g, (m, f) => 'molarmass(' + chemIndex(trimFormula(f)) + ')');
   s = replaceCalls(s, ['molarmass'], (name, inner) => (/^\s*[A-Z][A-Za-z0-9()\[\]\u00b7.*]*\s*$/.test(inner) ? name + '(' + chemIndex(inner.trim()) + ')' : null));
   s = replaceCalls(s, ['percentcomp', 'composition', 'masspercent'], (name, inner) => (/^\s*[A-Z][A-Za-z0-9()\[\]\u00b7.*]*\s*$/.test(inner) ? name + '(' + chemIndex(inner.trim()) + ')' : null));
@@ -12829,6 +12852,7 @@ HELP.index = [
   '  equations   equations, systems, inequalities, formulas ("solve for t"), complex numbers',
   '  calculus    integrate, diff, limit, taylor, sum, product, tangent lines, curve study, areas and volumes',
   '  ode         differential equations (first order, linear of any order, systems) and Laplace transforms',
+  '  logic       truth tables, tautologies, equivalent formulas, minimal forms;  graph theory (degrees, paths, spanning trees, flows, colouring);  recurrence relations',
   '  curves      parametric and polar curves (slope, length, area), curvature, velocity, line integrals, potential functions, coordinate systems',
   '  numerical   Euler / Runge-Kutta, trapezoid / Simpson rules, bisection / secant, interpolation, splines, curve fitting',
   '  algebra     factor, expand, simplify, apart, gcd, lcm, divide, complex numbers',
@@ -12877,6 +12901,15 @@ HELP.calculus = [
   '  areabetween(f, g, x)  or  areabetween(f, g, x, a, b)   volumerev(f, x, a, b)  volumerev(f, g, x, a, b)  (about the x-axis)',
   '  shells(f, x, a, b)  (about the y-axis)   arclength(f, x, a, b)   surfacearea of revolution: surfacearearev(f, x, a, b)   avgvalue(f, x, a, b)',
   '  differential equations and Laplace transforms:  help ode',
+].join('\n');
+HELP.logic = [
+  'LOGIC AND GRAPHS',
+  '  truth tables:  truth table of p and (q or not r)   p -> q   (p and q) or not r   p xor q   (connectives: and or not xor -> <-> nand nor, or the symbols \u2227 \u2228 \u00ac \u2295 \u2192 \u2194)',
+  '                 not (p and q) equivalent to (not p) or (not q)    tells whether two formulas are equivalent;  also tautology / contradiction, normal forms and the simplest sum of products',
+  '  graphs are lists of edges:  graphinfo([[1,2],[2,3],[3,1],[3,4]]) [graphtheory]  (degrees, components, bipartite, Euler path)   digraph(edges)',
+  '     weighted:  shortestpath([[a,b,4],[a,c,1],[c,b,2]], a, b) [dijkstra]   mst([[a,b,4],[a,c,1],[c,b,2]]) [kruskal]   maxflow([[s,a,10],[a,t,7]], s, t)',
+  '     coloring(edges) [chromatic]   topsort(directed edges) [topologicalsort]   bfs(edges, start)   dfs(edges, start)',
+  '  recurrence relations: see  help number',
 ].join('\n');
 HELP.curves = [
   'PARAMETRIC AND POLAR CURVES, MOTION IN SPACE, LINE INTEGRALS',
@@ -12950,6 +12983,8 @@ HELP.number = [
   '  sequence(2, 6, 12, 20)   next terms + general term (arithmetic, geometric, polynomial, Fibonacci-type)',
   '  arith(a1, d, n)  nth term and sum;   geom(a1, r, n)  nth term and sum (infinite sum when |r| < 1)',
   '  union([1,2],[2,3]) intersection(A, B) setdiff(A, B) symdiff(A, B) powerset(n)',
+  '  euclid(252, 105) [bezout]  gcd steps and B\u00e9zout coefficients   cfrac(355/113), cfrac(sqrt(7)), cfrac(pi, 8) [continuedfraction]   pell(61) pell(13, -1)   collatz(27)   egyptian(4/13)   sum2sq(65)   farey(5)   hanoi(4)   josephus(7, 3)   polygonal(5, 10) [figurate, triangular]',
+  '  recurrences:  a_n = 5a_(n-1) - 6a_(n-2), a_0 = 1, a_1 = 0   (closed form + first terms)   or  linrec([5, -6], 0, [1, 0], 10)  for a(n) = 5a(n\u22121) \u2212 6a(n\u22122) + f(n) [recurrence]',
   '  binary(10) octal(64) hex(255) tobase(n, b) frombase(1011, 2);   0xFF, 0b101, 1011_2, (ff)_16 are understood',
 ].join('\n');
 HELP.stats = [
@@ -12995,7 +13030,7 @@ HELP.plot = [
 ].join('\n');
 const HELP_ALIAS = {
   '': 'index', help: 'index', commands: 'index', all: 'index', topics: 'index', input: 'syntax', notation: 'syntax', solve: 'equations', inequalities: 'equations', systems: 'equations', formulas: 'equations',
-  diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', parametric: 'curves', polar: 'curves', motion: 'curves', vectorfields: 'curves', lineintegrals: 'curves', coordinates: 'curves', numerics: 'numerical', numericalmethods: 'numerical', 'numerical methods': 'numerical', euler: 'numerical', rungekutta: 'numerical', quadrature: 'numerical', integration: 'calculus', interpolation: 'numerical', rootfinding: 'numerical', splines: 'numerical', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
+  diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', boolean: 'logic', graph: 'logic', graphs: 'logic', networks: 'logic', truthtable: 'logic', 'truth tables': 'logic', propositional: 'logic', recurrence: 'number', recurrences: 'number', parametric: 'curves', polar: 'curves', motion: 'curves', vectorfields: 'curves', lineintegrals: 'curves', coordinates: 'curves', numerics: 'numerical', numericalmethods: 'numerical', 'numerical methods': 'numerical', euler: 'numerical', rungekutta: 'numerical', quadrature: 'numerical', integration: 'calculus', interpolation: 'numerical', rootfinding: 'numerical', splines: 'numerical', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
   discrete: 'number', counting: 'number', probability: 'stats', statistics: 'stats', geometry: 'geometry', conic: 'geometry', conics: 'geometry', triangles: 'geometry',
   finance: 'units', chemistry: 'units', physics: 'units', conversion: 'units', graph: 'plot', plots: 'plot', plotting: 'plot', graphs: 'plot',
 };
@@ -15107,6 +15142,1306 @@ defCmd('coupon couponcollector', (n) => {
   out.value = { num: qFloat(e) };
   return out;
 });
+// ======================================================================
+// 20. More discrete mathematics: Euclid's algorithm with Bezout coefficients, continued fractions, Pell equations, Collatz,
+//     Egyptian fractions, sums of two squares, Farey sequences, Tower of Hanoi, Josephus, figurate numbers, and linear
+//     recurrence relations with closed forms.
+// ======================================================================
+defCmd('euclid bezout egcdsteps', (n) => {
+  const [a0, b0] = ints(n, 2, 2, 'two whole numbers: euclid(252, 105)');
+  if (a0 === 0n && b0 === 0n) throw new MathError('gcd(0, 0) is not defined');
+  let a = babs(a0);
+  let b = babs(b0);
+  const out = newOut();
+  const rows = [];
+  let x = a;
+  let y = b;
+  while (y !== 0n) {
+    const q = x / y;
+    const r = x % y;
+    rows.push({ x, y, q, r });
+    x = y;
+    y = r;
+  }
+  const g = x;
+  const [, s0, t0] = egcd(a, b);
+  const s = a0 < 0n ? -s0 : s0;
+  const t = b0 < 0n ? -t0 : t0;
+  out.answer.push('gcd(' + a0 + ', ' + b0 + ') = ' + g);
+  out.answer.push('B\u00e9zout: ' + g + ' = ' + qParenBig(s) + '\u00b7' + a0 + ' + ' + qParenBig(t) + '\u00b7' + b0);
+  rows.forEach((r) => out.work.push(r.x + ' = ' + r.q + '\u00b7' + r.y + ' + ' + r.r));
+  out.work.push('lcm(' + a + ', ' + b + ') = ' + (g === 0n ? 0n : (a / g) * b));
+  if (g !== 1n) out.work.push('the numbers are not coprime (gcd \u2260 1), so there is no modular inverse of either one modulo the other');
+  else if (b !== 0n && a !== 0n) out.work.push('gcd = 1: ' + a + ' has inverse ' + (((s0 % b) + b) % b) + ' modulo ' + b + ' (and ' + b + ' has inverse ' + (((t0 % a) + a) % a) + ' modulo ' + a + ')');
+  out.check = s * a0 + t * b0 === g ? 'the B\u00e9zout coefficients give back the gcd' : null;
+  out.value = { q: new Q(g) };
+  return out;
+});
+const qParenBig = (v) => (v < 0n ? '(' + v + ')' : String(v));
+
+// ---- continued fractions and Pell equations ----------------------------------------------------------------------------------------------------------------------
+function cfOfRational(p, q) {
+  const terms = [];
+  let a = p;
+  let b = q;
+  while (b !== 0n && terms.length < 60) {
+    let t = a / b;
+    if (a % b !== 0n && (a < 0n) !== (b < 0n)) t -= 1n;
+    terms.push(t);
+    [a, b] = [b, a - t * b];
+  }
+  return terms;
+}
+function cfOfSqrt(d) {
+  const a0 = isqrtBig(d);
+  if (a0 * a0 === d) return { a0, period: [] };
+  let m = 0n;
+  let dd = 1n;
+  let a = a0;
+  const period = [];
+  for (let i = 0; i < 2000; i++) {
+    m = dd * a - m;
+    dd = (d - m * m) / dd;
+    a = (a0 + m) / dd;
+    period.push(a);
+    if (a === 2n * a0) break;
+  }
+  return { a0, period };
+}
+function isqrtBig(n) {
+  if (n < 2n) return n;
+  let x = BigInt(Math.floor(Math.sqrt(Number(n))));
+  while (x * x > n) x -= 1n;
+  while ((x + 1n) * (x + 1n) <= n) x += 1n;
+  return x;
+}
+function convergentsOf(terms) {
+  const out = [];
+  let p0 = 1n;
+  let q0 = 0n;
+  let p1 = terms[0];
+  let q1 = 1n;
+  out.push([p1, q1]);
+  for (let i = 1; i < terms.length; i++) {
+    const p2 = terms[i] * p1 + p0;
+    const q2 = terms[i] * q1 + q0;
+    out.push([p2, q2]);
+    [p0, q0, p1, q1] = [p1, q1, p2, q2];
+  }
+  return out;
+}
+/** a + b\u00b7sqrt(d) with rational a, b and a whole d (not a perfect square), or null. */
+function asQuadSurd(S) {
+  let a = Q0;
+  let b = Q0;
+  let d = null;
+  const terms = S.k === '+' ? S.a : [S];
+  for (const tm of terms) {
+    if (tm.k === 'n') {
+      a = a.add(tm.q);
+      continue;
+    }
+    const [coef, rest] = splitCoef(tm);
+    if (rest && rest.k === '^' && rest.b.k === 'n' && rest.b.q.isInt() && rest.e.k === 'n' && rest.e.q.eq(new Q(1n, 2n))) {
+      const dd = rest.b.q.n;
+      if (d !== null && d !== dd) return null;
+      d = dd;
+      b = b.add(coef);
+    } else return null;
+  }
+  return d === null || b.isZero() ? null : { a, b, d };
+}
+/** Continued fraction of (P + sqrt(D))/Q with Q > 0 and Q | D \u2212 P\u00b2: the purely periodic tail is detected exactly. */
+function cfOfQuadratic(P, D, Q) {
+  const r = isqrtBig(D);
+  const terms = [];
+  const seen = new Map();
+  for (let i = 0; i < 400; i++) {
+    const key = P + ',' + Q;
+    if (seen.has(key)) return { pre: terms.slice(0, seen.get(key)), period: terms.slice(seen.get(key)) };
+    seen.set(key, terms.length);
+    let a = (P + r) / Q;
+    if (P + r < 0n && (P + r) % Q !== 0n) a -= 1n;
+    terms.push(a);
+    P = a * Q - P;
+    Q = (D - P * P) / Q;
+  }
+  return { pre: terms, period: [] };
+}
+defCmd('cfrac continuedfraction cf', (n) => {
+  needArgs(n, 1, 2, 'a number, fraction or square root, and optionally how many terms: cfrac(355/113), cfrac(sqrt(7)), cfrac((1+sqrt(5))/2), cfrac(pi, 8)');
+  const out = newOut();
+  const S = fromAst(n.args[0]);
+  const want = n.args[1] ? Number(intArg(n.args[1])) : 10;
+  if (want < 1 || want > 40) throw new MathError('between 1 and 40 terms are supported');
+  const show = (terms) => '[' + terms[0] + '; ' + terms.slice(1).join(', ') + ']';
+  if (S.k === 'n') {
+    const terms = cfOfRational(S.q.n, S.q.d);
+    out.answer.push(fmtS(S) + ' = ' + (terms.length === 1 ? '[' + terms[0] + ']' : show(terms)));
+    out.work.push('Euclid\'s algorithm on the numerator and denominator gives the terms');
+    const cv = convergentsOf(terms);
+    out.work.push('convergents: ' + cv.map(([p, q]) => (q === 1n ? p.toString() : p + '/' + q)).join(', '));
+    out.value = { S };
+    return out;
+  }
+  const qs = asQuadSurd(S);
+  if (qs && qs.a.add(qs.b.mul(new Q(isqrtBig(qs.d)))).sign() > 0 && qs.b.sign() > 0 && isqrtBig(qs.d) ** 2n !== qs.d) {
+    // x = (A + B sqrt(d))/C  ->  (P + sqrt(D))/Q  with Q | D \u2212 P\u00b2
+    const C = qs.a.d * qs.b.d / bgcd(qs.a.d, qs.b.d);
+    const A = qs.a.n * (C / qs.a.d);
+    const B = qs.b.n * (C / qs.b.d);
+    const P = A * C;
+    const D = B * B * qs.d * C * C;
+    const Q = C * C;
+    const { pre, period } = cfOfQuadratic(P, D, Q);
+    const head = pre.concat(period);
+    let text;
+    if (!period.length) text = show(head);
+    else if (!pre.length) text = '[(' + period.join(', ') + ') repeating]';
+    else text = '[' + pre[0] + (pre.length > 1 ? '; ' + pre.slice(1).join(', ') + ', ' : '; ') + '(' + period.join(', ') + ') repeating]';
+    out.answer.push(fmtS(S) + ' = ' + text + '   (' + (period.length ? 'period length ' + period.length : 'terminating') + ')');
+    const terms = pre.concat(Array.from({ length: Math.max(want - pre.length, 0) }, (_, i) => period[i % (period.length || 1)])).slice(0, want);
+    const cv = convergentsOf(terms);
+    out.work.push('convergents: ' + cv.slice(0, 8).map(([p, q]) => p + '/' + q).join(', '));
+    return out;
+  }
+  const v = numS(S, {});
+  if (!isFinite(v)) throw new MathError('give a real number');
+  // known constants with a closed pattern or tables; otherwise doubles
+  let terms;
+  const key0 = fmtS(S);
+  if (key0 === '\u03c0') terms = [3n, 7n, 15n, 1n, 292n, 1n, 1n, 1n, 2n, 1n, 3n, 1n, 14n, 2n, 1n, 1n, 2n, 2n, 2n, 2n, 1n, 84n];
+  else if (key0 === 'e') terms = [2n, 1n, 2n, 1n, 1n, 4n, 1n, 1n, 6n, 1n, 1n, 8n, 1n, 1n, 10n, 1n, 1n, 12n, 1n, 1n, 14n, 1n, 1n, 16n];
+  else {
+    terms = [];
+    let x = v;
+    for (let i = 0; i < Math.min(want, 12); i++) {
+      const a = Math.floor(x);
+      terms.push(BigInt(a));
+      const frac = x - a;
+      if (frac < 1e-9) break;
+      x = 1 / frac;
+    }
+  }
+  terms = terms.slice(0, want);
+  out.answer.push(fmtS(S) + ' \u2248 ' + show(terms));
+  const cv = convergentsOf(terms);
+  out.work.push('convergents: ' + cv.slice(0, 10).map(([p, q]) => p + '/' + q + ' (' + fmtNum(Number(p) / Number(q)) + ')').join(', '));
+  if (!['\u03c0', 'e'].includes(key0)) out.notes.push('The later terms come from a decimal value and may be inaccurate.');
+  return out;
+});
+defCmd('pell pellequation', (n) => {
+  needArgs(n, 1, 2, 'd (for x\u00b2 \u2212 d\u00b7y\u00b2 = 1) and optionally \u00b11: pell(61), pell(13, -1)');
+  const d = intArg(n.args[0]);
+  const sign = n.args[1] ? intArg(n.args[1]) : 1n;
+  if (d < 2n || d > 100000n) throw new MathError('d must be between 2 and 100000');
+  if (isqrtBig(d) ** 2n === d) throw new MathError('d is a perfect square, so x\u00b2 \u2212 d\u00b7y\u00b2 = ' + sign + ' has only trivial solutions');
+  if (sign !== 1n && sign !== -1n) throw new MathError('the right-hand side must be 1 or -1');
+  const { a0, period } = cfOfSqrt(d);
+  const L = period.length;
+  const out = newOut();
+  if (sign === -1n && L % 2 === 0) {
+    out.answer.push('x\u00b2 \u2212 ' + d + 'y\u00b2 = \u22121 has no integer solutions (the period of \u221a' + d + ' is even)');
+    return out;
+  }
+  const terms = [a0].concat(Array.from({ length: 2 * L + 1 }, (_, i) => period[i % L]));
+  const k = sign === 1n ? (L % 2 === 0 ? L : 2 * L) : L;
+  const cv = convergentsOf(terms.slice(0, k));
+  const [x1, y1] = cv[cv.length - 1];
+  out.answer.push('smallest solution: x = ' + x1 + ', y = ' + y1 + '   (' + x1 + '\u00b2 \u2212 ' + d + '\u00b7' + y1 + '\u00b2 = ' + (x1 * x1 - d * y1 * y1) + ')');
+  // further solutions (x + y\u221ad)^k
+  const fam = [[x1, y1]];
+  const [bx, by] = sign === 1n ? [x1, y1] : [x1 * x1 + d * y1 * y1, 2n * x1 * y1];
+  let [cx, cy] = [x1, y1];
+  const next = [];
+  for (let i = 0; i < 3; i++) {
+    [cx, cy] = [cx * bx + d * cy * by, cx * by + cy * bx];
+    next.push('(' + cx + ', ' + cy + ')');
+  }
+  void fam;
+  out.work.push('period of \u221a' + d + ' = ' + L + ';  the fundamental solution is a convergent of the continued fraction [' + a0 + '; ' + period.join(', ') + ']');
+  out.work.push((sign === 1n ? 'more solutions: (x + y\u221ad)\u207f, e.g. ' : 'solutions of the \u22121 equation: the odd powers of (x + y\u221ad), e.g. next ') + next.join(', '));
+  return out;
+});
+
+// ---- small number-theoretic curiosities ---------------------------------------------------------------------------------------------------------------------------
+defCmd('collatz', (n) => {
+  const [start] = ints(n, 1, 1, 'a positive whole number: collatz(27)');
+  if (start < 1n || start > 10n ** 15n) throw new MathError('use a positive whole number below 10^15');
+  let x = start;
+  let steps = 0;
+  let peak = x;
+  const seq = [x];
+  while (x !== 1n && steps < 100000) {
+    x = x % 2n === 0n ? x / 2n : 3n * x + 1n;
+    steps++;
+    if (x > peak) peak = x;
+    if (seq.length < 40) seq.push(x);
+  }
+  const out = newOut();
+  out.answer.push(steps + ' steps to reach 1 (peak value ' + peak + ')');
+  out.work.push('rule: n \u2192 n/2 if n is even, 3n + 1 if n is odd');
+  out.work.push('sequence: ' + seq.join(', ') + (steps + 1 > seq.length ? ', \u2026' : ''));
+  out.value = { q: qInt(steps) };
+  return out;
+});
+defCmd('egyptian egyptianfraction', (n) => {
+  needArgs(n, 1, 1, 'a fraction between 0 and 1 (or any positive fraction): egyptian(4/13)');
+  const q = constQ(n.args[0]);
+  if (q.sign() <= 0) throw new MathError('give a positive fraction');
+  let r = q;
+  const parts = [];
+  const out = newOut();
+  if (r.sub(Q1).sign() >= 0) {
+    const w = r.n / r.d;
+    parts.push(w.toString());
+    r = r.sub(new Q(w));
+  }
+  let guard = 0;
+  while (!r.isZero() && guard++ < 60) {
+    const d = (r.d + r.n - 1n) / r.n; // ceil(1/r)
+    parts.push('1/' + d);
+    r = r.sub(new Q(1n, d));
+    if (bitLen(r.d) > 400) throw new MathError('the greedy expansion grows too large');
+  }
+  out.answer.push(q.toString() + ' = ' + parts.join(' + '));
+  out.work.push('greedy algorithm: repeatedly subtract the largest unit fraction 1/\u23081/r\u2309');
+  return out;
+});
+defCmd('sum2sq sumoftwosquares', (n) => {
+  const [v] = ints(n, 1, 1, 'a whole number: sum2sq(65)');
+  if (v < 0n || v > 10n ** 12n) throw new MathError('use a number from 0 to 10^12');
+  const reps = [];
+  for (let a = 0n; 2n * a * a <= v; a++) {
+    const rest = v - a * a;
+    const b = isqrtBig(rest);
+    if (b * b === rest && b >= a) reps.push([b, a]);
+    if (reps.length > 40) break;
+  }
+  const out = newOut();
+  out.answer.push(reps.length ? v + ' = ' + reps.map(([b, a]) => b + '\u00b2 + ' + a + '\u00b2').join(' = ') : v + ' is not a sum of two squares');
+  if (!reps.length) {
+    const f = factorBig(v);
+    if (f) out.work.push('A number is a sum of two squares exactly when every prime \u2261 3 (mod 4) occurs to an even power; here ' + factorizationText(f));
+  }
+  return out;
+});
+defCmd('farey fareysequence', (n) => {
+  const [m] = ints(n, 1, 1, 'the order n (2 to 20)');
+  if (m < 1n || m > 20n) throw new MathError('n must be between 1 and 20');
+  const N = Number(m);
+  const seq = ['0/1', '1/' + N];
+  let [a, b, c, d] = [0, 1, 1, N];
+  while (c < N || d > 1) {
+    const k = Math.floor((N + b) / d);
+    [a, b, c, d] = [c, d, k * c - a, k * d - b];
+    if (c === d) {
+      seq.push('1/1');
+      break;
+    }
+    seq.push(c + '/' + d);
+  }
+  const out = newOut();
+  const uniq = [];
+  const seen = new Set();
+  const all = ['0/1'];
+  for (let q = 1; q <= N; q++) for (let p = 0; p <= q; p++) if (gcdNum(p, q) === 1) all.push(p + '/' + q);
+  all.sort((x, y) => eval(x) - eval(y)); // eslint-disable-line no-eval
+  all.forEach((s) => { if (!seen.has(s)) { seen.add(s); uniq.push(s); } });
+  void seq;
+  out.answer.push('F' + N + ' = ' + uniq.join(', ') + '   (' + uniq.length + ' fractions)');
+  out.work.push('all reduced fractions p/q with 0 \u2264 p/q \u2264 1 and q \u2264 ' + N + '; the length is 1 + \u03c6(1) + \u2026 + \u03c6(' + N + ')');
+  return out;
+});
+defCmd('hanoi towerofhanoi', (n) => {
+  const [m] = ints(n, 1, 1, 'the number of discs: hanoi(4)');
+  if (m < 1n || m > 100000n) throw new MathError('use between 1 and 100000 discs');
+  const out = newOut();
+  const moves = 2n ** m - 1n;
+  out.answer.push('the minimum number of moves is 2^' + m + ' \u2212 1 = ' + bigText(moves));
+  if (m <= 4n) {
+    const list = [];
+    const go = (k, from, to, via) => {
+      if (k === 0) return;
+      go(k - 1, from, via, to);
+      list.push(from + '\u2192' + to);
+      go(k - 1, via, to, from);
+    };
+    go(Number(m), 'A', 'C', 'B');
+    out.work.push('moves (pegs A, B, C): ' + list.join(', '));
+  }
+  out.work.push('T(n) = 2T(n \u2212 1) + 1 with T(0) = 0');
+  out.value = { q: new Q(moves) };
+  return out;
+});
+defCmd('josephus', (n) => {
+  const [people, k] = ints(n, 2, 2, 'the number of people and the step: josephus(7, 3)');
+  if (people < 1n || people > 100000n || k < 1n) throw new MathError('use 1 to 100000 people and a step of at least 1');
+  const N = Number(people);
+  const K = Number(k);
+  const order = [];
+  const ring = Array.from({ length: N }, (_, i) => i + 1);
+  let idx = 0;
+  while (ring.length > 1) {
+    idx = (idx + K - 1) % ring.length;
+    order.push(ring.splice(idx, 1)[0]);
+  }
+  const out = newOut();
+  out.answer.push('the survivor is person ' + ring[0] + ' (counting from 1)');
+  if (N <= 40) out.work.push('elimination order: ' + order.join(', '));
+  out.work.push('J(1) = 0, J(n) = (J(n \u2212 1) + k) mod n (0-based)');
+  out.value = { q: qInt(ring[0]) };
+  return out;
+});
+defCmd('polygonal figurate triangular', (n) => {
+  needArgs(n, 1, 2, 'n (triangular number) or the number of sides s and n: polygonal(5, 10)');
+  const s = n.args.length === 2 ? intArg(n.args[0]) : 3n;
+  const m = intArg(n.args[n.args.length - 1]);
+  if (s < 3n || m < 0n) throw new MathError('s \u2265 3 and n \u2265 0 are needed');
+  const val = (m * ((s - 2n) * m - (s - 4n))) / 2n;
+  const names = { 3n: 'triangular', 4n: 'square', 5n: 'pentagonal', 6n: 'hexagonal', 7n: 'heptagonal', 8n: 'octagonal' };
+  const out = newOut();
+  out.answer.push('P(' + s + ', ' + m + ') = ' + val + '   (the ' + m + '-th ' + (names[s] || s + '-gonal') + ' number)');
+  out.work.push('P(s, n) = n((s \u2212 2)n \u2212 (s \u2212 4))/2;  first terms: ' + Array.from({ length: 8 }, (_, i) => {
+    const k = BigInt(i + 1);
+    return (k * ((s - 2n) * k - (s - 4n))) / 2n;
+  }).join(', '));
+  out.value = { q: new Q(val) };
+  return out;
+});
+
+// ---- linear recurrences ---------------------------------------------------------------------------------------------------------------------------------------------------
+const REC_NAME = /^([A-Za-z])_(n|nm\d+|np\d+)$/;
+function recOffset(name) {
+  const m = REC_NAME.exec(name);
+  if (!m) return null;
+  return m[2] === 'n' ? 0 : m[2].startsWith('nm') ? -Number(m[2].slice(2)) : Number(m[2].slice(2));
+}
+/** Rewrites  a_n, a_{n-1}, a(n+2), a_(n-1) ...  as a_(n), a_(nm1), a_(np2) (ids the tokenizer understands) when the text is a recurrence. */
+function convertRecurrenceText(s) {
+  const re = /(^|[^A-Za-z_])([A-Za-z])\s*(?:_\s*\{?\(?\s*n\s*(?:([+-])\s*(\d+))?\s*\)?\}?|\(\s*n\s*(?:([+-])\s*(\d+))?\s*\))/g;
+  const letters = new Set();
+  let any = false;
+  const t = s.replace(re, (m, pre, L, sg1, d1, sg2, d2) => {
+    const sg = sg1 || sg2;
+    const d = d1 || d2;
+    letters.add(L);
+    if (sg) any = true;
+    return pre + L + '_(' + (!sg ? 'n' : sg === '-' ? 'nm' + d : 'np' + d) + ')';
+  });
+  if (!letters.size || !/=/.test(t)) return s;
+  if (!any && !/[A-Za-z]_\(n\)\s*=[^=]*[A-Za-z]_\(n/.test(t)) {
+    // a_n = 3n + 1 is a formula for the sequence, not a recurrence: leave it to the ordinary solver
+    return s;
+  }
+  // initial values  a_0 = 1  /  a(0) = 1  /  a_{1}
+  let u = t;
+  letters.forEach((L) => {
+    u = u.replace(new RegExp('(^|[^A-Za-z_])' + L + '\\s*(?:_\\s*\\{?\\(?\\s*(\\d+)\\s*\\)?\\}?|\\(\\s*(\\d+)\\s*\\))(?!\\w)', 'g'), (m, pre, a, b) => pre + L + '_(' + (a || b) + ')');
+  });
+  return u;
+}
+function recShow(name) {
+  const m = REC_NAME.exec(name);
+  if (!m) return name;
+  return m[1] + '(' + (m[2] === 'n' ? 'n' : m[2].startsWith('nm') ? 'n\u2212' + m[2].slice(2) : 'n+' + m[2].slice(2)) + ')';
+}
+function tryRecurrence(sts) {
+  const names = new Set();
+  sts.forEach((st) => {
+    const vs = new Set();
+    if (st.kind === 'eq') {
+      collectVars(st.lhs, vs);
+      collectVars(st.rhs, vs);
+    }
+    vs.forEach((v) => {
+      if (REC_NAME.test(v)) names.add(v);
+    });
+  });
+  if (!names.size) return null;
+  const letter = REC_NAME.exec(Array.from(names)[0])[1];
+  const recs = [];
+  const inits = new Map();
+  for (const st of sts) {
+    if (st.kind !== 'eq') throw new MathError('a recurrence is written with "=", for example a_n = 2a_(n-1) + 1');
+    const vs = new Set();
+    collectVars(st.lhs, vs);
+    collectVars(st.rhs, vs);
+    const hasRec = Array.from(vs).some((v) => REC_NAME.test(v));
+    if (hasRec) recs.push(st);
+    else {
+      // a_0 = 1
+      const idx = Array.from(vs).filter((v) => new RegExp('^' + letter + '_\\d+$').test(v));
+      const full = simp(sSub(fromAst(st.lhs), fromAst(st.rhs)));
+      if (idx.length === 1 && varsOfS(full).size === 1) {
+        const coef = simp(diffS(full, idx[0]));
+        const rest = simp(subsS(full, idx[0], S0));
+        if (coef.k !== 'n' || rest.k !== 'n') throw new MathError('initial values must be numbers, such as a_0 = 1');
+        inits.set(Number(idx[0].split('_')[1]), rest.q.neg().div(coef.q));
+      } else throw new MathError('I did not understand the statement "' + showStatement(st) + '"');
+    }
+  }
+  if (recs.length !== 1) throw new MathError('give exactly one recurrence relation');
+  const full = simp(expandS(sSub(fromAst(recs[0].lhs), fromAst(recs[0].rhs))));
+  const ids = Array.from(varsOfS(full)).filter((v) => REC_NAME.test(v));
+  const offs = ids.map(recOffset);
+  const top = Math.max(...offs);
+  const low = Math.min(...offs);
+  const order = top - low;
+  if (order < 1) throw new MathError('the recurrence must link a term to earlier terms, such as a_n = 2a_(n\u22121) + 1');
+  if (order > 6) throw new MathError('recurrences of order up to 6 are supported');
+  const topId = ids[offs.indexOf(top)];
+  const topCoef = simp(diffS(full, topId));
+  if (topCoef.k !== 'n' || topCoef.q.isZero()) throw new MathError('the coefficients of the earlier terms must be numbers (constant coefficients)');
+  const cs = []; // a_n = c1 a_(n-1) + ... + ck a_(n-k) + f(n)
+  for (let j = 1; j <= order; j++) {
+    const id = ids[offs.indexOf(top - j)];
+    if (id === undefined) {
+      cs.push(Q0);
+      continue;
+    }
+    const co = simp(diffS(full, id));
+    if (co.k !== 'n') throw new MathError('the coefficients of the earlier terms must be numbers (constant coefficients)');
+    cs.push(co.q.neg().div(topCoef.q));
+  }
+  const zero = new Map(ids.map((v) => [v, S0]));
+  const nS = sV('n');
+  // the forcing term, with n shifted so that the top term is a_n
+  let f = simp(sNeg(sDiv(subsMany(full, zero), topCoef)));
+  if (top !== 0) f = simp(subsS(f, 'n', sSub(nS, sI(top))));
+  if (varsOfS(f).size && !(varsOfS(f).size === 1 && varsOfS(f).has('n'))) throw new MathError('the extra terms may depend on n only');
+  // initial values: consecutive indices
+  const idxs = Array.from(inits.keys()).sort((p, q) => p - q);
+  const start = idxs.length ? idxs[0] : 0;
+  if (idxs.length < order) throw new MathError('this recurrence has order ' + order + ': give ' + order + ' initial values such as a_0 = 1' + (order > 1 ? ', a_1 = 2' : ''));
+  for (let i = 0; i < order; i++) if (!inits.has(start + i)) throw new MathError('the initial values must be consecutive (a_' + start + ', a_' + (start + 1) + ', \u2026)');
+  const readAs = sts.map((st) => (st.kind === 'eq' ? showStatement(st) : '')).join(';  ').replace(new RegExp(letter + '_(n[mp]?\\d*)', 'g'), (m) => recShow(m));
+  // the closed form is built for n = 0, 1, \u2026: run the recurrence backwards from the given values when they start later
+  const full0 = new Map(inits);
+  for (let m = start - 1; m >= 0; m--) {
+    let v = full0.get(m + order);
+    for (let j = 1; j < order; j++) v = v.sub(cs[j - 1].mul(full0.get(m + order - j)));
+    const fv = simp(subsS(f, 'n', sI(m + order)));
+    if (fv.k !== 'n') throw new MathError('the extra term must be rational for integer n');
+    full0.set(m, v.sub(fv.q).div(cs[order - 1]));
+  }
+  return { readAs: readAs.replace(/[A-Za-z]_(\d+)/g, (m, d) => letter + '_' + d), out: solveLinearRecurrence(cs, f, full0, 0, letter, null, start) };
+}
+function recValues(cs, f, inits, start, upTo) {
+  const vals = new Map(inits);
+  for (let m = start + cs.length; m <= upTo; m++) {
+    let v = Q0;
+    cs.forEach((c, j) => {
+      v = v.add(c.mul(vals.get(m - 1 - j)));
+    });
+    const fv = simp(subsS(f, 'n', sI(m)));
+    if (fv.k !== 'n') throw new MathError('the extra term must be a rational number for every n');
+    vals.set(m, v.add(fv.q));
+  }
+  return vals;
+}
+function solveLinearRecurrence(cs, f, inits, start, letter, target, listFrom) {
+  const k = cs.length;
+  const out = newOut();
+  const nS = sV('n');
+  const nm = (t) => letter + '(' + t + ')';
+  const terms = [];
+  cs.forEach((c, j) => {
+    if (!c.isZero()) terms.push('(' + c.toString() + ')\u00b7' + nm('n\u2212' + (j + 1)));
+  });
+  out.work.push('Type: linear recurrence of order ' + k + ' with constant coefficients:  ' + nm('n') + ' = ' + terms.join(' + ') + (isNumVal(f, 0) ? '' : ' + ' + fmtS(f)));
+  // characteristic roots: \u03bb^k = c1 \u03bb^(k-1) + ... + ck
+  const charQ = [];
+  for (let j = k; j >= 1; j--) charQ.push(cs[j - 1].neg());
+  charQ.push(Q1);
+  const roots = charRootsS(charQ);
+  out.work.push('Characteristic equation: ' + polyText(charQ, 'r') + ' = 0   (roots: ' + roots.map((r) => (r.im ? fmtS(r.re) + ' \u00b1 ' + fmtS(r.im) + 'i' : fmtS(r.re)) + (r.mult > 1 ? ' (\u00d7' + r.mult + ')' : '')).join(', ') + ')');
+  // homogeneous basis (functions of n)
+  const basis = [];
+  roots.forEach((r) => {
+    if (!r.im) {
+      for (let j = 0; j < r.mult; j++) basis.push(simp(sMul([sPow(nS, sI(j)), sPow(r.re, nS)])));
+    } else {
+      const rho2 = simp(expandS(sAdd([sq(r.re), sq(r.im)])));
+      const rho = simp(sSqrt(rho2));
+      const alpha = numS(r.re, {});
+      const beta = numS(r.im, {});
+      const theta = Math.atan2(beta, alpha);
+      const fr = toFraction(theta / Math.PI, 360);
+      const thS = fr && Math.abs(fr.p / fr.q - theta / Math.PI) < 1e-12 ? simp(sMul([sN(new Q(BigInt(fr.p), BigInt(fr.q))), S_PI])) : sFn('atan', [simp(sDiv(r.im, r.re))]);
+      const th = fr && Math.abs(fr.p / fr.q - theta / Math.PI) < 1e-12 ? thS : alpha < 0 ? simp(sAdd([thS, S_PI])) : thS;
+      for (let j = 0; j < r.mult; j++) {
+        const base = sMul([sPow(nS, sI(j)), sPow(rho, nS)]);
+        basis.push(simp(sMul([base, sFn('cos', [sMul([nS, th])])])));
+        basis.push(simp(sMul([base, sFn('sin', [sMul([nS, th])])])));
+      }
+    }
+  });
+  if (basis.length !== k) throw new MathError('I could not find all the roots of the characteristic equation exactly');
+  // particular solution by undetermined coefficients: terms c\u00b7n^d\u00b7b^n (b rational)
+  let part = S0;
+  if (!isNumVal(f, 0)) {
+    const groups = new Map(); // base string -> {b: Q, deg}
+    const fTerms = termsOf(expandS(f));
+    for (const tm of fTerms) {
+      let deg = 0;
+      let b = Q1;
+      const factors = tm.k === '*' ? tm.a : [tm];
+      for (const fac of factors) {
+        if (fac.k === 'n') continue;
+        if (fac.k === 'v' && fac.name === 'n') deg += 1;
+        else if (fac.k === '^' && fac.b.k === 'v' && fac.b.name === 'n' && fac.e.k === 'n' && fac.e.q.isInt() && fac.e.q.sign() > 0) deg += Number(fac.e.q.n);
+        else if (fac.k === '^' && fac.b.k === 'n' && fac.e.k === 'v' && fac.e.name === 'n') b = b.mul(fac.b.q);
+        else if (fac.k === '^' && fac.b.k === 'n' && fac.e.k === '+' && fac.e.a.some((x) => x.k === 'v' && x.name === 'n')) {
+          // b^(n + c)
+          const sh = simp(subsS(fac.e, 'n', S0));
+          if (sh.k !== 'n' || !sh.q.isInt()) throw new MathError('unsupported extra term');
+          b = b.mul(fac.b.q).mul(fac.b.q.pow(Number(sh.q.n)));
+        } else throw new MathError('the extra term may contain polynomials in n and powers b^n only');
+      }
+      const key0 = b.toString();
+      const g = groups.get(key0) || { b, deg: 0 };
+      g.deg = Math.max(g.deg, deg);
+      groups.set(key0, g);
+    }
+    const unknowns = [];
+    groups.forEach((g) => {
+      let mult = 0;
+      roots.forEach((r) => {
+        if (!r.im && r.re.k === 'n' && r.re.q.eq(g.b)) mult = r.mult;
+      });
+      for (let j = 0; j <= g.deg; j++) unknowns.push({ b: g.b, pow: j + mult });
+    });
+    const basisAt = (u, m) => {
+      const bn = m >= 0 ? u.b.pow(m) : u.b.inv().pow(-m);
+      return bn.mul(new Q(BigInt(m)).pow(u.pow));
+    };
+    const rows = [];
+    const rhs = [];
+    for (let m = k; m < k + unknowns.length + 3; m++) {
+      rows.push(unknowns.map((u) => {
+        let v = basisAt(u, m);
+        for (let j = 1; j <= k; j++) v = v.sub(cs[j - 1].mul(basisAt(u, m - j)));
+        return v;
+      }));
+      const fv = simp(subsS(f, 'n', sI(m)));
+      if (fv.k !== 'n') throw new MathError('the extra term must be rational for integer n');
+      rhs.push(fv.q);
+    }
+    const { M, pivots, inconsistent } = rrefQ(rows.map((r, i) => r.concat([rhs[i]])), unknowns.length);
+    if (inconsistent || pivots.length < unknowns.length) throw new MathError('I could not find a particular solution for this extra term');
+    const coef = new Array(unknowns.length).fill(Q0);
+    pivots.forEach((c, i) => { coef[c] = M[i][unknowns.length]; });
+    part = simp(sAdd(unknowns.map((u, i) => sMul([sN(coef[i]), sPow(nS, sI(u.pow)), sPow(sN(u.b), nS)]))));
+    out.work.push('Particular solution (undetermined coefficients): ' + fmtS(part));
+  }
+  // constants from the initial values
+  const consts = basis.map((_, i) => 'C' + (i + 1));
+  const rowsS = [];
+  const rhsS = [];
+  for (let i = 0; i < k; i++) {
+    const m = start + i;
+    rowsS.push(basis.map((b) => simp(expandS(subsS(b, 'n', sI(m))))));
+    rhsS.push(simp(sSub(sN(inits.get(m)), subsS(part, 'n', sI(m)))));
+  }
+  const sol = solveLinearS(rowsS, rhsS);
+  if (!sol) throw new MathError('the initial values do not determine the constants');
+  let closed = part;
+  basis.forEach((b, i) => { closed = sAdd([closed, sMul([sol[i], b])]); });
+  closed = simp(expandS(closed));
+  void consts;
+  out.answer.push(nm('n') + ' = ' + fmtS(closed));
+  // check against the recurrence itself
+  const last = start + 14;
+  const vals = recValues(cs, f, inits, start, last);
+  let ok = true;
+  for (let m = start; m <= last && ok; m++) {
+    const cv = numS(subsS(closed, 'n', sI(m)), {});
+    const rv = vals.get(m).toNumber();
+    if (!(Math.abs(cv - rv) <= 1e-6 * (1 + Math.abs(rv)))) ok = false;
+  }
+  out.check = ok ? 'the formula reproduces the terms ' + letter + '(' + start + ') \u2026 ' + letter + '(' + last + ') computed from the recurrence' : null;
+  if (!ok) out.notes.push('The automatic check of the closed form did not pass; please verify it.');
+  const shown = [];
+  const from = listFrom === undefined ? start : listFrom;
+  for (let m = from; m < from + 10; m++) shown.push(vals.get(m).toString());
+  out.work.push('first terms (n = ' + from + ', ' + (from + 1) + ', \u2026): ' + shown.join(', '));
+  if (target !== null) {
+    const tv = recValues(cs, f, inits, start, target).get(target);
+    out.answer.push(letter + '(' + target + ') = ' + qText(tv));
+    out.value = { q: tv };
+  }
+  return out;
+}
+defCmd('linrec recurrence', (n) => {
+  needArgs(n, 3, 4, 'the coefficients [c1, c2, ...] of a(n) = c1\u00b7a(n\u22121) + c2\u00b7a(n\u22122) + \u2026, the extra term f(n) (0 if none), the initial values [a0, a1, ...] and optionally a target index: linrec([1, 1], 0, [0, 1], 10)');
+  if (n.args[0].t !== 'list' || n.args[2].t !== 'list') throw new MathError('the coefficients and the initial values are lists in square brackets');
+  const cs = dataOf([n.args[0]], 'linrec');
+  const inits = dataOf([n.args[2]], 'linrec');
+  if (cs.length < 1 || cs.length > 6) throw new MathError('order 1 to 6 is supported');
+  if (inits.length !== cs.length) throw new MathError('give ' + cs.length + ' initial values for a recurrence of order ' + cs.length);
+  if (cs[cs.length - 1].isZero()) throw new MathError('the last coefficient must not be 0 (that would lower the order)');
+  const f = simp(fromAst(n.args[1]));
+  const vs = varsOfS(f);
+  if (vs.size && !(vs.size === 1 && vs.has('n'))) throw new MathError('the extra term f(n) may use the letter n only');
+  const map = new Map(inits.map((v, i) => [i, v]));
+  return solveLinearRecurrence(cs, f, map, 0, 'a', n.args[3] ? Number(intArg(n.args[3])) : null);
+});
+// ======================================================================
+// 21. Propositional logic (truth tables, tautologies, equivalence, minimal forms) and graph theory
+//     (degrees, connectivity, bipartite / Euler tests, shortest paths, minimum spanning tree, maximum flow, colouring, traversal).
+// ======================================================================
+
+// ---- logic: the formula travels through the parser as one big number (its characters), because words and symbols such as
+//      "p and not q" cannot be read as arithmetic ------------------------------------------------------------------------------------------------
+const encodeText = (str) => {
+  let hex = '';
+  for (const ch of str) hex += ch.codePointAt(0).toString(16).padStart(6, '0');
+  return BigInt('0x' + (hex || '0'));
+};
+const decodeText = (v) => {
+  let hex = v.toString(16);
+  while (hex.length % 6) hex = '0' + hex;
+  let s = '';
+  for (let i = 0; i < hex.length; i += 6) s += String.fromCodePoint(parseInt(hex.slice(i, i + 6), 16));
+  return s;
+};
+const LOGIC_WORDS = /\b(?:and|or|not|xor|nand|nor|implies|iff|if|then|true|false|equivalent|to|is)\b/gi;
+function looksLikeLogic(t) {
+  let u = t.replace(LOGIC_WORDS, ' ');
+  u = u.replace(/[\u2227\u2228\u00ac\u2295\u2194\u21d4\u2192\u21d2\u22bb\u22a4\u22a5&|~!^()\s]|<->|<=>|->|=>|\\(?:land|lor|lnot|neg|oplus|to|implies|iff|leftrightarrow|rightarrow|wedge|vee)/g, ' ');
+  u = u.replace(/\bT\b|\bF\b/g, ' ');
+  if (/[^A-Za-z\s]/.test(u)) return false;
+  if (/[A-Za-z]{2,}/.test(u)) return false;
+  return /\b(?:and|or|not|xor|nand|nor|implies|iff)\b|\bequivalent\s+to\b|[\u2227\u2228\u00ac\u2295\u2194\u21d4\u2192\u21d2\u22bb]|<->|<=>|->|=>|\\(?:land|lor|lnot|neg)|\bif\b[\s\S]*\bthen\b/i.test(t);
+}
+/** Called first by normalizeText: "truth table of p and (q or not r)", "p -> q \u2261 ~p or q" become logic(<encoded text>). */
+function convertLogic(raw) {
+  let t = String(raw).trim();
+  if (!t || /^\s*(?:help|commands)\b/i.test(t)) return raw;
+  let wantTable = false;
+  const m = /^\s*(?:please\s+)?(?:(?:make|build|give|find|construct|draw|show)\s+(?:me\s+)?(?:a\s+|the\s+)?)?(?:truth[\s-]*table|is|check|determine|simplify|prove|show)\s*(?:of|for|that|whether|if)?\s*[:]?\s*([\s\S]*?)\s*[?.]?\s*$/i.exec(t);
+  if (/truth[\s-]*table/i.test(t)) {
+    wantTable = true;
+    const body = /truth[\s-]*table\s*(?:of|for)?\s*:?\s*([\s\S]*?)\s*[?.]?\s*$/i.exec(t);
+    if (body && body[1]) t = body[1];
+    if (/^\(([\s\S]*)\)$/.test(t) && !/\)[\s\S]*\(/.test(t.slice(1, -1).replace(/\([^()]*\)/g, ''))) {
+      const inner = t.slice(1, -1);
+      let depth = 0;
+      let ok = true;
+      for (const ch of inner) {
+        if (ch === '(') depth++;
+        if (ch === ')') depth--;
+        if (depth < 0) ok = false;
+      }
+      if (ok && depth === 0) t = inner;
+    }
+  } else if (m && m[1] && /tautolog|contradiction|equivalent/i.test(t)) {
+    t = t.replace(/\b(?:is|a|an|the|tautology|contradiction|equivalent|\?)\b/gi, ' ').trim();
+  }
+  const cand = t.replace(/\btruth[\s-]*table\b/gi, '').trim();
+  if (!cand) return raw;
+  const logic = /^logic\(/i.test(cand) ? false : wantTable || looksLikeLogic(cand.replace(/\u2261/g, ' equivalent to '));
+  if (!logic) return raw;
+  return 'logic(' + encodeText(cand) + ')';
+}
+const LOGIC_OPS = [
+  { re: /^(?:\u2194|\u21d4|<->|<=>|\biff\b|\bxnor\b|\\leftrightarrow|\\iff)/i, op: 'iff', prec: 1, right: false },
+  { re: /^(?:\u2192|\u21d2|->|=>|\bimplies\b|\\rightarrow|\\to|\\implies)/i, op: 'imp', prec: 2, right: true },
+  { re: /^(?:\u2295|\u22bb|\bxor\b|\\oplus)/i, op: 'xor', prec: 3, right: false },
+  { re: /^(?:\u2228|\bor\b|\||\\lor|\\vee)/i, op: 'or', prec: 4, right: false },
+  { re: /^(?:\bnor\b)/i, op: 'nor', prec: 4, right: false },
+  { re: /^(?:\u2227|\band\b|&&?|\\land|\\wedge|\u00b7)/i, op: 'and', prec: 5, right: false },
+  { re: /^(?:\bnand\b)/i, op: 'nand', prec: 5, right: false },
+];
+function parseLogic(text) {
+  const s = text.replace(/\bif\s+(.+?)\s+then\s+/gi, '($1) -> ').replace(/\\([a-z]+)/gi, '\\$1');
+  let i = 0;
+  const skip = () => {
+    while (i < s.length && /\s/.test(s[i])) i++;
+  };
+  const vars = new Set();
+  function peekOp() {
+    skip();
+    const rest = s.slice(i);
+    for (const o of LOGIC_OPS) {
+      const m = o.re.exec(rest);
+      if (m) return { ...o, len: m[0].length };
+    }
+    return null;
+  }
+  function primary() {
+    skip();
+    const rest = s.slice(i);
+    let m;
+    if ((m = /^(?:\u00ac|~|!|\bnot\b|\\lnot|\\neg)\s*/i.exec(rest))) {
+      i += m[0].length;
+      return { t: 'not', a: primary() };
+    }
+    if (s[i] === '(') {
+      i++;
+      const e = expr(0);
+      skip();
+      if (s[i] !== ')') throw new MathError('a bracket is not closed in the logical formula');
+      i++;
+      return postfix(e);
+    }
+    if ((m = /^(?:\u22a4|\btrue\b|\bT\b)/.exec(rest)) && !/^[A-Za-z]{2}/.test(rest.replace(/^T\b/, 'T '))) {
+      i += m[0].length;
+      return { t: 'const', v: true };
+    }
+    if ((m = /^(?:\u22a5|\bfalse\b|\bF\b)/.exec(rest))) {
+      i += m[0].length;
+      return { t: 'const', v: false };
+    }
+    if ((m = /^[A-Za-z]/.exec(rest)) && !/^[A-Za-z]{2}/.test(rest)) {
+      i += 1;
+      vars.add(m[0]);
+      return postfix({ t: 'var', name: m[0] });
+    }
+    throw new MathError('I could not read the logical formula near "' + rest.slice(0, 12) + '"');
+  }
+  function postfix(e) {
+    // p' or p\u0304 for negation is not supported; a prime after a letter is read as NOT
+    if (s[i] === "'") {
+      i++;
+      return postfix({ t: 'not', a: e });
+    }
+    return e;
+  }
+  function expr(minPrec) {
+    let left = primary();
+    for (;;) {
+      const o = peekOp();
+      if (!o || o.prec < minPrec) break;
+      i += o.len;
+      const right = expr(o.right ? o.prec : o.prec + 1);
+      left = { t: 'bin', op: o.op, a: left, b: right };
+    }
+    return left;
+  }
+  const tree = expr(0);
+  skip();
+  if (i < s.length) throw new MathError('I could not read the logical formula near "' + s.slice(i, i + 12) + '"');
+  return { tree, vars: Array.from(vars).sort() };
+}
+function evalLogic(n, env) {
+  switch (n.t) {
+    case 'const': return n.v;
+    case 'var': return env[n.name];
+    case 'not': return !evalLogic(n.a, env);
+    default: {
+      const a = evalLogic(n.a, env);
+      const b = evalLogic(n.b, env);
+      switch (n.op) {
+        case 'and': return a && b;
+        case 'or': return a || b;
+        case 'xor': return a !== b;
+        case 'imp': return !a || b;
+        case 'iff': return a === b;
+        case 'nand': return !(a && b);
+        default: return !(a || b); // nor
+      }
+    }
+  }
+}
+const showLogic = (n, top) => {
+  const SYM = { and: '\u2227', or: '\u2228', xor: '\u2295', imp: '\u2192', iff: '\u2194', nand: '\u2191', nor: '\u2193' };
+  if (n.t === 'const') return n.v ? 'T' : 'F';
+  if (n.t === 'var') return n.name;
+  if (n.t === 'not') return '\u00ac' + (n.a.t === 'bin' ? '(' + showLogic(n.a, true) + ')' : showLogic(n.a, false));
+  const t = showLogic(n.a, false) + ' ' + SYM[n.op] + ' ' + showLogic(n.b, false);
+  return top ? t : '(' + t + ')';
+};
+/** Quine\u2013McCluskey: the minimal sum of products for the given minterms. */
+function minimalSOP(vars, minterms) {
+  const nv = vars.length;
+  if (!minterms.length) return 'F';
+  if (minterms.length === 1 << nv) return 'T';
+  let groups = new Map();
+  minterms.forEach((m) => {
+    const key = m.toString(2).padStart(nv, '0');
+    groups.set(key, { bits: key, covers: new Set([m]) });
+  });
+  const primes = [];
+  let current = Array.from(groups.values());
+  while (current.length) {
+    const next = new Map();
+    const used = new Set();
+    for (let i = 0; i < current.length; i++) {
+      for (let j = i + 1; j < current.length; j++) {
+        const a = current[i].bits;
+        const b = current[j].bits;
+        let diff = -1;
+        let ok = true;
+        for (let k = 0; k < nv && ok; k++) {
+          if (a[k] !== b[k]) {
+            if (a[k] === '-' || b[k] === '-' || diff >= 0) ok = false;
+            else diff = k;
+          }
+        }
+        if (ok && diff >= 0) {
+          const bits = a.slice(0, diff) + '-' + a.slice(diff + 1);
+          const covers = new Set([...current[i].covers, ...current[j].covers]);
+          next.set(bits, { bits, covers });
+          used.add(i);
+          used.add(j);
+        }
+      }
+    }
+    current.forEach((c, i) => {
+      if (!used.has(i)) primes.push(c);
+    });
+    current = Array.from(next.values());
+  }
+  // choose a minimal cover: essential primes first, then the smallest remaining cover by search
+  const need = new Set(minterms);
+  const chosen = [];
+  const coverOf = (p) => minterms.filter((m) => p.covers.has(m));
+  minterms.forEach((m) => {
+    if (!need.has(m)) return;
+    const cands = primes.filter((p) => p.covers.has(m));
+    if (cands.length === 1 && !chosen.includes(cands[0])) {
+      chosen.push(cands[0]);
+      cands[0].covers.forEach((x) => need.delete(x));
+    }
+  });
+  let rest = primes.filter((p) => !chosen.includes(p));
+  const remaining = Array.from(need);
+  if (remaining.length) {
+    let best = null;
+    const search = (idx, pick, covered) => {
+      if (best && pick.length >= best.length) return;
+      if (remaining.every((m) => covered.has(m))) {
+        best = pick.slice();
+        return;
+      }
+      if (idx >= rest.length) return;
+      const p = rest[idx];
+      search(idx + 1, pick.concat([p]), new Set([...covered, ...coverOf(p)]));
+      search(idx + 1, pick, covered);
+    };
+    search(0, [], new Set());
+    chosen.push(...(best || rest));
+  }
+  const term = (p) => {
+    const lits = [];
+    for (let k = 0; k < nv; k++) if (p.bits[k] !== '-') lits.push(p.bits[k] === '1' ? vars[k] : '\u00ac' + vars[k]);
+    return lits.join('') || 'T';
+  };
+  return chosen.map(term).sort().join(' \u2228 ');
+}
+defCmd('logic truthtable', (n) => {
+  needArgs(n, 1, 1, 'a logical formula: write  truth table of p and (q or not r)  or  p -> q  equivalent to  not p or q');
+  const raw = decodeText(intArg(n.args[0]));
+  const out = newOut();
+  const eqParts = raw.split(/\s*(?:\u2261|\bis\s+equivalent\s+to\b|\bequivalent\s+to\b|\bequivalent\b|\bvs\.?\b)\s*/i).filter(Boolean);
+  const formulas = eqParts.map((p) => parseLogic(p.replace(/^[\s:]*(?:is|the|that)\s+/i, '').trim()));
+  const vars = Array.from(new Set(formulas.flatMap((f) => f.vars))).sort();
+  if (vars.length > 6) throw new MathError('at most 6 variables are supported');
+  const rows = [];
+  for (let m = 0; m < 1 << vars.length; m++) {
+    const env = {};
+    vars.forEach((v, i) => { env[v] = Boolean(m & (1 << (vars.length - 1 - i))); });
+    rows.push({ m, env, vals: formulas.map((f) => evalLogic(f.tree, env)) });
+  }
+  const tf = (b) => (b ? 'T' : 'F');
+  if (formulas.length === 2) {
+    const same = rows.every((r) => r.vals[0] === r.vals[1]);
+    out.answer.push(same ? 'equivalent: the two formulas have the same truth value for every assignment' : 'not equivalent: they differ when ' + rows.filter((r) => r.vals[0] !== r.vals[1]).slice(0, 3).map((r) => vars.map((v) => v + '=' + tf(r.env[v])).join(' ')).join(' or '));
+    out.work.push(vars.join(' ') + ' | ' + formulas.map((f) => showLogic(f.tree, true)).join(' | '));
+    rows.forEach((r) => out.work.push(vars.map((v) => tf(r.env[v])).join(' ') + ' | ' + r.vals.map(tf).join(' | ')));
+    return out;
+  }
+  const f = formulas[0];
+  const ones = rows.filter((r) => r.vals[0]);
+  const kind = ones.length === rows.length ? 'tautology (always true)' : !ones.length ? 'contradiction (always false)' : 'contingency (sometimes true, sometimes false: true in ' + ones.length + ' of ' + rows.length + ' rows)';
+  out.answer.push(showLogic(f.tree, true) + ' is a ' + kind);
+  out.work.push(vars.join(' ') + ' | ' + showLogic(f.tree, true));
+  rows.forEach((r) => out.work.push(vars.map((v) => tf(r.env[v])).join(' ') + ' | ' + tf(r.vals[0])));
+  if (ones.length && ones.length < rows.length) {
+    out.work.push('disjunctive normal form (minterms): ' + ones.map((r) => '(' + vars.map((v) => (r.env[v] ? v : '\u00ac' + v)).join('\u2227') + ')').join(' \u2228 '));
+    out.work.push('conjunctive normal form (maxterms): ' + rows.filter((r) => !r.vals[0]).map((r) => '(' + vars.map((v) => (r.env[v] ? '\u00ac' + v : v)).join('\u2228') + ')').join(' \u2227 '));
+    out.work.push('simplest sum of products (Quine\u2013McCluskey): ' + minimalSOP(vars, ones.map((r) => r.m)));
+  }
+  return out;
+});
+COMMANDS.logic.show = (n) => {
+  try {
+    return 'logic: ' + decodeText(intArg(n.args[0]));
+  } catch (e) {
+    return 'logic(...)';
+  }
+};
+
+// ---- graphs -------------------------------------------------------------------------------------------------------------------------------------------------------------------
+function graphOf(node, what, directed) {
+  if (node.t !== 'list' || !node.items.length) throw new MathError(what + ' needs a list of edges such as [[1,2],[2,3],[1,3]] (or with weights [[1,2,5],[2,3,1]])');
+  const label = (it) => {
+    if (it.t === 'var') return it.name;
+    if (it.t === 'num') return String(it.text || it.v);
+    return fmtS(fromAst(it));
+  };
+  const edges = node.items.map((e) => {
+    if (e.t !== 'list' || e.items.length < 2 || e.items.length > 3) throw new MathError('each edge is a list [from, to] or [from, to, weight]');
+    return { u: label(e.items[0]), v: label(e.items[1]), w: e.items[2] ? constQ(e.items[2]) : null };
+  });
+  const names = Array.from(new Set(edges.flatMap((e) => [e.u, e.v])));
+  names.sort((a, b) => (isNaN(a) || isNaN(b) ? (a < b ? -1 : a > b ? 1 : 0) : Number(a) - Number(b)));
+  if (names.length > 40) throw new MathError('at most 40 vertices are supported');
+  return { edges, names, directed: Boolean(directed), weighted: edges.every((e) => e.w !== null) && edges.length > 0 };
+}
+function neighbours(g) {
+  const adj = new Map(g.names.map((v) => [v, []]));
+  g.edges.forEach((e) => {
+    adj.get(e.u).push({ to: e.v, w: e.w, e });
+    if (!g.directed && e.u !== e.v) adj.get(e.v).push({ to: e.u, w: e.w, e });
+  });
+  return adj;
+}
+function componentsOf(g) {
+  const adj = new Map(g.names.map((v) => [v, new Set()]));
+  g.edges.forEach((e) => {
+    adj.get(e.u).add(e.v);
+    adj.get(e.v).add(e.u);
+  });
+  const seen = new Set();
+  const comps = [];
+  g.names.forEach((s) => {
+    if (seen.has(s)) return;
+    const comp = [];
+    const stack = [s];
+    seen.add(s);
+    while (stack.length) {
+      const x = stack.pop();
+      comp.push(x);
+      adj.get(x).forEach((y) => {
+        if (!seen.has(y)) {
+          seen.add(y);
+          stack.push(y);
+        }
+      });
+    }
+    comps.push(comp);
+  });
+  return comps;
+}
+function graphCmd(directed) {
+  return (n) => {
+    needArgs(n, 1, 1, 'a list of edges: graphinfo([[1,2],[2,3],[3,1],[3,4]])');
+    const g = graphOf(n.args[0], n.fn, directed);
+    const out = newOut();
+    const V = g.names.length;
+    const E = g.edges.length;
+    const deg = new Map(g.names.map((v) => [v, 0]));
+    const indeg = new Map(g.names.map((v) => [v, 0]));
+    g.edges.forEach((e) => {
+      deg.set(e.u, deg.get(e.u) + 1);
+      if (g.directed) indeg.set(e.v, indeg.get(e.v) + 1);
+      else deg.set(e.v, deg.get(e.v) + 1);
+    });
+    out.answer.push((g.directed ? 'directed graph' : 'graph') + ' with ' + V + ' vertices and ' + E + ' edges' + (g.weighted ? ' (weighted, total weight ' + sumQ(g.edges.map((e) => e.w)).toString() + ')' : ''));
+    if (g.directed) out.answer.push('out-degrees: ' + g.names.map((v) => v + ': ' + deg.get(v)).join(', ') + ';  in-degrees: ' + g.names.map((v) => v + ': ' + indeg.get(v)).join(', '));
+    else {
+      out.answer.push('degrees: ' + g.names.map((v) => v + ': ' + deg.get(v)).join(', ') + '   (sum = ' + sumNum(Array.from(deg.values())) + ' = 2\u00b7' + E + ')');
+      const seq = Array.from(deg.values()).sort((a, b) => b - a);
+      out.answer.push('degree sequence: ' + seq.join(', '));
+    }
+    const comps = componentsOf(g);
+    out.answer.push(comps.length + ' connected component' + (comps.length === 1 ? '' : 's') + (comps.length > 1 ? ': ' + comps.map((c) => '{' + c.join(', ') + '}').join(' ') : ' (the graph is connected)'));
+    if (!g.directed) {
+      // bipartite test
+      const color = new Map();
+      let bip = true;
+      const adj = neighbours(g);
+      g.names.forEach((s) => {
+        if (color.has(s) || !bip) return;
+        color.set(s, 0);
+        const q = [s];
+        while (q.length && bip) {
+          const x = q.shift();
+          adj.get(x).forEach(({ to }) => {
+            if (!color.has(to)) {
+              color.set(to, 1 - color.get(x));
+              q.push(to);
+            } else if (color.get(to) === color.get(x)) bip = false;
+          });
+        }
+      });
+      out.work.push(bip ? 'bipartite: yes (parts {' + g.names.filter((v) => color.get(v) === 0).join(', ') + '} and {' + g.names.filter((v) => color.get(v) === 1).join(', ') + '})' : 'bipartite: no (it contains an odd cycle)');
+      const odd = g.names.filter((v) => deg.get(v) % 2 === 1);
+      if (comps.filter((c) => c.some((v) => deg.get(v) > 0)).length <= 1) {
+        out.work.push(odd.length === 0 ? 'Euler circuit: yes (every degree is even)' : odd.length === 2 ? 'Euler path: yes, from ' + odd[0] + ' to ' + odd[1] + ' (exactly two odd vertices); no Euler circuit' : 'Euler path: no (' + odd.length + ' vertices have odd degree)');
+      } else out.work.push('Euler path: no (the edges are not all in one component)');
+      out.work.push('tree: ' + (comps.length === 1 && E === V - 1 ? 'yes (connected with V \u2212 1 edges)' : 'no') + ';  contains a cycle: ' + (E > V - comps.length ? 'yes' : 'no') + ';  complete: ' + (E === (V * (V - 1)) / 2 && g.edges.every((e) => e.u !== e.v) ? 'yes' : 'no'));
+    }
+    // adjacency matrix
+    if (V <= 12) {
+      const idx = new Map(g.names.map((v, i) => [v, i]));
+      const A = g.names.map(() => g.names.map(() => 0));
+      g.edges.forEach((e) => {
+        A[idx.get(e.u)][idx.get(e.v)] += 1;
+        if (!g.directed && e.u !== e.v) A[idx.get(e.v)][idx.get(e.u)] += 1;
+      });
+      out.work.push('adjacency matrix (rows and columns in the order ' + g.names.join(', ') + '): ' + JSON.stringify(A).replace(/"/g, ''));
+    }
+    return out;
+  };
+}
+const sumNum = (a) => a.reduce((s, v) => s + v, 0);
+defCmd('graphinfo graphtheory network', graphCmd(false));
+defCmd('digraph directedgraph', graphCmd(true));
+defCmd('shortestpath dijkstra', (n) => {
+  needArgs(n, 2, 3, 'the edges (with weights), the start vertex and optionally the end vertex: shortestpath([[a,b,4],[a,c,1],[c,b,2]], a, b)');
+  const g = graphOf(n.args[0], n.fn, false);
+  const label = (node) => (node.t === 'var' ? node.name : node.t === 'num' ? String(node.text || node.v) : fmtS(fromAst(node)));
+  const start = label(n.args[1]);
+  const goal = n.args[2] ? label(n.args[2]) : null;
+  if (!g.names.includes(start) || (goal && !g.names.includes(goal))) throw new MathError('that vertex does not occur in the edge list (vertices: ' + g.names.join(', ') + ')');
+  const adj = neighbours(g);
+  const dist = new Map(g.names.map((v) => [v, Infinity]));
+  const prev = new Map();
+  dist.set(start, 0);
+  const done = new Set();
+  const steps = [];
+  for (;;) {
+    let best = null;
+    g.names.forEach((v) => {
+      if (!done.has(v) && dist.get(v) < Infinity && (best === null || dist.get(v) < dist.get(best))) best = v;
+    });
+    if (best === null) break;
+    done.add(best);
+    steps.push(best + ' (' + dist.get(best) + ')');
+    adj.get(best).forEach(({ to, w }) => {
+      const wt = w === null ? 1 : w.toNumber();
+      if (wt < 0) throw new MathError('negative weights are not supported');
+      if (dist.get(best) + wt < dist.get(to)) {
+        dist.set(to, dist.get(best) + wt);
+        prev.set(to, best);
+      }
+    });
+  }
+  const pathTo = (t) => {
+    const p = [t];
+    while (prev.has(p[0])) p.unshift(prev.get(p[0]));
+    return p;
+  };
+  const out = newOut();
+  if (goal) {
+    out.answer.push(dist.get(goal) === Infinity ? 'there is no path from ' + start + ' to ' + goal : 'shortest path ' + pathTo(goal).join(' \u2192 ') + ', length ' + fmtNum(dist.get(goal)));
+    out.value = { num: dist.get(goal) };
+  } else {
+    g.names.forEach((v) => out.answer.push(start + ' \u2192 ' + v + ': ' + (dist.get(v) === Infinity ? 'unreachable' : fmtNum(dist.get(v)) + '   via ' + pathTo(v).join(' \u2192 '))));
+  }
+  out.work.push("Dijkstra's algorithm" + (g.weighted ? '' : ' (no weights given, so every edge counts 1)') + '; vertices settled in the order ' + steps.join(', '));
+  return out;
+});
+defCmd('mst minimumspanningtree kruskal', (n) => {
+  needArgs(n, 1, 1, 'weighted edges: mst([[a,b,4],[a,c,1],[c,b,2]])');
+  const g = graphOf(n.args[0], n.fn, false);
+  if (!g.weighted) throw new MathError('give a weight for every edge: [from, to, weight]');
+  const parent = new Map(g.names.map((v) => [v, v]));
+  const find = (x) => {
+    while (parent.get(x) !== x) {
+      parent.set(x, parent.get(parent.get(x)));
+      x = parent.get(x);
+    }
+    return x;
+  };
+  const sorted = g.edges.slice().sort((a, b) => a.w.sub(b.w).sign());
+  const chosen = [];
+  const log = [];
+  let total = Q0;
+  sorted.forEach((e) => {
+    const a = find(e.u);
+    const b = find(e.v);
+    if (a !== b) {
+      parent.set(a, b);
+      chosen.push(e);
+      total = total.add(e.w);
+      log.push(e.u + '\u2013' + e.v + ' (' + e.w.toString() + ') added');
+    } else log.push(e.u + '\u2013' + e.v + ' (' + e.w.toString() + ') skipped: it would close a cycle');
+  });
+  const out = newOut();
+  const comps = componentsOf(g).length;
+  out.answer.push((comps > 1 ? 'minimum spanning forest' : 'minimum spanning tree') + ': ' + chosen.map((e) => e.u + '\u2013' + e.v + ' (' + e.w.toString() + ')').join(', ') + ';  total weight ' + qText(total));
+  out.work.push("Kruskal's algorithm: take the edges by increasing weight, skipping any that closes a cycle");
+  log.forEach((l) => out.work.push(l));
+  out.value = { q: total };
+  return out;
+});
+defCmd('maxflow maximumflow', (n) => {
+  needArgs(n, 3, 3, 'the capacities [[from, to, capacity], ...], the source and the sink: maxflow([[s,a,10],[s,b,5],[a,t,7],[b,t,8]], s, t)');
+  const g = graphOf(n.args[0], n.fn, true);
+  if (!g.weighted) throw new MathError('give a capacity for every edge: [from, to, capacity]');
+  const label = (node) => (node.t === 'var' ? node.name : node.t === 'num' ? String(node.text || node.v) : fmtS(fromAst(node)));
+  const s = label(n.args[1]);
+  const t = label(n.args[2]);
+  if (!g.names.includes(s) || !g.names.includes(t)) throw new MathError('the source and sink must occur in the edge list');
+  const cap = new Map();
+  const key = (u, v) => u + '\u0000' + v;
+  g.edges.forEach((e) => {
+    cap.set(key(e.u, e.v), (cap.get(key(e.u, e.v)) || Q0).add(e.w));
+    if (!cap.has(key(e.v, e.u))) cap.set(key(e.v, e.u), Q0);
+  });
+  const nb = new Map(g.names.map((v) => [v, new Set()]));
+  cap.forEach((c, k) => {
+    const [u, v] = k.split('\u0000');
+    nb.get(u).add(v);
+  });
+  let flow = Q0;
+  const paths = [];
+  for (let it = 0; it < 500; it++) {
+    const prev = new Map([[s, null]]);
+    const q = [s];
+    while (q.length && !prev.has(t)) {
+      const x = q.shift();
+      nb.get(x).forEach((y) => {
+        if (!prev.has(y) && cap.get(key(x, y)).sign() > 0) {
+          prev.set(y, x);
+          q.push(y);
+        }
+      });
+    }
+    if (!prev.has(t)) break;
+    let bott = null;
+    for (let v = t; prev.get(v) !== null; v = prev.get(v)) {
+      const c = cap.get(key(prev.get(v), v));
+      if (bott === null || c.sub(bott).sign() < 0) bott = c;
+    }
+    const path = [t];
+    for (let v = t; prev.get(v) !== null; v = prev.get(v)) {
+      cap.set(key(prev.get(v), v), cap.get(key(prev.get(v), v)).sub(bott));
+      cap.set(key(v, prev.get(v)), cap.get(key(v, prev.get(v))).add(bott));
+      path.unshift(prev.get(v));
+    }
+    flow = flow.add(bott);
+    paths.push(path.join(' \u2192 ') + '  (+' + bott.toString() + ')');
+  }
+  // minimum cut: vertices reachable from s in the residual graph
+  const reach = new Set([s]);
+  const stack = [s];
+  while (stack.length) {
+    const x = stack.pop();
+    nb.get(x).forEach((y) => {
+      if (!reach.has(y) && cap.get(key(x, y)).sign() > 0) {
+        reach.add(y);
+        stack.push(y);
+      }
+    });
+  }
+  const cutEdges = g.edges.filter((e) => reach.has(e.u) && !reach.has(e.v));
+  const out = newOut();
+  out.answer.push('maximum flow from ' + s + ' to ' + t + ' = ' + qText(flow));
+  out.work.push('augmenting paths (Edmonds\u2013Karp): ' + paths.join(';  '));
+  out.work.push('minimum cut: S = {' + Array.from(reach).join(', ') + '}, cut edges ' + cutEdges.map((e) => e.u + '\u2192' + e.v + ' (' + e.w.toString() + ')').join(', ') + ', capacity ' + qText(sumQ(cutEdges.map((e) => e.w))) + ' (equal to the flow: max-flow min-cut)');
+  out.value = { q: flow };
+  return out;
+});
+defCmd('coloring graphcoloring chromatic', (n) => {
+  needArgs(n, 1, 1, 'a list of edges: coloring([[1,2],[2,3],[3,1],[3,4]])');
+  const g = graphOf(n.args[0], n.fn, false);
+  if (g.names.length > 16) throw new MathError('at most 16 vertices are supported for colouring');
+  const idx = new Map(g.names.map((v, i) => [v, i]));
+  const V = g.names.length;
+  const adj = g.names.map(() => new Set());
+  let loop = false;
+  g.edges.forEach((e) => {
+    if (e.u === e.v) loop = true;
+    adj[idx.get(e.u)].add(idx.get(e.v));
+    adj[idx.get(e.v)].add(idx.get(e.u));
+  });
+  if (loop) throw new MathError('a vertex joined to itself cannot be coloured');
+  const order = Array.from({ length: V }, (_, i) => i).sort((a, b) => adj[b].size - adj[a].size);
+  let found = null;
+  for (let k = 1; k <= V && !found; k++) {
+    const col = new Array(V).fill(-1);
+    const go = (pos, used) => {
+      if (pos === V) return true;
+      const v = order[pos];
+      for (let c = 0; c < Math.min(k, used + 1); c++) {
+        if (Array.from(adj[v]).some((u) => col[u] === c)) continue;
+        col[v] = c;
+        if (go(pos + 1, Math.max(used, c + 1))) return true;
+        col[v] = -1;
+      }
+      return false;
+    };
+    if (go(0, 0)) found = { k, col: col.slice() };
+  }
+  const out = newOut();
+  out.answer.push('chromatic number \u03c7 = ' + found.k);
+  for (let c = 0; c < found.k; c++) out.work.push('colour ' + (c + 1) + ': ' + g.names.filter((v, i) => found.col[i] === c).join(', '));
+  const clique = (() => {
+    let best = 1;
+    const rec = (cands, size) => {
+      best = Math.max(best, size);
+      for (let i = 0; i < cands.length; i++) rec(cands.slice(i + 1).filter((u) => adj[cands[i]].has(u)), size + 1);
+    };
+    rec(Array.from({ length: V }, (_, i) => i), 0);
+    return best;
+  })();
+  out.work.push('largest clique has ' + clique + ' vertices, so \u03c7 \u2265 ' + clique + (clique === found.k ? ' (and this colouring achieves it)' : ''));
+  out.value = { q: qInt(found.k) };
+  return out;
+});
+defCmd('topsort topologicalsort', (n) => {
+  needArgs(n, 1, 1, 'directed edges: topsort([[a,b],[a,c],[b,d],[c,d]])');
+  const g = graphOf(n.args[0], n.fn, true);
+  const indeg = new Map(g.names.map((v) => [v, 0]));
+  g.edges.forEach((e) => indeg.set(e.v, indeg.get(e.v) + 1));
+  const q = g.names.filter((v) => indeg.get(v) === 0);
+  const order = [];
+  while (q.length) {
+    const x = q.shift();
+    order.push(x);
+    g.edges.filter((e) => e.u === x).forEach((e) => {
+      indeg.set(e.v, indeg.get(e.v) - 1);
+      if (indeg.get(e.v) === 0) q.push(e.v);
+    });
+  }
+  const out = newOut();
+  out.answer.push(order.length === g.names.length ? 'topological order: ' + order.join(', ') : 'the graph has a directed cycle, so there is no topological order');
+  return out;
+});
+defCmd('bfs dfs traversal', (n) => {
+  needArgs(n, 2, 2, 'the edges and the start vertex: bfs([[1,2],[1,3],[2,4]], 1)');
+  const g = graphOf(n.args[0], n.fn, false);
+  const label = (node) => (node.t === 'var' ? node.name : node.t === 'num' ? String(node.text || node.v) : fmtS(fromAst(node)));
+  const start = label(n.args[1]);
+  if (!g.names.includes(start)) throw new MathError('the start vertex does not occur in the edge list');
+  const adj = neighbours(g);
+  const seen = new Set([start]);
+  const order = [];
+  if (n.fn === 'dfs') {
+    const rec = (v) => {
+      order.push(v);
+      adj.get(v).map((x) => x.to).sort().forEach((u) => {
+        if (!seen.has(u)) {
+          seen.add(u);
+          rec(u);
+        }
+      });
+    };
+    rec(start);
+  } else {
+    const q = [start];
+    while (q.length) {
+      const x = q.shift();
+      order.push(x);
+      adj.get(x).map((e) => e.to).sort().forEach((u) => {
+        if (!seen.has(u)) {
+          seen.add(u);
+          q.push(u);
+        }
+      });
+    }
+  }
+  const out = newOut();
+  out.answer.push((n.fn === 'dfs' ? 'depth-first' : 'breadth-first') + ' order from ' + start + ': ' + order.join(', '));
+  out.work.push('neighbours are visited in increasing order');
+  return out;
+});
 
 // ======================================================================
 // 90. Routing of command statements (integrate(...), det(...), matrices, ODEs ...)
@@ -15182,6 +16517,8 @@ function resolveCommandsStatement(st) {
 
 /** Returns {readAs, out} for statements that are commands / matrix expressions / ODEs, else null. */
 function trySpecial(sts, solveFor) {
+  const rec = tryRecurrence(sts);
+  if (rec) return rec;
   if (sts.some((s) => statementHas(s, ['dvar']))) return solveODEStatements(sts);
   if (sts.every((s) => s.kind === 'expr') && sts.some((s) => hasCommand(s.node) || hasNode(s.node, ['list']))) {
     if (sts.length === 1) return { readAs: readAsNode(sts[0].node), out: evalCommandNode(sts[0].node) };

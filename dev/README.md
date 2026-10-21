@@ -45,6 +45,8 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `17-numerical.js` | Euler / Heun / Runge-Kutta steppers, Riemann / trapezoid / midpoint / Simpson rules with error bounds, bisection / secant / false position / fixed point, interpolation, splines, least-squares polynomials |
 | `18-curves.js` | Parametric and polar curves, coordinate systems, velocity / curvature / TNB frame, line integrals, potential functions |
 | `19-stats2.js` | More distributions, two-sample / paired / ANOVA / correlation / variance tests, sample sizes, descriptive measures, rank correlation, multiple and curve regression, Markov chains |
+| `20-discrete2.js` | Euclid with Bézout coefficients, continued fractions, Pell equations, Collatz, Egyptian fractions, sums of two squares, Farey sequences, Hanoi, Josephus, figurate numbers, linear recurrences with closed forms (also from the written `a_n = 5a_(n-1) - 6a_(n-2)` form) |
+| `21-logic-graphs.js` | Propositional logic (truth tables, tautology / equivalence / normal forms, Quine–McCluskey), graph properties, shortest paths, minimum spanning trees, maximum flow, colouring, topological order, BFS / DFS |
 | `90-dispatch.js` | Routing of command statements |
 | `99-main.js` | `window.ai_edge_gallery_get_result` entry point and request parsing |
 
@@ -52,7 +54,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 
 | File | What it checks |
 |------|----------------|
-| `cases.mjs` + `run-cases.mjs` | 568 hand-written input → expected output cases |
+| `cases.mjs` + `run-cases.mjs` | 594 hand-written input → expected output cases |
 | `doc-test.mjs` | every example in `SKILL.md` runs; every command appears in the built-in help |
 | `props.mjs`, `gen_expr.py`, `gen_poly.py` | random expressions / polynomials / systems against Fraction and numpy |
 | `cas-props.mjs`, `gen_cas.py` | the symbolic core against sympy |
@@ -70,6 +72,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `stats2-battery.mjs`, `gen_stats2.py` | extra distributions, tests, descriptive measures and regressions against scipy.stats / numpy |
 | `eq-battery.mjs` | random rational / radical / exponential / logarithmic / absolute-value / polynomial equations (every solution substituted, no sign change of lhs − rhs missed) and inequalities (the printed set agrees with the inequality at hundreds of random points) |
 | `rational-battery.mjs` | random rational functions with non-monic and repeated factors: `apart`, `integrate` and `ilaplace` answers are checked numerically |
+| `discrete2-battery.mjs`, `gen_discrete2.py` | extended Euclid, continued fractions, Pell, sums of squares, linear recurrences, shortest paths, spanning trees, max flow, colouring and truth tables against sympy / networkx / brute force |
 | `linalg-battery.mjs`, `gen_linalg.py` | linear algebra against sympy |
 | `applied-battery.mjs`, `gen_applied.py` | geometry, triangles, units, chemistry, finance, complex numbers against pint / periodictable / numpy-financial / Python `complex` |
 | `fuzz.mjs`, `fuzz-cmds.mjs` | random garbage text, and every command with random arguments: never crash, hang or print `NaN` |

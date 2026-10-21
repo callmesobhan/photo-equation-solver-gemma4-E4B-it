@@ -41,11 +41,12 @@ Everything runs on the phone. `scripts/index.html` is a single self-contained fi
 | **Complex numbers** | `(3+4i)(1-2i)`, `sqrt(-4)`, `e^(i*pi)`, `(1+i)^10`, `polar`, `conj`, `nthroots(8, 3)`, `z^2 = 3+4i`, `(2+i)z = 3-i` |
 | **Linear algebra** (exact fractions) | `det`, `inv`, `rank`, `rref`, `nullspace`, `charpoly`, `eigen`, `diagonalize`, `lu`, `linsolve`, `gramschmidt`, `A*B`, `A^-1`, `dot`, `cross`, `norm`, `angle` |
 | **Number theory and counting** | `isprime`, `factor(n)`, `divisors`, `totient`, `mod`, `modinv`, `modpow`, `crt`, `x ≡ 2 (mod 3), x ≡ 3 (mod 5)`, `diophantine`, `ncr`, `npr`, `multiset`, `catalan`, `fibonacci`, `partitions`, `sequence(2,6,12,20)` (next terms and formula), base conversion, sets, `dice(3,6,10)`, distinct arrangements of the letters of a word (MISSISSIPPI), `birthday(23)`, `pascal`, `circular` |
+| **Logic, graphs, recurrences** | `truth table of p and (q or not r)`, tautology / equivalence checks, normal forms; `graphinfo`, `shortestpath`, `mst`, `maxflow`, `coloring`, `topsort`, `bfs`; linear recurrences from the written form (`a_n = 5a_(n-1) - 6a_(n-2), a_0 = 1, a_1 = 0` gives a closed form); `euclid` (Bézout), `cfrac`, `pell`, `collatz`, `egyptian`, `sum2sq`, `farey`, `hanoi`, `josephus`, `polygonal` |
 | **Statistics and probability** | mean/median/mode/variance/stdev/quartiles/`summary`, `correlation`, `linreg`, `multireg`, binomial, Poisson, geometric, hypergeometric, negative binomial, normal, t, chi-square, F, uniform, exponential, gamma, beta, Weibull, lognormal distributions and their inverses, confidence intervals, z/t/proportion/chi-square tests, two-sample and paired t tests, `anova`, `corrtest`, variance tests, sample sizes, `outliers`, `skewness`, `spearman`, `markov`, `bayes`, `expect` |
 | **Geometry** | areas, volumes, surface areas of the usual shapes, triangles from any 3 parts (SSS, SAS, ASA, AAS, SSA incl. the ambiguous case), right triangles, distance/midpoint/slope/line, polygon area, **conic sections** (circle, ellipse, parabola, hyperbola: center, radius, foci, vertices, directrix, asymptotes from the equation) |
 | **Units** | `convert 5 km to miles`, `72 °F to °C`, `60 mph to km/h`, `2.5 GB to MB` (length, mass, time, area, volume, speed, force, pressure, energy, power, data, angle, temperature) |
 | **Finance** | `compound`, `continuous`, `loan` (payment, total interest), `annuityfv`/`annuitypv`, `npv`, `irr`, `effrate`, `doubletime`, `pctchange` |
-| **Chemistry** | `molarmass(Ca(OH)2)`, `percentcomp`, `moles`, `grams`, **`balance H2 + O2 -> H2O`**, `ph` |
+| **Chemistry** | `molarmass(Ca(OH)2)`, `percentcomp`, `moles`, `grams`, **`balance H2 + O2 -> H2O`** (a bare reaction is recognised too), `ph` |
 | **Physics** | `suvat(u=0, a=9.8, t=3)` (any 3 of s,u,v,a,t), `projectile`, `freefall`; any other formula by solving it for a letter |
 | **Graphs** | `plot(sin(x), x, -2*pi, 2*pi)`, up to six curves, `plotparam`, `plotpolar`; the picture is returned to the chat with the zeros, extrema and y-intercept listed |
 
@@ -145,7 +146,7 @@ photo-equation-solver/
 
 Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
 
-- 568 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
+- 594 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
   geometry, units, chemistry, finance, graphs, differential equations, messy transcriptions, errors)
 - calculus against **sympy** and **scipy**: 146 antiderivatives (each also verified by differentiating),
   42 definite/improper integrals, 43 limits, 22 sums, 593 random symbolic expressions
@@ -159,7 +160,7 @@ Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
   extra statistics against scipy.stats: ~640
 - Laplace transforms against sympy: 240 checks; differential equations: 94 equations and systems, every printed
   answer substituted back into its equation by an independent evaluator
-- discrete maths and statistics against sympy / scipy / numpy / exact fractions: about 1,800 checks per run
+- discrete maths and statistics against sympy / scipy / numpy / exact fractions: about 1,800 checks per run; Euclid, Pell, recurrences and graph algorithms against sympy / networkx / brute force: about 400 more
 - linear algebra against sympy: about 880 checks per run
 - geometry, triangles, units, chemistry, finance and complex numbers against **pint**,
   **periodictable**, **numpy-financial** and Python `complex`: about 1,250 checks per run

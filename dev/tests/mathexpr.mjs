@@ -37,7 +37,7 @@ function tokenize(s) {
       // split a run of letters into a known function name, or single letters
       const fn = Object.keys(FUNCS).sort((a, b) => b.length - a.length).find((f) => m.startsWith(f) && /^\(/.test(s.slice(i + f.length).trim()));
       if (fn) { toks.push({ t: 'fn', v: fn }); i += fn.length; continue; }
-      if (m === 'pi') { toks.push({ t: 'id', v: 'pi' }); i += 2; continue; }
+      if (m.startsWith('pi')) { toks.push({ t: 'id', v: 'pi' }); i += 2; continue; }
       const cm = /^C\d+/.exec(s.slice(i));
       if (cm) { toks.push({ t: 'id', v: cm[0] }); i += cm[0].length; continue; }
       toks.push({ t: 'id', v: c }); i++; continue;

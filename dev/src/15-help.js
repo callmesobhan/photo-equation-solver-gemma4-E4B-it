@@ -9,6 +9,7 @@ HELP.index = [
   '  equations   equations, systems, inequalities, formulas ("solve for t"), complex numbers',
   '  calculus    integrate, diff, limit, taylor, sum, product, tangent lines, curve study, areas and volumes',
   '  ode         differential equations (first order, linear of any order, systems) and Laplace transforms',
+  '  logic       truth tables, tautologies, equivalent formulas, minimal forms;  graph theory (degrees, paths, spanning trees, flows, colouring);  recurrence relations',
   '  curves      parametric and polar curves (slope, length, area), curvature, velocity, line integrals, potential functions, coordinate systems',
   '  numerical   Euler / Runge-Kutta, trapezoid / Simpson rules, bisection / secant, interpolation, splines, curve fitting',
   '  algebra     factor, expand, simplify, apart, gcd, lcm, divide, complex numbers',
@@ -57,6 +58,15 @@ HELP.calculus = [
   '  areabetween(f, g, x)  or  areabetween(f, g, x, a, b)   volumerev(f, x, a, b)  volumerev(f, g, x, a, b)  (about the x-axis)',
   '  shells(f, x, a, b)  (about the y-axis)   arclength(f, x, a, b)   surfacearea of revolution: surfacearearev(f, x, a, b)   avgvalue(f, x, a, b)',
   '  differential equations and Laplace transforms:  help ode',
+].join('\n');
+HELP.logic = [
+  'LOGIC AND GRAPHS',
+  '  truth tables:  truth table of p and (q or not r)   p -> q   (p and q) or not r   p xor q   (connectives: and or not xor -> <-> nand nor, or the symbols ∧ ∨ ¬ ⊕ → ↔)',
+  '                 not (p and q) equivalent to (not p) or (not q)    tells whether two formulas are equivalent;  also tautology / contradiction, normal forms and the simplest sum of products',
+  '  graphs are lists of edges:  graphinfo([[1,2],[2,3],[3,1],[3,4]]) [graphtheory]  (degrees, components, bipartite, Euler path)   digraph(edges)',
+  '     weighted:  shortestpath([[a,b,4],[a,c,1],[c,b,2]], a, b) [dijkstra]   mst([[a,b,4],[a,c,1],[c,b,2]]) [kruskal]   maxflow([[s,a,10],[a,t,7]], s, t)',
+  '     coloring(edges) [chromatic]   topsort(directed edges) [topologicalsort]   bfs(edges, start)   dfs(edges, start)',
+  '  recurrence relations: see  help number',
 ].join('\n');
 HELP.curves = [
   'PARAMETRIC AND POLAR CURVES, MOTION IN SPACE, LINE INTEGRALS',
@@ -130,6 +140,8 @@ HELP.number = [
   '  sequence(2, 6, 12, 20)   next terms + general term (arithmetic, geometric, polynomial, Fibonacci-type)',
   '  arith(a1, d, n)  nth term and sum;   geom(a1, r, n)  nth term and sum (infinite sum when |r| < 1)',
   '  union([1,2],[2,3]) intersection(A, B) setdiff(A, B) symdiff(A, B) powerset(n)',
+  '  euclid(252, 105) [bezout]  gcd steps and Bézout coefficients   cfrac(355/113), cfrac(sqrt(7)), cfrac(pi, 8) [continuedfraction]   pell(61) pell(13, -1)   collatz(27)   egyptian(4/13)   sum2sq(65)   farey(5)   hanoi(4)   josephus(7, 3)   polygonal(5, 10) [figurate, triangular]',
+  '  recurrences:  a_n = 5a_(n-1) - 6a_(n-2), a_0 = 1, a_1 = 0   (closed form + first terms)   or  linrec([5, -6], 0, [1, 0], 10)  for a(n) = 5a(n−1) − 6a(n−2) + f(n) [recurrence]',
   '  binary(10) octal(64) hex(255) tobase(n, b) frombase(1011, 2);   0xFF, 0b101, 1011_2, (ff)_16 are understood',
 ].join('\n');
 HELP.stats = [
@@ -175,7 +187,7 @@ HELP.plot = [
 ].join('\n');
 const HELP_ALIAS = {
   '': 'index', help: 'index', commands: 'index', all: 'index', topics: 'index', input: 'syntax', notation: 'syntax', solve: 'equations', inequalities: 'equations', systems: 'equations', formulas: 'equations',
-  diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', parametric: 'curves', polar: 'curves', motion: 'curves', vectorfields: 'curves', lineintegrals: 'curves', coordinates: 'curves', numerics: 'numerical', numericalmethods: 'numerical', 'numerical methods': 'numerical', euler: 'numerical', rungekutta: 'numerical', quadrature: 'numerical', integration: 'calculus', interpolation: 'numerical', rootfinding: 'numerical', splines: 'numerical', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
+  diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', boolean: 'logic', graph: 'logic', graphs: 'logic', networks: 'logic', truthtable: 'logic', 'truth tables': 'logic', propositional: 'logic', recurrence: 'number', recurrences: 'number', parametric: 'curves', polar: 'curves', motion: 'curves', vectorfields: 'curves', lineintegrals: 'curves', coordinates: 'curves', numerics: 'numerical', numericalmethods: 'numerical', 'numerical methods': 'numerical', euler: 'numerical', rungekutta: 'numerical', quadrature: 'numerical', integration: 'calculus', interpolation: 'numerical', rootfinding: 'numerical', splines: 'numerical', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
   discrete: 'number', counting: 'number', probability: 'stats', statistics: 'stats', geometry: 'geometry', conic: 'geometry', conics: 'geometry', triangles: 'geometry',
   finance: 'units', chemistry: 'units', physics: 'units', conversion: 'units', graph: 'plot', plots: 'plot', plotting: 'plot', graphs: 'plot',
 };

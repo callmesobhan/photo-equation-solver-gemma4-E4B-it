@@ -12,7 +12,7 @@ series, tangent lines, curve study, areas and volumes), several-variable calculu
 programming, differential equations (first order of the usual textbook types, linear of any
 order, Euler equations, systems) and Laplace transforms, parametric / polar / vector calculus,
 numerical methods (Euler, Runge-Kutta, Simpson, bisection, interpolation), matrices, complex numbers, number
-theory and counting, statistics and probability, geometry (triangles, conic sections), unit
+theory and counting, logic and graph algorithms, recurrences, statistics and probability, geometry (triangles, conic sections), unit
 conversion, finance, chemistry (molar mass, balancing equations), physics formulas and graphs.
 
 | | |

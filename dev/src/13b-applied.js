@@ -767,6 +767,28 @@ function convertApplied(s) {
   // balancing chemical equations and formula commands
   s = s.replace(/[₀-₉]/g, (c) => String(c.charCodeAt(0) - 0x2080));
   s = s.replace(/\bbalance\s*(?:the\s+)?(?:equation|reaction)?\s*[:(]?\s*([A-Za-z0-9()\[\]·+ ]+?(?:->|=>|→|⟶|⇌|=)[A-Za-z0-9()\[\]·+ ]+?)\s*(?:\)\s*)?(?=$|[;\n])/gi, (m, rxn) => 'balance(' + chemIndex(rxn.trim().replace(/\)$/, '')) + ')');
+  // a bare reaction such as "H2 + O2 -> H2O": every term a real formula and the same elements on both sides
+  s = s.replace(/^\s*([A-Za-z0-9()\[\]·+ ]+?)\s*(?:->|=>|→|⟶|⇌)\s*([A-Za-z0-9()\[\]·+ ]+?)\s*$/, (m, lhs, rhs) => {
+    const side = (str) => {
+      const els = new Set();
+      str.split('+').forEach((term) => {
+        const f = term.trim();
+        if (!/^[A-Z0-9(\[]/.test(f)) throw new MathError('not a formula');
+        parseFormula(f).forEach((v, e) => els.add(e));
+      });
+      return els;
+    };
+    try {
+      const a = side(lhs);
+      const b = side(rhs);
+      if (a.size !== b.size) return m;
+      let same = true;
+      a.forEach((e) => { if (!b.has(e)) same = false; });
+      return same ? 'balance(' + chemIndex(lhs.trim() + ' -> ' + rhs.trim()) + ')' : m;
+    } catch (err) {
+      return m;
+    }
+  });
   s = s.replace(/\bmolar\s+mass\s+(?:of\s+)?\(?\s*([A-Z][A-Za-z0-9()\[\]·.*]*)/g, (m, f) => 'molarmass(' + chemIndex(trimFormula(f)) + ')');
   s = replaceCalls(s, ['molarmass'], (name, inner) => (/^\s*[A-Z][A-Za-z0-9()\[\]·.*]*\s*$/.test(inner) ? name + '(' + chemIndex(inner.trim()) + ')' : null));
   s = replaceCalls(s, ['percentcomp', 'composition', 'masspercent'], (name, inner) => (/^\s*[A-Z][A-Za-z0-9()\[\]·.*]*\s*$/.test(inner) ? name + '(' + chemIndex(inner.trim()) + ')' : null));

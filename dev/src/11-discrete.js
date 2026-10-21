@@ -725,8 +725,9 @@ defCmd('powerset subsets', (n) => {
 // ---- text patterns: mod, congruences, bases, choose -----------------------------------------------------------------
 /** Called by normalizeText: turns "17 mod 5", "3x ≡ 4 (mod 7)", "255 to binary", "5 choose 2" into commands. */
 function convertDiscrete(s) {
-  if (!/mod|≡|equiv|binary|octal|hex|base|choose|0[xbo][0-9a-f]|integer|diophant|\bc\(|\bp\(|\d[cp]\d|_|anagram|arrang|permut/i.test(s)) return s;
+  if (!/mod|≡|equiv|binary|octal|hex|base|choose|0[xbo][0-9a-f]|integer|diophant|\bc\(|\bp\(|\d[cp]\d|_|anagram|arrang|permut|\(\s*n\b/i.test(s)) return s;
   s = convertWordCounting(s);
+  s = convertRecurrenceText(s);
   s = s.replace(/\\equiv/g, '≡').replace(/\\pmod\s*\{([^{}]*)\}/g, ' mod $1').replace(/\\bmod/g, ' mod ').replace(/\\pmod\s*(\d+)/g, ' mod $1');
   // congruences  L ≡ R (mod m)
   s = s.replace(/([^\n;,≡]+?)\s*(?:≡|\bcongruent\s+to\b)\s*([^\n;,≡]+?)\s*[(,]?\s*(?:\bmod\b|\bmodulo\b)\s*(\d+)\s*\)?/gi, (m, l, r, mod) => {
