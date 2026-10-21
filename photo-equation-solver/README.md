@@ -21,7 +21,7 @@ with exact fractions and symbolic expressions. The answer always starts with a
 **"Read as"** line that shows how the picture was read, so a misread digit is easy to spot.
 
 Everything runs on the phone. `scripts/index.html` is a single self-contained file
-(about 450 KB): no CDN, no `fetch`, no API key, no secret. Ask it for `help` (or
+(about 550 KB): no CDN, no `fetch`, no API key, no secret. Ask it for `help` (or
 `help calculus`, `help stats`, ...) and it lists every command - offline too - so
 `SKILL.md` can stay short.
 
@@ -31,11 +31,14 @@ Everything runs on the phone. `scripts/index.html` is a single self-contained fi
 |------|---------------------------------|
 | **Equations** | linear, quadratic, any polynomial, rational, radical, exponential, logarithmic, trigonometric, absolute value; systems (exact when linear); inequalities; `2x^2 - 5x + 3 = 0`, `x + y = 7; x^2 + y^2 = 25`, `x^2 - 5x + 6 >= 0` |
 | **Formulas** | solve for any letter: `v = u + a*t` (t), `d = v*t + a*t^2/2` (t), `1/f = 1/u + 1/v` (v), `A = P*e^(r*t)` (t) |
-| **Calculus** | `integrate(f, x)` (checked by differentiating), definite and improper integrals, `diff(f, x, n)`, `limit(f, x, a)` (one-sided, at infinity), `taylor`, `sum` / `product` (finite and infinite, convergence reported), differential equations (first order linear and separable, constant-coefficient of any order with forcing and initial conditions) |
+| **Calculus** | `integrate(f, x)` (checked by differentiating), definite and improper integrals, `diff(f, x, n)`, `limit(f, x, a)` (one-sided, at infinity), `taylor`, `sum` / `product` (finite and infinite, convergence reported); **applications**: `tangent`, `critical` (extrema, absolute max/min on an interval), `analyze` (domain, intercepts, asymptotes, increasing/decreasing, inflection, concavity), `areabetween`, `volumerev`, `shells`, `arclength`, `avgvalue`, `newton`, `implicit`, `inversefunction` |
+| **Differential equations** | first order: linear, separable (explicit when possible, e.g. logistic), Bernoulli, homogeneous, exact / integrating factor, `M dx + N dy = 0`; linear with constant coefficients of any order with forcing (undetermined coefficients, or variation of parameters for `tan`, `sec`, `ln`, `1/x`...); Euler–Cauchy `x²y'' + xy' + y = 0`; systems of 2-3 equations (repeated eigenvalues too); initial conditions; **Laplace** `laplace(f, t)`, `ilaplace(F, s)`. Every solution is substituted back into the equation |
+| **Several variables** | `grad`, `hessian`, `jacobian`, `divergence`, `curl`, `directional`, `tangentplane`, critical points of `f(x, y)` with the second-derivative test, `lagrange` multipliers, double and triple integrals as nested `integrate(...)` |
+| **Linear programming** | `maximize 3x + 2y subject to x + y <= 4, x, y >= 0` (up to 4 variables; exact corner points, unbounded/infeasible detection, integer programs) |
 | **Algebra** | `factor`, `expand`, `simplify`, `apart` (partial fractions), `gcd`/`lcm`, polynomial division, exact radicals |
 | **Complex numbers** | `(3+4i)(1-2i)`, `sqrt(-4)`, `e^(i*pi)`, `(1+i)^10`, `polar`, `conj`, `nthroots(8, 3)`, `z^2 = 3+4i`, `(2+i)z = 3-i` |
-| **Linear algebra** (exact fractions) | `det`, `inv`, `rank`, `rref`, `nullspace`, `charpoly`, `eigen`, `diagonalize`, `lu`, `linsolve`, `A*B`, `A^-1`, `dot`, `cross`, `norm`, `angle` |
-| **Number theory and counting** | `isprime`, `factor(n)`, `divisors`, `totient`, `mod`, `modinv`, `modpow`, `crt`, `x ≡ 2 (mod 3), x ≡ 3 (mod 5)`, `diophantine`, `ncr`, `npr`, `multiset`, `catalan`, `fibonacci`, `partitions`, `sequence(2,6,12,20)` (next terms and formula), base conversion, sets |
+| **Linear algebra** (exact fractions) | `det`, `inv`, `rank`, `rref`, `nullspace`, `charpoly`, `eigen`, `diagonalize`, `lu`, `linsolve`, `gramschmidt`, `A*B`, `A^-1`, `dot`, `cross`, `norm`, `angle` |
+| **Number theory and counting** | `isprime`, `factor(n)`, `divisors`, `totient`, `mod`, `modinv`, `modpow`, `crt`, `x ≡ 2 (mod 3), x ≡ 3 (mod 5)`, `diophantine`, `ncr`, `npr`, `multiset`, `catalan`, `fibonacci`, `partitions`, `sequence(2,6,12,20)` (next terms and formula), base conversion, sets, `dice(3,6,10)`, distinct arrangements of the letters of a word (MISSISSIPPI), `birthday(23)`, `pascal`, `circular` |
 | **Statistics and probability** | mean/median/mode/variance/stdev/quartiles/`summary`, `correlation`, `linreg`, binomial, Poisson, geometric, hypergeometric, normal, t, chi-square, F distributions and their inverses, confidence intervals, z/t/proportion/chi-square tests, `bayes`, `expect` |
 | **Geometry** | areas, volumes, surface areas of the usual shapes, triangles from any 3 parts (SSS, SAS, ASA, AAS, SSA incl. the ambiguous case), right triangles, distance/midpoint/slope/line, polygon area, **conic sections** (circle, ellipse, parabola, hyperbola: center, radius, foci, vertices, directrix, asymptotes from the equation) |
 | **Units** | `convert 5 km to miles`, `72 °F to °C`, `60 mph to km/h`, `2.5 GB to MB` (length, mass, time, area, volume, speed, force, pressure, energy, power, data, angle, temperature) |
@@ -45,9 +48,11 @@ Everything runs on the phone. `scripts/index.html` is a single self-contained fi
 | **Graphs** | `plot(sin(x), x, -2*pi, 2*pi)`, up to six curves, `plotparam`, `plotpolar`; the picture is returned to the chat with the zeros, extrema and y-intercept listed |
 
 Not supported: word problems (the model has to turn them into an equation or command
-first), differential equations beyond the types above, symbolic integration of
-functions with no closed form (the answer says so and gives a numeric value for
-definite integrals), 3-D graphs.
+first), differential equations beyond the types above (partial differential equations,
+non-linear equations of order 2 and up, non-constant coefficients other than the Euler form,
+forced or non-constant systems), step and delta functions in Laplace transforms, symbolic
+integration of functions with no closed form (the answer says so and gives a numeric value
+for definite integrals), 3-D graphs.
 
 ## Install
 
@@ -138,10 +143,18 @@ photo-equation-solver/
 
 Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
 
-- 468 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
-  geometry, units, chemistry, finance, graphs, messy transcriptions, errors)
-- calculus against **sympy** and **scipy**: 130 antiderivatives (each also verified by differentiating),
+- 517 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
+  geometry, units, chemistry, finance, graphs, differential equations, messy transcriptions, errors)
+- calculus against **sympy** and **scipy**: 146 antiderivatives (each also verified by differentiating),
   42 definite/improper integrals, 43 limits, 22 sums, 593 random symbolic expressions
+- calculus applications (tangents, extrema, curve study, areas, volumes, arc length) against sympy / scipy: ~380 checks;
+  several-variable calculus against sympy: ~280 checks; linear programming against `scipy.optimize.linprog` and
+  brute force: 160 problems (incl. infeasible, unbounded and integer ones)
+- randomised checks needing no oracle program: ~600 random equations per seed from the textbook ODE families, random rational
+  functions with non-monic factors (`apart`, integrals, inverse Laplace), random limits, Taylor polynomials, improper integrals
+  and sums, each verified by direct numerical evaluation
+- Laplace transforms against sympy: 240 checks; differential equations: 94 equations and systems, every printed
+  answer substituted back into its equation by an independent evaluator
 - discrete maths and statistics against sympy / scipy / numpy / exact fractions: about 1,800 checks per run
 - linear algebra against sympy: about 880 checks per run
 - geometry, triangles, units, chemistry, finance and complex numbers against **pint**,

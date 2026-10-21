@@ -7,11 +7,13 @@ HELP.index = [
   'PHOTO MATH SOLVER - help topics (ask with  help <topic>):',
   '  syntax      how to write the math (digits, letters, ^, sqrt, fractions, matrices, units)',
   '  equations   equations, systems, inequalities, formulas ("solve for t"), complex numbers',
-  '  calculus    integrate, diff, limit, taylor, sum, product, differential equations',
+  '  calculus    integrate, diff, limit, taylor, sum, product, tangent lines, curve study, areas and volumes',
+  '  ode         differential equations (first order, linear of any order, systems) and Laplace transforms',
   '  algebra     factor, expand, simplify, apart, gcd, lcm, divide, complex numbers',
   '  matrix      determinant, inverse, eigenvalues, rank, systems, vectors',
   '  number      primes, divisors, modular arithmetic, counting, sequences, sets, number bases',
   '  stats       mean, standard deviation, regression, binomial/normal/t/chi-square, tests',
+  '  multivar    partial derivatives, gradient, Hessian, double integrals, critical points of f(x, y), Lagrange multipliers\n  optimize    linear programming (maximize ... subject to ...), maxima and minima, Newton\'s method',
   '  geometry    shapes, triangles, coordinates, conic sections',
   '  units       unit conversion;  finance;  chemistry;  physics',
   '  plot        graphs of functions, parametric and polar curves',
@@ -46,7 +48,39 @@ HELP.calculus = [
   '  limit(f, x, a)  limit(f, x, a, 1)  limit; the 4th argument 1 or -1 selects the side;  a may be oo',
   '  taylor(f, x, a, n)                 Taylor polynomial of order n around a  (maclaurin for a = 0)',
   '  sum(f, k, a, b)  product(f, k, a, b)   finite and infinite sums (convergence is reported)',
-  '  ODEs: y\' = 3y,  y\' + 2y = e^x,  y\'\' - 3y\' + 2y = 0,  y\'\' + y = sin(x),  with initial conditions y(0) = 1, y\'(0) = 0',
+  '  tangent(f, x, a)                   tangent and normal line at x = a',
+  '  critical(f, x)  critical(f, x, a, b)   critical points with max/min classification; with [a, b] also the absolute max and min',
+  '  inflection(f, x)   analyze(f, x)       full study: domain, intercepts, asymptotes, increasing/decreasing, extrema, inflection, concavity',
+  '  domain(f, x)   inversefunction(f, x)   compose(f, g, x)   implicit(x^2 + y^2 - 25)  (dy/dx and d2y/dx2)   newton(f, x, x0)',
+  '  areabetween(f, g, x)  or  areabetween(f, g, x, a, b)   volumerev(f, x, a, b)  volumerev(f, g, x, a, b)  (about the x-axis)',
+  '  shells(f, x, a, b)  (about the y-axis)   arclength(f, x, a, b)   surfacearea of revolution: surfacearearev(f, x, a, b)   avgvalue(f, x, a, b)',
+  '  differential equations and Laplace transforms:  help ode',
+].join('\n');
+HELP.ode = [
+  'DIFFERENTIAL EQUATIONS (write the equation as it is; add initial conditions after a comma or semicolon: y(0) = 1, y\'(0) = 0)',
+  '  first order:  y\' = 3y   y\' + 2y = e^x   y\' = x*y   y\' = y(1 - y)   y\' - y/x = x^2   y\' + y = x*y^3 (Bernoulli)   y\' = (x + y)/x (homogeneous)',
+  '                (x + y) dx + (x - y) dy = 0   or   M dx + N dy = 0   (exact equations and integrating factors depending on x or y only)',
+  '  linear, constant coefficients, any order:  y\'\' - 3y\' + 2y = 0   y\'\' + y = sin(x)   y\'\'\' - y = e^(2x)   y\'\' + 4y = tan(2x)   (forcing: polynomials, exponentials, sin, cos, sinh, cosh, products; order 2 also tan, sec, ln, 1/x ... by variation of parameters)',
+  '  Euler-Cauchy:  x^2*y\'\' + x*y\' + y = ln(x)         systems:  x\' = 3x + y; y\' = x + 3y; x(0) = 1, y(0) = 0   (2 or 3 equations, constant coefficients)',
+  '  laplace(f, t)   laplace(f, t, s)   ilaplace(F, s)   ilaplace(F, s, t)       e.g. laplace(t^2*e^(-3t) + sin(2t), t),  ilaplace((s+1)/(s^2+2s+5), s)',
+  '  every solution is checked by substituting it back into the equation',
+].join('\n');
+HELP.multivar = [
+  'SEVERAL VARIABLES',
+  '  partial derivatives: diff(x^2*y, y)   grad(f, x, y)   grad(f, [x, y], [1, 2])  (gradient at a point)   hessian(f, x, y)   laplacian(f, x, y, z)',
+  '  jacobian([f, g], [x, y])   divergence([P, Q, R], [x, y, z])   curl([P, Q, R], [x, y, z])   directional(f, [x, y], [a, b], [u, v])   tangentplane(f, x, y, a, b)',
+  '  critical points of f(x, y) (and f(x, y, z)) with the second-derivative test:   critical(x^3 - 3*x*y + y^3, x, y)',
+  '  Lagrange multipliers:   lagrange(x*y, x + y, 10, x, y)   (maximise/minimise f on g = c);  lagrange(f, g, x, y) means g = 0',
+  '  double and triple integrals are nested:   integrate(integrate(x*y, y, 0, x), x, 0, 2)   (inner limits may contain the outer variable)',
+].join('\n');
+HELP.optimize = [
+  'OPTIMISATION',
+  '  linear programming, written as in the book (up to 4 variables, exact):',
+  '     maximize 3x + 2y subject to x + y <= 4, x <= 3, x, y >= 0',
+  '     minimize 2x + 3y subject to x + y >= 4, x + 3y >= 6, x, y >= 0          add "x and y are integers" for integer programs',
+  '     answers: the optimum, every corner point of the feasible region, "unbounded" or "no feasible solution"',
+  '  one variable: critical(f, x)   critical(f, x, a, b)  (absolute max/min on [a, b])   analyze(f, x)   newton(f, x, x0)',
+  '  two variables: critical(f, x, y)   lagrange(f, g, c, x, y)',
 ].join('\n');
 HELP.algebra = [
   'ALGEBRA AND COMPLEX NUMBERS',
@@ -63,6 +97,7 @@ HELP.matrix = [
   '  det(A) inv(A) transpose(A) trace(A) rank(A) rref(A) nullspace(A) [kernel] colspace(A) [columnspace] charpoly(A)',
   '  eigen(A) [eig]  (eigenvalues + eigenvectors)   diagonalize(A)   lu(A)   linsolve(A, b)   A*B   A^3   A^-1   2A + B',
   '  dot(u, v) cross(u, v) norm(v) [magnitude, length] normalize(v) angle(u, v) proj(u, v) [projection]',
+  '  gramschmidt([1,1,0],[1,0,1],[0,1,1])  [orthogonalize, orthonormalize]   orthogonal and orthonormal basis (rows of a matrix also work)',
   '  A system  2x + y = 5; x - y = 1  can also be written directly as equations.',
 ].join('\n');
 HELP.number = [
@@ -72,6 +107,7 @@ HELP.number = [
   '  crt([2,3],[3,5])  or  x ≡ 2 (mod 3), x ≡ 3 (mod 5)       3x ≡ 4 (mod 7)  =  congruence(3x, 4, 7) [solvecongruence]       diophantine(3x + 5y, 1)  (3x+5y=1 in integers)',
   '  factorial(n)  ncr(n, k)  (or 5 choose 2, C(5,2), 5C2)   npr(n, k)   multiset(n, k)   multinomial(2,3,1)   catalan(n)',
   '  fibonacci(n) lucas(n) derangements(n) stirling1(n,k) stirling2(n,k) bell(n) partitions(n)',
+  '  dice(2, 6)  dice(3, 6, 10)  (distribution / P(sum = 10) of 3 six-sided dice)   anagrams of MISSISSIPPI  (distinct arrangements of the letters)   birthday(23)   pascal(6)   circular(8)',
   '  sequence(2, 6, 12, 20)   next terms + general term (arithmetic, geometric, polynomial, Fibonacci-type)',
   '  arith(a1, d, n)  nth term and sum;   geom(a1, r, n)  nth term and sum (infinite sum when |r| < 1)',
   '  union([1,2],[2,3]) intersection(A, B) setdiff(A, B) symdiff(A, B) powerset(n)',
@@ -115,7 +151,7 @@ HELP.plot = [
 ].join('\n');
 const HELP_ALIAS = {
   '': 'index', help: 'index', commands: 'index', all: 'index', topics: 'index', input: 'syntax', notation: 'syntax', solve: 'equations', inequalities: 'equations', systems: 'equations', formulas: 'equations',
-  ode: 'calculus', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
+  diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
   discrete: 'number', counting: 'number', probability: 'stats', statistics: 'stats', geometry: 'geometry', conic: 'geometry', conics: 'geometry', triangles: 'geometry',
   finance: 'units', chemistry: 'units', physics: 'units', conversion: 'units', graph: 'plot', plots: 'plot', plotting: 'plot', graphs: 'plot',
 };

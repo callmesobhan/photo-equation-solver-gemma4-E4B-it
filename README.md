@@ -8,9 +8,11 @@ skill does all the *calculating* (exact fractions and symbolic expressions), and
 how the picture was read so a misread digit is easy to spot.
 
 It covers equations, systems and inequalities, calculus (integrals, derivatives, limits,
-series, differential equations), matrices, complex numbers, number theory and counting,
-statistics and probability, geometry (triangles, conic sections), unit conversion,
-finance, chemistry (molar mass, balancing equations), physics formulas and graphs.
+series, tangent lines, curve study, areas and volumes), several-variable calculus, linear
+programming, differential equations (first order of the usual textbook types, linear of any
+order, Euler equations, systems) and Laplace transforms, matrices, complex numbers, number
+theory and counting, statistics and probability, geometry (triangles, conic sections), unit
+conversion, finance, chemistry (molar mass, balancing equations), physics formulas and graphs.
 
 | | |
 |---|---|

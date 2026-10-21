@@ -147,20 +147,22 @@ function integrateRationalTerm(t, x) {
     const n0 = t.num[0] || Q0;
     const h = b.div(a.mul(qInt(2)));
     const D = c0.div(a).sub(h.mul(h));
-    if (D.sign() <= 0) return null;
+    if (D.isZero()) return null;
+    const real = D.sign() < 0; // two real (irrational) roots
     const U = sAdd([sV(x), sN(h)]);
     const m = n0.sub(n1.mul(h));
-    const s = sSqrt(sN(D));
+    const s = sSqrt(sN(real ? D.neg() : D));
     const W = sAdd([sPow(U, sI(2)), sN(D)]);
     const q = polyToS(fac, x);
     let total = S0;
     if (!n1.isZero()) {
       total = sAdd([total, k === 1
-        ? sMul([sN(n1.div(a.mul(qInt(2)))), sFn('ln', [q])])
+        ? sMul([sN(n1.div(a.mul(qInt(2)))), real ? sLnAbs(W) : sFn('ln', [W])])
         : sMul([sN(n1.div(a.mul(qInt(2)).mul(qInt(1 - k)))), sPow(q, sI(1 - k))])]);
     }
     if (!m.isZero()) {
       const J = (kk) => {
+        if (kk === 1 && real) return sMul([sDiv(S1, sMul([sI(2), s])), sAdd([sLnAbs(sSub(U, s)), sNeg(sLnAbs(sAdd([U, s])))])]);
         if (kk === 1) return sDiv(sFn('atan', [sDiv(U, s)]), s);
         const den = D.mul(qInt(2 * (kk - 1)));
         return sAdd([sMul([U, sPow(W, sI(1 - kk)), sN(den.inv())]), sMul([sN(qInt(2 * kk - 3).div(den)), J(kk - 1)])]);
@@ -638,7 +640,79 @@ function mTrigSub(f, x, depth) {
   return R;
 }
 
-const INTEGRATION_METHODS = [mTable, mGauss, mPoly, mExpTrig, mRational, mTrig, mSqrtQuad, mExpandProduct, mUSub, mTrigSub, mParts];
+// ---- fallback: hyperbolic functions through exponentials, multiple angles through powers of sin/cos --------------------
+function hyperToExp(e) {
+  const walk = (t) => {
+    if (t.k === 'f' && t.a.length === 1 && (t.fn === 'sinh' || t.fn === 'cosh' || t.fn === 'tanh')) {
+      const u = walk(t.a[0]);
+      const p = sExp(u);
+      const m = sExp(sNeg(u));
+      if (t.fn === 'sinh') return sMul([sN(new Q(1n, 2n)), sSub(p, m)]);
+      if (t.fn === 'cosh') return sMul([sN(new Q(1n, 2n)), sAdd([p, m])]);
+      return sDiv(sSub(p, m), sAdd([p, m]));
+    }
+    if (t.k === '+' || t.k === '*' || t.k === '^' || t.k === 'f') return mapS(t, walk);
+    return t;
+  };
+  return walk(e);
+}
+const hasHyper = (e) => (e.k === 'f' && (e.fn === 'sinh' || e.fn === 'cosh' || e.fn === 'tanh')) || (e.k === '+' || e.k === '*' ? e.a.some(hasHyper) : e.k === '^' ? hasHyper(e.b) || hasHyper(e.e) : e.k === 'f' ? e.a.some(hasHyper) : false);
+function mHyperbolic(f, x, depth) {
+  if (!hasHyper(f)) return null;
+  const g = simp(expandS(hyperToExp(f)));
+  if (key(g) === key(f)) return null;
+  return integrateS(g, x, depth); // no hyperbolic function is left, so this cannot repeat
+}
+function mMultiAngle(f, x, depth) {
+  const coefs = [];
+  let bad = false;
+  const walk = (t) => {
+    if (t.k === 'f' && (t.fn === 'sin' || t.fn === 'cos') && t.a.length === 1) {
+      const L = linearIn(t.a[0], x);
+      if (L && L.a.k === 'n' && isNumVal(L.b, 0) && L.a.q.sign() > 0) coefs.push(L.a.q);
+      else bad = true;
+    } else if (t.k === 'f' && (t.fn === 'tan' || t.fn === 'cot' || t.fn === 'sec' || t.fn === 'csc')) {
+      bad = true;
+    }
+    if (t.k === '+' || t.k === '*') t.a.forEach(walk);
+    else if (t.k === '^') {
+      walk(t.b);
+      walk(t.e);
+    } else if (t.k === 'f') t.a.forEach(walk);
+  };
+  walk(f);
+  if (bad || coefs.length < 2) return null;
+  if (new Set(coefs.map((q) => q.toString())).size < 2) return null;
+  let den = 1n;
+  coefs.forEach((q) => { den = (den / bgcd(den, q.d)) * q.d; });
+  let g = 0n;
+  coefs.forEach((q) => { g = bgcd(g, q.n * (den / q.d)); });
+  const base = new Q(g, den);
+  const mult = coefs.map((q) => q.div(base));
+  if (mult.some((m) => !m.isInt() || m.n > 8n)) return null;
+  const u0 = sMul([sN(base), sV(x)]);
+  const sn = sFn('sin', [u0]);
+  const cs = sFn('cos', [u0]);
+  const S = [S0, sn];
+  const C = [S1, cs];
+  for (let k = 2; k <= 8; k++) {
+    S[k] = expandS(sAdd([sMul([S[k - 1], cs]), sMul([C[k - 1], sn])]));
+    C[k] = expandS(sSub(sMul([C[k - 1], cs]), sMul([S[k - 1], sn])));
+  }
+  const rewrite = (t) => {
+    if (t.k === 'f' && (t.fn === 'sin' || t.fn === 'cos') && t.a.length === 1) {
+      const m = Number(linearIn(t.a[0], x).a.q.div(base).n);
+      return t.fn === 'sin' ? S[m] : C[m];
+    }
+    if (t.k === '+' || t.k === '*' || t.k === '^' || t.k === 'f') return mapS(t, rewrite);
+    return t;
+  };
+  const g2 = simp(expandS(rewrite(f)));
+  if (key(g2) === key(f)) return null;
+  return integrateS(g2, x, depth); // a single multiple of x is left, so this cannot repeat
+}
+
+const INTEGRATION_METHODS = [mTable, mGauss, mPoly, mExpTrig, mRational, mTrig, mSqrtQuad, mExpandProduct, mMultiAngle, mUSub, mTrigSub, mParts, mHyperbolic];
 
 function integrateS(f, x, depth) {
   depth = depth || 0;

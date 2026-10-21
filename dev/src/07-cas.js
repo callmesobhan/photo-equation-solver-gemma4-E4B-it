@@ -248,6 +248,7 @@ function sPow(b, e) {
     const q = e.q;
     if (q.isZero()) return S1;
     if (q.eq(Q1)) return b;
+    if (b.k === 'f' && b.fn === 'abs' && b.a.length === 1 && q.isInt() && q.n % 2n === 0n) return sPow(b.a[0], e);
     if (b.k === 'n') {
       if (b.q.eq(Q1)) return S1;
       if (b.q.isZero()) return q.sign() > 0 ? S0 : sPowRaw(b, e);
@@ -278,6 +279,23 @@ function sPow(b, e) {
   }
   if (b.k === 'n' && b.q.eq(Q1)) return S1;
   if (isConstE(b) && e.k === 'f' && e.fn === 'ln') return e.a[0];
+  if (isConstE(b) && (e.k === '+' || e.k === '*')) {
+    // e^(a + c ln u) = e^a u^c for rational c
+    const lnPart = (t) => {
+      if (t.k === 'f' && t.fn === 'ln' && t.a.length === 1) return { c: Q1, u: t.a[0] };
+      if (t.k === '*' && t.a.length === 2 && t.a[0].k === 'n' && t.a[1].k === 'f' && t.a[1].fn === 'ln' && t.a[1].a.length === 1) return { c: t.a[0].q, u: t.a[1].a[0] };
+      return null;
+    };
+    const terms = e.k === '+' ? e.a : [e];
+    const rest = [];
+    const pulled = [];
+    terms.forEach((t) => {
+      const lp = lnPart(t);
+      if (lp) pulled.push(sPow(lp.u, sN(lp.c)));
+      else rest.push(t);
+    });
+    if (pulled.length) return sMul([rest.length ? sPow(S_E, sAdd(rest)) : S1].concat(pulled));
+  }
   if (b.k === '^' && isConstE(b.b)) return sPow(S_E, sMul([b.e, e]));
   if (b.k === '^' && b.e.k === 'n' && b.e.q.isInt() && e.k !== 'n') {
     return sPowRaw(b.b, sMul([b.e, e]));
@@ -784,7 +802,7 @@ function fmtS(e, ascii) {
       else if ((/^[A-Za-z]{2,}/.test(p) || /^e(\^|$)/.test(p)) && /[A-Za-zπ)²³¹⁰-⁹⁻|]$/.test(out)) out += ' ' + p;
       else if (/[A-Za-z]\d+$/.test(out) && /^[A-Za-z(]/.test(p)) out += ' ' + p;
       else if (/^[A-Za-z]{2,}/.test(p) && /[0-9]$/.test(out)) out += ' ' + p;
-      else out += (/[0-9A-Za-zπ)²³¹⁰-⁹⁻|]$/.test(out) && /^[A-Za-zπ√(|]/.test(p) ? '' : '·') + p;
+      else out += (/[0-9A-Za-zπ)²³¹⁰-⁹⁻|]$/.test(out) && /^[A-Za-zπλθμσφωαβγδ√(|]/.test(p) ? '' : '·') + p;
     }
     return out;
   };

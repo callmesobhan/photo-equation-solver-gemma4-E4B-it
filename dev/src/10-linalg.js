@@ -529,6 +529,38 @@ defMat('proj projection', (args) => {
   const k = dotQ(u, v).div(dotQ(v, v));
   return mat([v.map((x) => x.mul(k))], { vec: true });
 }, [2, 'two vectors (projection of the first onto the second)']);
+defMat('gramschmidt orthogonalize orthonormalize', (args, n, out) => {
+  // the vectors are the rows of one matrix, or several vectors given one by one
+  let vecs;
+  if (args.length === 1 && args[0].t === 'mat' && !args[0].vec) vecs = args[0].a;
+  else vecs = args.map(flat);
+  if (vecs.length < 2) throw new MathError('gramschmidt needs at least two vectors, e.g. gramschmidt([1, 1, 0], [1, 0, 1], [0, 1, 1])');
+  const basis = [];
+  const skipped = [];
+  vecs.forEach((v, idx) => {
+    let w = v.slice();
+    basis.forEach((b) => {
+      const k = dotQ(v, b).div(dotQ(b, b));
+      w = w.map((x, i) => x.sub(k.mul(b[i])));
+    });
+    if (w.every((x) => x.isZero())) skipped.push(idx + 1);
+    else basis.push(w);
+  });
+  const show = (v) => '[' + v.map((q) => q.toString()).join(', ') + ']';
+  out.work.push('Gram-Schmidt: uₖ = vₖ − Σ (vₖ·uⱼ)/(uⱼ·uⱼ) uⱼ  (subtract the projections onto the earlier vectors)');
+  basis.forEach((b, i) => out.answer.push('u' + (i + 1) + ' = ' + show(b) + '   (length ' + fmtS(simp(sSqrt(sN(dotQ(b, b))))) + ')'));
+  out.work.push('Orthonormal basis (each uₖ divided by its length):');
+  basis.forEach((b, i) => {
+    const nrm = sSqrt(sN(dotQ(b, b)));
+    out.work.push('e' + (i + 1) + ' = [' + b.map((x) => fmtS(simp(sDiv(sN(x), nrm)))).join(', ') + ']');
+  });
+  if (skipped.length) out.notes.push('Vector ' + skipped.join(', ') + ' is a combination of the earlier ones, so it adds nothing and was dropped.');
+  let ortho = true;
+  basis.forEach((b, i) => basis.forEach((c, j) => { if (i < j && !dotQ(b, c).isZero()) ortho = false; }));
+  out.check = ortho ? 'all pairs of the new vectors have dot product 0' : null;
+  out.__done = true;
+  return mat([[Q0]], { __skip: true });
+}, [1, 'two or more vectors, e.g. gramschmidt([1, 1, 0], [1, 0, 1], [0, 1, 1])']);
 defMat('unit normalize', (args, n, out) => {
   const u = flat(args[0]);
   const nrm = sSqrt(sN(dotQ(u, u)));

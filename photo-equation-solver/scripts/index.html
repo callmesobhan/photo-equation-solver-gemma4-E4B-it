@@ -401,6 +401,7 @@ function normalizeText(raw) {
   s = s.replace(/\binfinity\b|\binf\b/g, 'oo');
   s = convertLogBase(s);
   s = convertNotation(s);
+  s = convertDifferentialForm(s);
   if ((s.match(/\|/g) || []).length % 2 === 0) {
     let open = true;
     s = s.replace(/\|/g, () => ((open = !open) ? ')' : 'abs('));
@@ -490,12 +491,15 @@ function splitTopLevel(s, re) {
 
 /** Split into separate statements (system of equations / several relations). */
 function splitStatements(s) {
-  let parts = splitTopLevel(s, /^(?:[;\n\r]+|\band\b|&)/).map((p) => p.trim()).filter(Boolean);
-  if (parts.length === 1 && topLevelRelations(parts[0]).length >= 2 && parts[0].includes(',')) {
-    const trimmed = splitTopLevel(parts[0], /^,/).map((p) => p.trim()).filter(Boolean);
-    if (trimmed.length > 1 && trimmed.every((p) => topLevelRelations(p).length > 0)) parts = trimmed;
-  }
-  return parts;
+  const parts = splitTopLevel(s, /^(?:[;\n\r]+|\band\b|&)/).map((p) => p.trim()).filter(Boolean);
+  // a piece such as "x(0) = 1, y(0) = 0" holds several statements separated by commas
+  return parts.flatMap((part) => {
+    if (topLevelRelations(part).length >= 2 && part.includes(',')) {
+      const trimmed = splitTopLevel(part, /^,/).map((p) => p.trim()).filter(Boolean);
+      if (trimmed.length > 1 && trimmed.every((p) => topLevelRelations(p).length > 0)) return trimmed;
+    }
+    return [part];
+  });
 }
 
 /** Drop a trailing question such as ", find x", "(x = ?)" or ", x = ?". */
@@ -577,6 +581,11 @@ function tokenize(s) {
         tok = { t: 'const', v: 'e' };
         i++;
       } else {
+        // a long word directly before "(" that contains no known function or command is a function this solver does not have
+        const word = /^[a-z]{5,}(?=\()/.exec(rest);
+        if (word && !FN_NAMES.some((f) => word[0].includes(f)) && !Object.keys(COMMANDS).some((f) => word[0].includes(f)) && !/pi|oo/.test(word[0])) {
+          throw new MathError('"' + word[0] + '" is not a function this solver knows; see "help" for the supported functions and commands');
+        }
         tok = { t: 'id', v: c };
         i++;
       }
@@ -2282,20 +2291,10 @@ function solveFloatLinear(A, b) {
   }
   return x;
 }
-function solveNonlinear(eqs, vars) {
-  const out = newOut();
-  const n = vars.length;
-  if (eqs.length !== n) {
-    throw new MathError('there are ' + n + ' unknowns (' + vars.join(', ') + ') but ' + eqs.length + ' equation' + (eqs.length === 1 ? '' : 's') + '; I need the same number of equations as unknowns');
-  }
-  if (n > 3) throw new MathError('at most 3 unknowns are supported for non-linear systems');
-  const env = {};
-  const F = (x) => {
-    vars.forEach((nm, i) => { env[nm] = x[i]; });
-    return eqs.map((e) => evalNum(e.lhs, env) - evalNum(e.rhs, env));
-  };
+/** Real solutions of F(x) = 0 (F: array of n numbers -> array of n residuals) by Newton's method from a grid of starting points. */
+function newtonSolutions(F, n) {
   const norm = (a) => Math.max(...a.map(Math.abs));
-  const grid = n === 3 ? [-6, -2, -0.5, 0.5, 2, 6] : [-10, -5, -2.5, -1, -0.3, 0.3, 1, 2.5, 5, 10];
+  const grid = n >= 4 ? [-5, -1.5, -0.4, 0.4, 1.5, 5] : n === 3 ? [-6, -2, -0.5, 0.5, 2, 6] : [-10, -5, -2.5, -1, -0.3, 0.3, 1, 2.5, 5, 10];
   const starts = [[]];
   for (let k = 0; k < n; k++) {
     const next = [];
@@ -2340,6 +2339,21 @@ function solveNonlinear(eqs, vars) {
     if (sols.length >= 12) break;
   }
   sols.sort((a, b) => a[0] - b[0] || (a[1] || 0) - (b[1] || 0));
+  return sols;
+}
+function solveNonlinear(eqs, vars) {
+  const out = newOut();
+  const n = vars.length;
+  if (eqs.length !== n) {
+    throw new MathError('there are ' + n + ' unknowns (' + vars.join(', ') + ') but ' + eqs.length + ' equation' + (eqs.length === 1 ? '' : 's') + '; I need the same number of equations as unknowns');
+  }
+  if (n > 3) throw new MathError('at most 3 unknowns are supported for non-linear systems');
+  const env = {};
+  const F = (x) => {
+    vars.forEach((nm, i) => { env[nm] = x[i]; });
+    return eqs.map((e) => evalNum(e.lhs, env) - evalNum(e.rhs, env));
+  };
+  const sols = newtonSolutions(F, n);
   out.work.push('Type: system of ' + n + ' non-linear equations - solved numerically (Newton\u2019s method from many starting points)');
   if (!sols.length) {
     out.answer.push('no real solution found');
@@ -2431,6 +2445,8 @@ function solveProblem(text, solveFor) {
     norm = sp.text;
     solveFor = solveFor || sp.target;
   }
+  const lp = tryLinearProgram(norm);
+  if (lp) return lp;
   const parts = splitStatements(stripAsk(norm)).map(cleanStatement).filter(Boolean);
   if (!parts.length) throw new MathError('no math was found in the input');
   let sts = parts.map(parseStatement);
@@ -2778,6 +2794,7 @@ function sPow(b, e) {
     const q = e.q;
     if (q.isZero()) return S1;
     if (q.eq(Q1)) return b;
+    if (b.k === 'f' && b.fn === 'abs' && b.a.length === 1 && q.isInt() && q.n % 2n === 0n) return sPow(b.a[0], e);
     if (b.k === 'n') {
       if (b.q.eq(Q1)) return S1;
       if (b.q.isZero()) return q.sign() > 0 ? S0 : sPowRaw(b, e);
@@ -2808,6 +2825,23 @@ function sPow(b, e) {
   }
   if (b.k === 'n' && b.q.eq(Q1)) return S1;
   if (isConstE(b) && e.k === 'f' && e.fn === 'ln') return e.a[0];
+  if (isConstE(b) && (e.k === '+' || e.k === '*')) {
+    // e^(a + c ln u) = e^a u^c for rational c
+    const lnPart = (t) => {
+      if (t.k === 'f' && t.fn === 'ln' && t.a.length === 1) return { c: Q1, u: t.a[0] };
+      if (t.k === '*' && t.a.length === 2 && t.a[0].k === 'n' && t.a[1].k === 'f' && t.a[1].fn === 'ln' && t.a[1].a.length === 1) return { c: t.a[0].q, u: t.a[1].a[0] };
+      return null;
+    };
+    const terms = e.k === '+' ? e.a : [e];
+    const rest = [];
+    const pulled = [];
+    terms.forEach((t) => {
+      const lp = lnPart(t);
+      if (lp) pulled.push(sPow(lp.u, sN(lp.c)));
+      else rest.push(t);
+    });
+    if (pulled.length) return sMul([rest.length ? sPow(S_E, sAdd(rest)) : S1].concat(pulled));
+  }
   if (b.k === '^' && isConstE(b.b)) return sPow(S_E, sMul([b.e, e]));
   if (b.k === '^' && b.e.k === 'n' && b.e.q.isInt() && e.k !== 'n') {
     return sPowRaw(b.b, sMul([b.e, e]));
@@ -3314,7 +3348,7 @@ function fmtS(e, ascii) {
       else if ((/^[A-Za-z]{2,}/.test(p) || /^e(\^|$)/.test(p)) && /[A-Za-z\u03c0)\u00b2\u00b3\u00b9\u2070-\u2079\u207b|]$/.test(out)) out += ' ' + p;
       else if (/[A-Za-z]\d+$/.test(out) && /^[A-Za-z(]/.test(p)) out += ' ' + p;
       else if (/^[A-Za-z]{2,}/.test(p) && /[0-9]$/.test(out)) out += ' ' + p;
-      else out += (/[0-9A-Za-z\u03c0)\u00b2\u00b3\u00b9\u2070-\u2079\u207b|]$/.test(out) && /^[A-Za-z\u03c0\u221a(|]/.test(p) ? '' : '\u00b7') + p;
+      else out += (/[0-9A-Za-z\u03c0)\u00b2\u00b3\u00b9\u2070-\u2079\u207b|]$/.test(out) && /^[A-Za-z\u03c0\u03bb\u03b8\u03bc\u03c3\u03c6\u03c9\u03b1\u03b2\u03b3\u03b4\u221a(|]/.test(p) ? '' : '\u00b7') + p;
     }
     return out;
   };
@@ -3709,11 +3743,12 @@ function apartRF(r) {
       basis.forEach((b, idx) => {
         if (b.f === f && b.j === j) num[b.k] = coefs[idx];
       });
-      const nt = ptrim(num.slice());
+      // the denominator is content * (product of the primitive factors): n/d = poly + (1/content) * sum
+      const nt = ptrim(num.slice().map((c) => c.div(fp.content)));
       if (nt.length) terms.push({ num: nt, fac: f.poly, power: j });
     }
   }
-  return { poly: qpart, terms, content: fp.content };
+  return { poly: qpart, terms };
 }
 
 function apartText(ap, v) {
@@ -4116,7 +4151,7 @@ function clearDenominators(E, v) {
     if (!bases.size) return E;
     let mult = S1;
     bases.forEach((x) => { mult = sMul([mult, sPow(x.b, sI(x.p))]); });
-    E = expandS(sMul([E, mult]));
+    E = expandS(sAdd(termsOf(E).map((t) => sMul([t, mult]))));
   }
   return E;
 }
@@ -4178,7 +4213,7 @@ function togetherDeep(e) {
     y.a.forEach(collect);
     let D = S1;
     bases.forEach((z) => { D = sMul([D, sPow(z.b, sI(z.p))]); });
-    return sDiv(expandS(sMul([y, D])), D);
+    return sDiv(expandS(sAdd(termsOf(y).map((t) => sMul([t, D])))), D);
   };
   return go(e);
 }
@@ -4842,13 +4877,52 @@ function integrateNumeric(S, x, a, b) {
     const nb = (Math.abs(vals[i - 1]) + Math.abs(vals[i + 1])) / 2;
     if (!isFinite(v) || (Math.abs(v) > 1e6 * Math.max(1, med) && Math.abs(v) > 20 * nb && Math.abs(v) > 1e6)) bad.push(a + ((b - a) * i) / N);
   }
+  // poles that fall between sample points: a sign change that ends in a huge value (not in zero), or a sharp spike whose peak is huge
+  const xAt = (i) => a + ((b - a) * i) / N;
+  let brackets = 0;
+  for (let i = 0; i < N && brackets < 300; i++) {
+    const v0 = vals[i];
+    const v1 = vals[i + 1];
+    if (!isFinite(v0) || !isFinite(v1) || v0 * v1 >= 0) continue;
+    brackets++;
+    let l = xAt(i);
+    let h = xAt(i + 1);
+    const sl = Math.sign(v0);
+    for (let it = 0; it < 70; it++) {
+      const m = (l + h) / 2;
+      const fm = f(m);
+      if (!isFinite(fm)) break;
+      if (Math.sign(fm) === sl) l = m;
+      else h = m;
+    }
+    const peak = Math.max(Math.abs(f(l)), Math.abs(f(h)));
+    if (peak > 1e8 * Math.max(1, med)) bad.push((l + h) / 2);
+  }
+  for (let i = 1; i < N; i++) {
+    const v = Math.abs(vals[i]);
+    if (!isFinite(v) || v < 8 * Math.max(1, med) || v < Math.abs(vals[i - 1]) || v < Math.abs(vals[i + 1]) || v < 3 * Math.min(Math.abs(vals[i - 1]), Math.abs(vals[i + 1]))) continue;
+    let l = xAt(i - 1);
+    let h = xAt(i + 1);
+    for (let it = 0; it < 80; it++) {
+      const m1 = l + (h - l) / 3;
+      const m2 = h - (h - l) / 3;
+      if (Math.abs(f(m1)) < Math.abs(f(m2))) l = m1;
+      else h = m2;
+    }
+    if (Math.abs(f((l + h) / 2)) > 1e8 * Math.max(1, med)) bad.push((l + h) / 2);
+  }
+  bad.sort((p, q) => p - q);
   if (bad.length) {
+    // one probe per cluster of suspicious points: how fast does |f| grow when we approach it?
+    const clusters = bad.filter((t, i) => i === 0 || t - bad[i - 1] > (b - a) / 200);
+    for (const x0 of clusters) {
+      const probe = (d) => Math.max(Math.abs(f(x0 + d)), Math.abs(f(x0 - d)));
+      const p1 = probe(1e-4);
+      const p2 = probe(1e-7);
+      const p = Math.log(p2 / p1) / Math.log(1000);
+      if (isFinite(p) && p >= 0.95) return { value: Infinity, ok: false, diverges: true, note: 'the integrand has a non-integrable singularity near ' + fmtNum(x0) };
+    }
     const x0 = bad[Math.floor(bad.length / 2)];
-    const probe = (d) => Math.max(Math.abs(f(x0 + d)), Math.abs(f(x0 - d)));
-    const p1 = probe(1e-4);
-    const p2 = probe(1e-7);
-    const p = Math.log(p2 / p1) / Math.log(1000);
-    if (isFinite(p) && p >= 0.95) return { value: Infinity, ok: false, diverges: true, note: 'the integrand has a non-integrable singularity near ' + fmtNum(x0) };
     const cuts = [a].concat(bad.filter((t, i) => i === 0 || t - bad[i - 1] > (b - a) / 50), [b]);
     let total = 0;
     let ok = true;
@@ -5021,20 +5095,22 @@ function integrateRationalTerm(t, x) {
     const n0 = t.num[0] || Q0;
     const h = b.div(a.mul(qInt(2)));
     const D = c0.div(a).sub(h.mul(h));
-    if (D.sign() <= 0) return null;
+    if (D.isZero()) return null;
+    const real = D.sign() < 0; // two real (irrational) roots
     const U = sAdd([sV(x), sN(h)]);
     const m = n0.sub(n1.mul(h));
-    const s = sSqrt(sN(D));
+    const s = sSqrt(sN(real ? D.neg() : D));
     const W = sAdd([sPow(U, sI(2)), sN(D)]);
     const q = polyToS(fac, x);
     let total = S0;
     if (!n1.isZero()) {
       total = sAdd([total, k === 1
-        ? sMul([sN(n1.div(a.mul(qInt(2)))), sFn('ln', [q])])
+        ? sMul([sN(n1.div(a.mul(qInt(2)))), real ? sLnAbs(W) : sFn('ln', [W])])
         : sMul([sN(n1.div(a.mul(qInt(2)).mul(qInt(1 - k)))), sPow(q, sI(1 - k))])]);
     }
     if (!m.isZero()) {
       const J = (kk) => {
+        if (kk === 1 && real) return sMul([sDiv(S1, sMul([sI(2), s])), sAdd([sLnAbs(sSub(U, s)), sNeg(sLnAbs(sAdd([U, s])))])]);
         if (kk === 1) return sDiv(sFn('atan', [sDiv(U, s)]), s);
         const den = D.mul(qInt(2 * (kk - 1)));
         return sAdd([sMul([U, sPow(W, sI(1 - kk)), sN(den.inv())]), sMul([sN(qInt(2 * kk - 3).div(den)), J(kk - 1)])]);
@@ -5512,7 +5588,79 @@ function mTrigSub(f, x, depth) {
   return R;
 }
 
-const INTEGRATION_METHODS = [mTable, mGauss, mPoly, mExpTrig, mRational, mTrig, mSqrtQuad, mExpandProduct, mUSub, mTrigSub, mParts];
+// ---- fallback: hyperbolic functions through exponentials, multiple angles through powers of sin/cos --------------------
+function hyperToExp(e) {
+  const walk = (t) => {
+    if (t.k === 'f' && t.a.length === 1 && (t.fn === 'sinh' || t.fn === 'cosh' || t.fn === 'tanh')) {
+      const u = walk(t.a[0]);
+      const p = sExp(u);
+      const m = sExp(sNeg(u));
+      if (t.fn === 'sinh') return sMul([sN(new Q(1n, 2n)), sSub(p, m)]);
+      if (t.fn === 'cosh') return sMul([sN(new Q(1n, 2n)), sAdd([p, m])]);
+      return sDiv(sSub(p, m), sAdd([p, m]));
+    }
+    if (t.k === '+' || t.k === '*' || t.k === '^' || t.k === 'f') return mapS(t, walk);
+    return t;
+  };
+  return walk(e);
+}
+const hasHyper = (e) => (e.k === 'f' && (e.fn === 'sinh' || e.fn === 'cosh' || e.fn === 'tanh')) || (e.k === '+' || e.k === '*' ? e.a.some(hasHyper) : e.k === '^' ? hasHyper(e.b) || hasHyper(e.e) : e.k === 'f' ? e.a.some(hasHyper) : false);
+function mHyperbolic(f, x, depth) {
+  if (!hasHyper(f)) return null;
+  const g = simp(expandS(hyperToExp(f)));
+  if (key(g) === key(f)) return null;
+  return integrateS(g, x, depth); // no hyperbolic function is left, so this cannot repeat
+}
+function mMultiAngle(f, x, depth) {
+  const coefs = [];
+  let bad = false;
+  const walk = (t) => {
+    if (t.k === 'f' && (t.fn === 'sin' || t.fn === 'cos') && t.a.length === 1) {
+      const L = linearIn(t.a[0], x);
+      if (L && L.a.k === 'n' && isNumVal(L.b, 0) && L.a.q.sign() > 0) coefs.push(L.a.q);
+      else bad = true;
+    } else if (t.k === 'f' && (t.fn === 'tan' || t.fn === 'cot' || t.fn === 'sec' || t.fn === 'csc')) {
+      bad = true;
+    }
+    if (t.k === '+' || t.k === '*') t.a.forEach(walk);
+    else if (t.k === '^') {
+      walk(t.b);
+      walk(t.e);
+    } else if (t.k === 'f') t.a.forEach(walk);
+  };
+  walk(f);
+  if (bad || coefs.length < 2) return null;
+  if (new Set(coefs.map((q) => q.toString())).size < 2) return null;
+  let den = 1n;
+  coefs.forEach((q) => { den = (den / bgcd(den, q.d)) * q.d; });
+  let g = 0n;
+  coefs.forEach((q) => { g = bgcd(g, q.n * (den / q.d)); });
+  const base = new Q(g, den);
+  const mult = coefs.map((q) => q.div(base));
+  if (mult.some((m) => !m.isInt() || m.n > 8n)) return null;
+  const u0 = sMul([sN(base), sV(x)]);
+  const sn = sFn('sin', [u0]);
+  const cs = sFn('cos', [u0]);
+  const S = [S0, sn];
+  const C = [S1, cs];
+  for (let k = 2; k <= 8; k++) {
+    S[k] = expandS(sAdd([sMul([S[k - 1], cs]), sMul([C[k - 1], sn])]));
+    C[k] = expandS(sSub(sMul([C[k - 1], cs]), sMul([S[k - 1], sn])));
+  }
+  const rewrite = (t) => {
+    if (t.k === 'f' && (t.fn === 'sin' || t.fn === 'cos') && t.a.length === 1) {
+      const m = Number(linearIn(t.a[0], x).a.q.div(base).n);
+      return t.fn === 'sin' ? S[m] : C[m];
+    }
+    if (t.k === '+' || t.k === '*' || t.k === '^' || t.k === 'f') return mapS(t, rewrite);
+    return t;
+  };
+  const g2 = simp(expandS(rewrite(f)));
+  if (key(g2) === key(f)) return null;
+  return integrateS(g2, x, depth); // a single multiple of x is left, so this cannot repeat
+}
+
+const INTEGRATION_METHODS = [mTable, mGauss, mPoly, mExpTrig, mRational, mTrig, mSqrtQuad, mExpandProduct, mMultiAngle, mUSub, mTrigSub, mParts, mHyperbolic];
 
 function integrateS(f, x, depth) {
   depth = depth || 0;
@@ -6001,6 +6149,7 @@ COMMANDS.diff.show = (n) => {
 // ---- integrals -----------------------------------------------------------------------------------------------------
 /** Value of F at a bound (limit when the bound is infinite or F blows up there). Returns S or null. */
 function endValue(F, v, bound, side) {
+  if (!bound.inf && (varsOfS(bound.S).size || Array.from(varsOfS(F)).some((u) => u !== v))) return simp(subsS(F, v, bound.S)); // other letters present: plain substitution
   if (!bound.inf) {
     const an = numS(bound.S, {});
     if (!singularAt(F, v, an)) {
@@ -6047,6 +6196,20 @@ defCmd('integrate integral', (n) => {
   }
   const lo = boundOf(bounds[0]);
   const hi = boundOf(bounds[1]);
+  const otherLetters = Array.from(varsOfS(S)).filter((u) => u !== v).length || (lo.S && varsOfS(lo.S).size) || (hi.S && varsOfS(hi.S).size);
+  if (otherLetters) {
+    // the integrand or a limit contains other letters (inner integral of a double integral, a parameter): exact only
+    const F = antiderivative(S, v);
+    if (!F) throw new MathError('I could not find an antiderivative of ' + fmtS(S) + ' (it is needed because other letters appear)');
+    const top = endValue(F, v, hi, -1);
+    const bot = endValue(F, v, lo, 1);
+    if (!top || !bot) throw new MathError('the limits could not be substituted');
+    const res = simp(expandS(sSub(top, bot)));
+    out.work.push('Definite integral of ' + fmtS(S) + ' from ' + intLimitsText(lo, hi) + ' (the other letters are treated as constants / the limits)');
+    out.work.push('Antiderivative: ' + fmtS(F));
+    out.answer.push(fmtS(res));
+    return withValue(out, res);
+  }
   const a = boundNum(lo);
   const b = boundNum(hi);
   const num = integrateNumeric(S, v, a, b);
@@ -6522,16 +6685,19 @@ function odeResidualOk(F, y, x, sol) {
   const R = subsMany(F, map);
   const consts = Array.from(varsOfS(sol)).filter((v) => /^C\d/.test(v));
   let good = 0;
-  for (let t = 0; t < 12 && good < 6; t++) {
-    const env = { [x]: 0.3 + 0.37 * t };
-    consts.forEach((c, i) => { env[c] = 0.7 + 0.9 * i - 0.3 * t * 0.1; });
-    try {
-      const r = numS(R, env);
-      if (!isFinite(r)) continue;
-      if (Math.abs(r) > 1e-6 * (1 + Math.abs(numS(sol, env)))) return false;
-      good++;
-    } catch (e) {
-      continue;
+  // several magnitudes for the constants, so that square roots and logarithms are defined at enough sample points
+  for (const base of [0.7, 6, 45, -0.7, -6]) {
+    for (let t = 0; t < 10; t++) {
+      const env = { [x]: 0.3 + 0.37 * t };
+      consts.forEach((c, i) => { env[c] = base * (1 + 1.3 * i) - 0.03 * t; });
+      try {
+        const r = numS(R, env);
+        if (!isFinite(r)) continue;
+        if (Math.abs(r) > 1e-6 * (1 + Math.abs(numS(sol, env)))) return false;
+        good++;
+      } catch (e) {
+        continue;
+      }
     }
   }
   return good >= 3;
@@ -6575,6 +6741,16 @@ function applyInitialConditions(sol, y, x, ics, consts, out) {
     const at = subsS(d, x, ic.point);
     rows.push(consts.map((c) => simp(diffS(at, c))));
     rhs.push(simp(sSub(ic.value, subsMany(at, zero))));
+  }
+  if (consts.length === 1 && varsOfS(rows[0][0]).has(consts[0])) {
+    // the constant enters non-linearly (for example y = K/(K - 1) with K = C1 e^x): solve  y(point) = value  for it
+    let d = sol;
+    for (let k = 0; k < ics[0].order; k++) d = diffS(d, x);
+    const at = subsS(d, x, ics[0].point);
+    const roots = solveLiteralFor(at, ics[0].value, consts[0]) || [];
+    const good = roots.filter((r) => !Array.from(varsOfS(r)).length);
+    if (!good.length) throw new MathError('the initial condition does not determine the constant');
+    return subsMany(sol, new Map([[consts[0], good[0]]]));
   }
   const vals = solveLinearS(rows, rhs);
   if (!vals) throw new MathError('the initial conditions do not determine the constants');
@@ -6722,6 +6898,9 @@ const decimalOrExact = (v) => {
   return fr ? sN(new Q(BigInt(fr.p), BigInt(fr.q))) : decimalS(v);
 };
 
+/** ln|u| -> ln u: an integrating factor only has to be some non-zero multiple of e^(integral), so the sign can go */
+const stripLnAbs = (e) => (e.k === 'f' && e.fn === 'ln' && e.a[0].k === 'f' && e.a[0].fn === 'abs' ? sFn('ln', [e.a[0].a[0]]) : e.k === '+' || e.k === '*' || e.k === '^' || e.k === 'f' ? mapS(e, stripLnAbs) : e);
+
 // ---- main entry --------------------------------------------------------------------------------------------
 function solveODEStatements(sts) {
   let readAs = sts.map(showStatement).join(';  ');
@@ -6742,6 +6921,34 @@ function solveODEStatements(sts) {
   });
   const ics = [];
   const odes = [];
+  // several unknown functions: a system
+  const depNames = [];
+  const findDeps = (n) => {
+    if (n.t === 'dvar') {
+      if (!depNames.includes(n.name)) depNames.push(n.name);
+    } else if (n.t === 'neg' || n.t === 'fact' || n.t === 'pct' || n.t === 'named') findDeps(n.a);
+    else if (n.t === 'bin') {
+      findDeps(n.a);
+      findDeps(n.b);
+    } else if (n.t === 'call') n.args.forEach(findDeps);
+  };
+  sts.forEach((s) => {
+    findDeps(s.lhs);
+    findDeps(s.rhs);
+  });
+  if (depNames.length >= 2) {
+    const sysIcs = [];
+    const sysOdes = [];
+    sts.forEach((st) => {
+      const ic = parseSystemIC(st, depNames);
+      if (ic) sysIcs.push(ic);
+      else sysOdes.push(st);
+    });
+    const sysOut = newOut();
+    sysOut.work.push('Type: system of ' + sysOdes.length + ' linear differential equations with constant coefficients (eigenvalues and eigenvectors of the matrix)');
+    odeSystemSolve(sts, sysOdes, sysIcs, sysOut);
+    return { readAs: sts.map((st) => (parseSystemIC(st, depNames) ? st.lhs.a.name + '(' + showRaw(st.lhs.b) + ') = ' + showRaw(st.rhs) : showStatement(st))).join(';  '), out: sysOut };
+  }
   for (const st of sts) {
     const ic = parseInitialCondition(st, y);
     if (ic) ics.push(ic);
@@ -6779,7 +6986,7 @@ function solveODEStatements(sts) {
   }
   let g = F;
   if (linear) {
-    for (let k = 0; k <= n; k++) g = simp(sSub(g, sMul([cks[k], sV(ysym(k))])));
+    for (let k = 0; k <= n; k++) g = simp(expandS(sSub(g, sMul([cks[k], sV(ysym(k))]))));
     if (hasY(g)) linear = false;
   }
   const consts = [];
@@ -6795,7 +7002,7 @@ function solveODEStatements(sts) {
       const q = simp(sDiv(sNeg(g), a1));
       const P = antiderivative(p, x) || (freeOf(p, x) ? sMul([p, sV(x)]) : null);
       if (!P) throw new MathError('I could not integrate the coefficient of y to build the integrating factor');
-      const mu = sExp(P);
+      const mu = sExp(stripLnAbs(P));
       const integrand = simp(sMul([mu, q]));
       const I = isNumVal(integrand, 0) ? S0 : antiderivative(integrand, x);
       if (!I) throw new MathError('I could not integrate (integrating factor) \u00d7 (right-hand side)');
@@ -6813,57 +7020,110 @@ function solveODEStatements(sts) {
       out.work.push('Characteristic equation: ' + polyText(cs, 'r') + ' = 0   (roots: ' + roots.map((r) => (r.im ? fmtS(r.re) + ' \u00b1 ' + fmtS(r.im) + 'i' : fmtS(r.re)) + (r.mult > 1 ? ' (\u00d7' + r.mult + ')' : '')).join(', ') + ')');
       let yp = S0;
       if (!isNumVal(simp(g), 0)) {
-        const rhs = simp(sNeg(g));
+        const rhs = simp(expandS(hyperToExp(simp(sNeg(g)))));
         yp = undeterminedCoefficients(cs, rhs, x);
-        if (!yp) throw new MathError('I can handle forcing terms made of polynomials, exponentials, sines and cosines (and products of them)');
-        out.work.push('Particular solution (undetermined coefficients): ' + fmtS(yp));
+        if (yp) out.work.push('Particular solution (undetermined coefficients): ' + fmtS(yp));
+        else if (n === 2) {
+          yp = variationOfParameters(basis[0], basis[1], simp(sDiv(rhs, sN(cs[2]))), x);
+          if (!yp) throw new MathError('I could not integrate the terms needed for variation of parameters');
+          out.work.push('Particular solution (variation of parameters): ' + fmtS(yp));
+        } else throw new MathError('I can handle forcing terms made of polynomials, exponentials, sines and cosines (and products of them); order 2 also any forcing whose integrals I can find');
       }
       sol = sAdd([yh, yp]);
+    } else if (n === 2) {
+      const eu = eulerCauchy(cks, simp(g), x, consts, out);
+      if (!eu) throw new MathError('linear equations of order 2 or more need constant coefficients (or the Euler form a\u00b7x\u00b2\u00b7y\'\' + b\u00b7x\u00b7y\' + c\u00b7y = 0)');
+      sol = eu.sol;
     } else {
-      throw new MathError('linear equations of order 2 or more need constant coefficients here');
+      throw new MathError('linear equations of order 3 or more need constant coefficients here');
     }
   } else if (n === 1) {
     // y' = h(x, y)? separable?
     const cp = simp(diffS(F, ysym(1)));
     const rest = simp(sSub(F, sMul([cp, sV(ysym(1))])));
-    if (hasY(cp) && cp.k !== 'n') throw new MathError('I can only solve this first-order equation when it can be written y\' = f(x)\u00b7g(y)');
+    let nonSep = hasY(cp) && cp.k !== 'n';
     const h = simp(sDiv(sNeg(rest), cp));
     const fx = [];
     const gy = [];
-    for (const f of h.k === '*' ? h.a : [h]) {
+    for (const f of nonSep ? [] : h.k === '*' ? h.a : [h]) {
       const dx = !freeOf(f, x);
       const dy = Array.from(varsOfS(f)).includes(y);
-      if (dx && dy) throw new MathError('this equation is not separable (y\' = f(x)\u00b7g(y)); other methods are not available');
+      if (dx && dy) {
+        nonSep = true;
+        break;
+      }
       if (dy) gy.push(f);
       else fx.push(f);
     }
+    if (nonSep) {
+      const special = firstOrderSpecial(F, cp, rest, h, y, x, consts, out);
+      if (!special) throw new MathError('this equation is not separable, linear, Bernoulli, homogeneous or exact; other methods are not available');
+      if (special.implicit) return { readAs, out };
+      sol = special.sol;
+      sepAlt = special.alt || [];
+    } else {
     const fxS = sMul(fx);
     const gyS = sMul(gy);
     const Y = '$y';
     const gyv = subsS(gyS, y, sV(Y));
     const Gy = antiderivative(simp(sPow(gyv, SM1)), Y);
     const Fx = antiderivative(fxS, x) || (freeOf(fxS, x) ? sMul([fxS, sV(x)]) : null);
-    if (!Gy || !Fx) throw new MathError('I could not integrate one side of the separated equation');
-    consts.push(C(1));
-    out.work.push('Separable: \u222b dy/g(y) = \u222b f(x) dx   with g(y) = ' + fmtS(gyS) + ', f(x) = ' + fmtS(fxS));
-    // try to solve for y explicitly
-    const G = subsS(Gy, Y, sV(y));
-    const R = sAdd([Fx, sV(C(1))]);
-    const cands = solveSeparable(G, R, y, x, Fx).filter((c) => odeResidualOk(F, y, x, c));
-    if (!cands.length) {
-      out.answer.push(fmtS(G) + ' = ' + fmtS(R));
-      out.notes.push('The solution is given implicitly; I could not solve it for y in closed form.');
-      return { readAs, out };
+    // an explicit solution from another method (Bernoulli, ...) is preferred to an implicit one, or to none
+    const viaSpecial = () => {
+      const keep = [out.answer.length, out.work.length, out.notes.length, consts.slice()];
+      const sp = firstOrderSpecial(F, cp, rest, h, y, x, consts, out);
+      if (sp && !sp.implicit) return sp;
+      out.answer.length = keep[0];
+      out.work.length = keep[1];
+      out.notes.length = keep[2];
+      consts.length = 0;
+      keep[3].forEach((c) => consts.push(c));
+      return null;
+    };
+    let special = null;
+    if (!Gy || !Fx) {
+      special = viaSpecial();
+      if (!special) throw new MathError('I could not integrate one side of the separated equation');
+    } else {
+      consts.push(C(1));
+      out.work.push('Separable: \u222b dy/g(y) = \u222b f(x) dx   with g(y) = ' + fmtS(gyS) + ', f(x) = ' + fmtS(fxS));
+      // try to solve for y explicitly
+      const G = subsS(Gy, Y, sV(y));
+      const R = sAdd([Fx, sV(C(1))]);
+      const cands = solveSeparable(G, R, y, x, Fx).filter((c) => odeResidualOk(F, y, x, c));
+      if (!cands.length) {
+        const workKeep = out.work.length;
+        special = viaSpecial();
+        if (!special) {
+          out.work.length = workKeep;
+          out.answer.push(fmtS(G) + ' = ' + fmtS(R));
+          out.notes.push('The solution is given implicitly; I could not solve it for y in closed form.');
+          return { readAs, out };
+        }
+        const sepAt = out.work.findIndex((w) => /^Separable:/.test(w));
+        if (sepAt >= 0) out.work.splice(sepAt, 1);
+      } else {
+        sol = cands[0];
+        sepAlt = cands.slice(1);
+      }
     }
-    sol = cands[0];
-    sepAlt = cands.slice(1);
+    if (special) {
+      sol = special.sol;
+      sepAlt = special.alt || [];
+    }
+    }
   } else {
     throw new MathError('I can solve first-order linear or separable equations and linear equations with constant coefficients');
   }
   sol = simp(sol);
+  consts.splice(0, consts.length, ...new Set(consts));
   // an arbitrary constant absorbs the sign:  C1*|x|  ->  C1*x
   const dropAbs = (e) => (e.k === 'f' && e.fn === 'abs' ? e.a[0] : e.k === '+' || e.k === '*' || e.k === '^' || e.k === 'f' ? mapS(e, dropAbs) : e);
-  if (!ics.length) sol = simp(sAdd(termsOf(sol).map((t) => (Array.from(varsOfS(t)).some((v) => /^C\d+$/.test(v)) ? dropAbs(t) : t))));
+  const dropAbsInC = (e) => simp(sAdd(termsOf(e).map((t) => (Array.from(varsOfS(t)).some((v) => /^C\d+$/.test(v)) ? dropAbs(t) : t))));
+  if (!ics.length) {
+    sol = dropAbsInC(sol);
+    sepAlt = sepAlt.map((a) => dropAbsInC(simp(a)));
+  }
   if (ics.length) {
     if (consts.length !== ics.length) throw new MathError('this equation needs ' + consts.length + ' initial condition' + (consts.length === 1 ? '' : 's') + ' but ' + ics.length + ' were given');
     const options = [sol].concat(sepAlt);
@@ -6907,6 +7167,29 @@ function solveSeparable(G, R, y, x, Fx) {
   const g0 = simp(G);
   const lnTerm = g0.k === '+' ? null : splitCoef(g0);
   if (lnTerm && lnTerm[1].k === 'f' && lnTerm[1].fn === 'ln') cands.push(sMul([C1, sExp(sDiv(Fx, sN(lnTerm[0])))]));
+  // c ln|u1| - c ln|u2| = R with u1, u2 linear in y  ->  u1 = K u2,  K = C1 e^(Fx/c)
+  const lnPair = termsOf(g0).map(splitCoef);
+  if (lnPair.length === 2 && lnPair.every(([c, t]) => c instanceof Q && t.k === 'f' && t.fn === 'ln') && lnPair[0][0].add(lnPair[1][0]).isZero()) {
+    const bare = (t) => (t.a[0].k === 'f' && t.a[0].fn === 'abs' ? t.a[0].a[0] : t.a[0]);
+    const p1 = polyCoeffsS(bare(lnPair[0][1]), y);
+    const p2 = polyCoeffsS(bare(lnPair[1][1]), y);
+    if (p1 && p2 && p1.length <= 2 && p2.length <= 2 && p1.length + p2.length >= 3) {
+      const K = sMul([C1, sExp(sDiv(Fx, sN(lnPair[0][0])))]);
+      const [b1, a1] = [p1[0], p1[1] || S0];
+      const [b2, a2] = [p2[0], p2[1] || S0];
+      cands.push(sDiv(sSub(sMul([K, b2]), b1), sSub(a1, sMul([K, a2]))));
+    }
+  }
+  if (lnTerm && lnTerm[0] instanceof Q && lnTerm[1].k === 'f' && lnTerm[1].fn === 'ln') {
+    const inner = lnTerm[1].a[0].k === 'f' && lnTerm[1].a[0].fn === 'abs' ? lnTerm[1].a[0].a[0] : lnTerm[1].a[0];
+    const pq = polyCoeffsS(inner, y);
+    if (pq && pq.length === 3) {
+      const E = sMul([C1, sExp(sDiv(Fx, sN(lnTerm[0])))]);
+      const disc = sSub(sMul([pq[1], pq[1]]), sMul([sI(4), pq[2], sSub(pq[0], E)]));
+      const r = sSqrt(disc);
+      cands.push(sDiv(sAdd([sNeg(pq[1]), r]), sMul([sI(2), pq[2]])), sDiv(sSub(sNeg(pq[1]), r), sMul([sI(2), pq[2]])));
+    }
+  }
   const cf = polyCoeffsS(G, y);
   if (cf && cf.length === 2 && freeOf(cf[1], y)) cands.push(sDiv(sSub(R, cf[0]), cf[1]));
   if (cf && cf.length === 3 && isNumVal(cf[1], 0)) {
@@ -6926,6 +7209,1598 @@ function solveSeparable(G, R, y, x, Fx) {
     }
   }
   return cands;
+}
+// ======================================================================
+// 9f. Applications of calculus: tangent lines, critical points, full function analysis,
+//     area between curves, volumes of revolution, arc length, Newton's method,
+//     implicit differentiation, inverse functions, composition, domain.
+// ======================================================================
+const bpText = (b) => (b.S ? fmtS(simp(b.S)) : fmtNum(b.val));
+const bpVal = (b) => b.val;
+function rootS(r) {
+  if (r.q) return sN(r.q);
+  if (r.text) {
+    try {
+      return simp(fromAst(parseExpression(normalizeText(r.text))));
+    } catch (e) {
+      return null;
+    }
+  }
+  return null;
+}
+/** Real zeros of S(x) as {S (exact when known), val}; exact for rational functions, scanned numerically on [lo, hi] otherwise. */
+function realRootsOf(S, x, lo, hi) {
+  let rf = null;
+  try {
+    rf = toRFS(expandS(S), x);
+  } catch (e) {
+    if (!(e instanceof NotAlgebraic)) throw e;
+  }
+  if (rf && rf.n.length <= 14) {
+    if (rf.n.length === 1) return [];
+    const pr = polyRoots(rf.n);
+    const dr = rf.d.length > 1 ? polyRoots(rf.d).real.map((r) => r.val) : [];
+    return pr.real.filter((r) => !dr.some((d) => Math.abs(d - r.val) < 1e-9)).map((r) => ({ S: rootS(r), val: r.val })).filter((r) => (lo === undefined || r.val >= lo - 1e-9) && (hi === undefined || r.val <= hi + 1e-9));
+  }
+  const a = lo === undefined ? -10 : lo;
+  const b = hi === undefined ? 10 : hi;
+  const f = (t) => {
+    try {
+      return numS(S, { [x]: t });
+    } catch (e) {
+      return NaN;
+    }
+  };
+  const N = 6000;
+  const xs = [];
+  const ys = [];
+  for (let i = 0; i <= N; i++) {
+    const t = a + ((b - a) * i) / N;
+    xs.push(t);
+    ys.push(f(t));
+  }
+  const scale = Math.max(1e-12, ...ys.filter(isFinite).map(Math.abs).sort((p, q) => p - q).slice(0, Math.floor(ys.length * 0.98) || 1));
+  const roots = [];
+  for (let i = 0; i < N; i++) {
+    const y0 = ys[i];
+    const y1 = ys[i + 1];
+    if (!isFinite(y0) || !isFinite(y1)) continue;
+    if (y0 === 0) {
+      if (i === 0 || ys[i - 1] !== 0) roots.push(xs[i]);
+    } else if (y0 * y1 < 0 && Math.abs(y0) + Math.abs(y1) < scale * 4) roots.push(bisectRoot(f, xs[i], xs[i + 1]));
+    if (roots.length > 120) break;
+  }
+  // touching zeros (even multiplicity): local extrema with |value| ~ 0
+  for (let i = 1; i < N; i++) {
+    if (!isFinite(ys[i - 1]) || !isFinite(ys[i]) || !isFinite(ys[i + 1])) continue;
+    const m = Math.abs(ys[i]);
+    if (ys[i - 1] === 0 && ys[i] === 0 && ys[i + 1] === 0) continue; // a flat stretch of zeros is not a touching zero
+    if (roots.length > 120) break;
+    if (m < scale * 1e-7 && m <= Math.abs(ys[i - 1]) && m <= Math.abs(ys[i + 1]) && ys[i - 1] * ys[i + 1] >= 0) {
+      let l = xs[i - 1];
+      let h = xs[i + 1];
+      for (let it = 0; it < 60; it++) {
+        const c1 = l + (h - l) / 3;
+        const c2 = h - (h - l) / 3;
+        if (Math.abs(f(c1)) < Math.abs(f(c2))) h = c2;
+        else l = c1;
+      }
+      const t = (l + h) / 2;
+      if (Math.abs(f(t)) < scale * 1e-9) roots.push(t);
+    }
+  }
+  roots.sort((p, q) => p - q);
+  const uniq = roots.filter((r, k) => k === 0 || Math.abs(r - roots[k - 1]) > (b - a) * 1e-7);
+  return uniq.map((val) => {
+    const rec = recognize(val);
+    let S2 = null;
+    if (rec && Math.abs(rec.val - val) < 1e-9 * Math.max(1, Math.abs(val))) {
+      try {
+        S2 = simp(fromAst(parseExpression(normalizeText(rec.text))));
+        if (Math.abs(numS(S2, {}) - val) > 1e-9 * Math.max(1, Math.abs(val))) S2 = null;
+      } catch (e) {
+        S2 = null;
+      }
+    }
+    return { S: S2, val: S2 ? numS(S2, {}) : val };
+  });
+}
+const valueAt = (S, x, b) => {
+  try {
+    if (b.S) {
+      let s = simp(subsS(S, x, b.S));
+      try {
+        s = simp(expandS(s));
+      } catch (e) {
+        // keep the unexpanded form
+      }
+      if (isFinite(numS(s, {}))) return { S: s, val: numS(s, {}) };
+    }
+    const v = numS(S, { [x]: b.val });
+    return isFinite(v) ? { S: null, val: v } : null;
+  } catch (e) {
+    return null;
+  }
+};
+const valText = (v) => (v.S ? fmtS(simp(v.S)) : fmtNum(v.val));
+const pointText = (b, v) => '(' + bpText(b) + ', ' + valText(v) + ')' + (b.S && b.S.k !== 'n' ? ' \u2248 (' + fmtNum(b.val) + ', ' + fmtNum(v.val) + ')' : v.S && v.S.k !== 'n' ? ' \u2248 (' + fmtNum(b.val) + ', ' + fmtNum(v.val) + ')' : '');
+function evalAt(S, x, t) {
+  try {
+    return numS(S, { [x]: t });
+  } catch (e) {
+    return NaN;
+  }
+}
+/** Signs of g on the intervals between the sorted breakpoints (sampled at midpoints). */
+function signIntervals(g, x, bps) {
+  const vals = bps.map(bpVal);
+  const pts = [-Infinity].concat(vals, [Infinity]);
+  const res = [];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const lo = pts[i];
+    const hi = pts[i + 1];
+    const mid = lo === -Infinity ? (hi === Infinity ? 0 : hi - 1 - Math.abs(hi) * 0.5) : hi === Infinity ? lo + 1 + Math.abs(lo) * 0.5 : (lo + hi) / 2;
+    const v = evalAt(g, x, mid);
+    res.push({ lo, hi, loB: i === 0 ? null : bps[i - 1], hiB: i === pts.length - 2 ? null : bps[i], sign: v > 1e-12 ? 1 : v < -1e-12 ? -1 : 0 });
+  }
+  return res;
+}
+const ivText = (iv) => '(' + (iv.loB ? bpText(iv.loB) : '-\u221e') + ', ' + (iv.hiB ? bpText(iv.hiB) : '\u221e') + ')';
+const joinIv = (ivs, sign) => {
+  const list = ivs.filter((i) => i.sign === sign);
+  return list.length ? list.map(ivText).join(' \u222a ') : 'none';
+};
+/** Merge neighbouring intervals with the same sign whose shared breakpoint is not a break of the function. */
+function mergeIv(ivs, skip) {
+  const out = [];
+  ivs.forEach((iv) => {
+    const last = out[out.length - 1];
+    if (last && last.sign === iv.sign && iv.loB && !skip(iv.loB)) {
+      last.hi = iv.hi;
+      last.hiB = iv.hiB;
+    } else out.push({ ...iv });
+  });
+  return out;
+}
+function funcArgs(n, lo, hi, usage) {
+  needArgs(n, lo, hi, usage);
+  const S = fromAst(n.args[0]);
+  const v = n.args[1] && n.args[1].t === 'var' ? varOfArg(n.args[1]) : singleVarOf(S);
+  return { S, v };
+}
+/** Poles of S: zeros of the denominator that are not cancelled (rational functions only). */
+function polesOf(S, x) {
+  try {
+    const rf = toRFS(expandS(S), x);
+    if (rf.d.length <= 1) return [];
+    return polyRoots(rf.d).real.map((r) => ({ S: rootS(r), val: r.val }));
+  } catch (e) {
+    if (e instanceof NotAlgebraic) return [];
+    throw e;
+  }
+}
+
+// ---- tangent and normal lines -----------------------------------------------------------------------------------------------
+defCmd('tangent tangentline', (n) => {
+  needArgs(n, 2, 3, 'f, optionally the variable, and the point');
+  const S = fromAst(n.args[0]);
+  const hasVar = n.args.length === 3;
+  const v = hasVar ? varOfArg(n.args[1]) : singleVarOf(S);
+  const aS = geoVal(n.args[hasVar ? 2 : 1]);
+  const d = diffS(S, v);
+  const y0 = simp(subsS(S, v, aS));
+  const m = simp(subsS(d, v, aS));
+  if (!isFinite(numS(y0, {})) || !isFinite(numS(m, {}))) throw new MathError('the function or its derivative is not defined at that point');
+  const out = newOut();
+  const X = sV(v);
+  const tl = simp(sAdd([y0, sMul([m, sSub(X, aS)])]));
+  out.answer.push('tangent line: y = ' + fmtS(expandS(tl)));
+  out.work.push('f(' + fmtS(aS) + ') = ' + symText(y0) + ',  f\'(' + fmtS(aS) + ') = ' + symText(m) + ',  point-slope form: y \u2212 ' + wrapNum(y0) + ' = ' + wrapNum(m) + '\u00b7(' + v + ' \u2212 ' + wrapNum(aS) + ')');
+  if (zeroS(m)) out.answer.push('normal line: ' + v + ' = ' + fmtS(aS) + '  (vertical, because the tangent is horizontal)');
+  else out.answer.push('normal line: y = ' + fmtS(expandS(simp(sAdd([y0, sMul([sNeg(sDiv(S1, m)), sSub(X, aS)])])))));
+  out.value = { S: m };
+  return out;
+});
+
+// ---- critical points, extrema and full analysis --------------------------------------------------------------------------------
+function classifyCritical(f1, f2, x, b) {
+  const s2 = valueAt(f2, x, b);
+  if (s2 && s2.val > 1e-9) return 'local minimum';
+  if (s2 && s2.val < -1e-9) return 'local maximum';
+  const h = 1e-4 * Math.max(1, Math.abs(b.val));
+  const l = evalAt(f1, x, b.val - h);
+  const r = evalAt(f1, x, b.val + h);
+  if (l < 0 && r > 0) return 'local minimum';
+  if (l > 0 && r < 0) return 'local maximum';
+  return 'neither a maximum nor a minimum (the slope keeps its sign)';
+}
+function criticalReport(S, x, lo, hi, out) {
+  const f1 = diffS(S, x);
+  const f2 = diffS(f1, x);
+  const bounded = lo !== undefined;
+  const roots = realRootsOf(f1, x, lo, hi);
+  out.work.push("f'(" + x + ') = ' + fmtS(simp(f1)));
+  if (!roots.length) out.answer.push('no critical points' + (bounded ? ' inside the interval' : ' (f\' = 0 has no real solution)'));
+  const rows = roots.map((b) => ({ b, v: valueAt(S, x, b) })).filter((r) => r.v);
+  rows.forEach(({ b, v }) => {
+    out.answer.push(x + ' = ' + bpText(b) + (b.S && b.S.k !== 'n' ? ' (\u2248 ' + fmtNum(b.val) + ')' : '') + ':  f = ' + valText(v) + (v.S && v.S.k !== 'n' ? ' (\u2248 ' + fmtNum(v.val) + ')' : '') + ',  ' + classifyCritical(f1, f2, x, b));
+  });
+  if (bounded) {
+    const ends = [lo, hi].map((t) => ({ b: { S: null, val: t }, v: valueAt(S, x, { S: sN(qFromDecimalNumber(t)), val: t }) })).filter((r) => r.v);
+    const all = rows.concat(ends);
+    if (all.length) {
+      const mx = all.reduce((p, q) => (q.v.val > p.v.val ? q : p));
+      const mn = all.reduce((p, q) => (q.v.val < p.v.val ? q : p));
+      const approx = (v) => (v.S && v.S.k !== 'n' ? ' (\u2248 ' + fmtNum(v.val) + ')' : '');
+      out.answer.push('absolute maximum on [' + fmtNum(lo) + ', ' + fmtNum(hi) + ']: f(' + bpText(mx.b) + ') = ' + valText(mx.v) + approx(mx.v));
+      out.answer.push('absolute minimum on [' + fmtNum(lo) + ', ' + fmtNum(hi) + ']: f(' + bpText(mn.b) + ') = ' + valText(mn.v) + approx(mn.v));
+      out.work.push('Compared f at the critical points and at the endpoints ' + fmtNum(lo) + ' and ' + fmtNum(hi));
+    }
+  }
+  return { f1, f2, rows };
+}
+function qFromDecimalNumber(t) {
+  const fr = toFraction(t, 1000000);
+  return fr ? new Q(BigInt(fr.p), BigInt(fr.q)) : qFromLiteral(String(Math.abs(t))).mul(t < 0 ? qInt(-1) : Q1);
+}
+defCmd('critical criticalpoints extrema maxmin', (n) => {
+  if (n.args.length >= 3 && n.args[1].t === 'var' && n.args[2].t === 'var') return multiCritical(n);
+  const { S, v } = funcArgs(n, 1, 4, 'f, optionally the variable and an interval [a, b]');
+  let lo;
+  let hi;
+  if (n.args.length === 4) {
+    lo = numArg(n.args[2]);
+    hi = numArg(n.args[3]);
+    if (!(hi > lo)) throw new MathError('the interval must be [a, b] with a < b');
+  } else if (n.args.length === 3 && n.args[1].t !== 'var') {
+    lo = numArg(n.args[1]);
+    hi = numArg(n.args[2]);
+  }
+  const out = newOut();
+  out.work.push('Type: critical points of f(' + v + ') = ' + fmtS(S) + (lo === undefined ? '' : ' on [' + fmtNum(lo) + ', ' + fmtNum(hi) + ']'));
+  criticalReport(S, v, lo, hi, out);
+  if (lo === undefined && !varsOfS(S).has(v)) throw new MathError('the function does not contain ' + v);
+  return out;
+});
+defCmd('inflection inflectionpoints', (n) => {
+  const { S, v } = funcArgs(n, 1, 2, 'f and optionally the variable');
+  const f2 = diffS(diffS(S, v), v);
+  const f3 = diffS(f2, v);
+  const out = newOut();
+  const roots = realRootsOf(f2, v);
+  out.work.push("f''(" + v + ') = ' + fmtS(simp(f2)));
+  let found = 0;
+  roots.forEach((b) => {
+    const val = valueAt(S, v, b);
+    if (!val) return;
+    const h = 1e-4 * Math.max(1, Math.abs(b.val));
+    const l = evalAt(f2, v, b.val - h);
+    const r = evalAt(f2, v, b.val + h);
+    if (l * r < 0) {
+      found++;
+      out.answer.push('inflection point at ' + pointText(b, val) + '  (concavity changes from ' + (l > 0 ? 'up to down' : 'down to up') + ')');
+    }
+  });
+  if (!found) out.answer.push('no inflection points');
+  return out;
+});
+defCmd('analyze analysis studyfunction', (n) => {
+  const { S, v } = funcArgs(n, 1, 2, 'f and optionally the variable');
+  const out = newOut();
+  out.answer.push('f(' + v + ') = ' + fmtS(S));
+  const poles = polesOf(S, v);
+  let rational = true;
+  try {
+    toRFS(expandS(S), v);
+  } catch (e) {
+    rational = false;
+  }
+  // domain
+  const dom = domainOf(S, v);
+  out.answer.push('domain: ' + dom);
+  // intercepts
+  const y0 = valueAt(S, v, { S: S0, val: 0 });
+  out.answer.push('y-intercept: ' + (y0 ? '(0, ' + valText(y0) + ')' : 'none (not defined at 0)'));
+  const zeros = realRootsOf(S, v, rational ? undefined : -50, rational ? undefined : 50);
+  out.answer.push('x-intercepts: ' + (zeros.length ? zeros.slice(0, 10).map((b) => '(' + bpText(b) + ', 0)').join(', ') : 'none') + (rational ? '' : '  (searched between -50 and 50)'));
+  // asymptotes
+  const asy = [];
+  poles.forEach((b) => {
+    const L = limitOf(S, v, { S: b.S || decimalS(b.val) }, -1);
+    const R = limitOf(S, v, { S: b.S || decimalS(b.val) }, 1);
+    asy.push('vertical: ' + v + ' = ' + bpText(b) + ' (from the left ' + limitText(L).replace(/ \(.*/, '') + ', from the right ' + limitText(R).replace(/ \(.*/, '') + ')');
+  });
+  ['+', '-'].forEach((sg) => {
+    const r = limitOf(S, v, { inf: sg === '+' ? 1 : -1 }, 0);
+    if (r.kind === 'value') asy.push('horizontal: y = ' + limitText(r).replace(/ \(.*/, '') + '  (as ' + v + ' \u2192 ' + (sg === '+' ? '\u221e' : '-\u221e') + ')');
+  });
+  try {
+    const rf = toRFS(expandS(S), v);
+    if (rf.n.length - rf.d.length === 1 && rf.d.length > 1) {
+      const [q] = pdivmod(rf.n, rf.d);
+      asy.push('slant: y = ' + polyText(q, v));
+    }
+  } catch (e) {
+    // not a rational function
+  }
+  out.answer.push('asymptotes: ' + (asy.length ? asy.join(';  ') : 'none'));
+  // critical points
+  const f1 = diffS(S, v);
+  const f2 = diffS(f1, v);
+  const crit = realRootsOf(f1, v, rational ? undefined : -50, rational ? undefined : 50);
+  const critRows = crit.map((b) => ({ b, v: valueAt(S, v, b) })).filter((r) => r.v);
+  const polesNum = poles.map((p) => p);
+  const ivsRaw = signIntervals(f1, v, critRows.map((r) => r.b).concat(polesNum).sort((p, q) => p.val - q.val));
+  const isPole = (b) => polesNum.some((p) => Math.abs(p.val - b.val) < 1e-9);
+  critRows.forEach(({ b, v: val }) => out.answer.push('critical point ' + pointText(b, val) + ': ' + classifyCritical(f1, f2, v, b)));
+  if (!critRows.length) out.answer.push('critical points: none');
+  const mergedInc = mergeSame(ivsRaw, 1, (b) => isPole(b));
+  const mergedDec = mergeSame(ivsRaw, -1, (b) => isPole(b));
+  out.answer.push('increasing on: ' + (mergedInc.length ? mergedInc.join(' \u222a ') : 'nowhere'));
+  out.answer.push('decreasing on: ' + (mergedDec.length ? mergedDec.join(' \u222a ') : 'nowhere'));
+  // inflection and concavity
+  const infl = realRootsOf(f2, v, rational ? undefined : -50, rational ? undefined : 50);
+  const inflRows = [];
+  infl.forEach((b) => {
+    const val = valueAt(S, v, b);
+    if (!val) return;
+    const h = 1e-4 * Math.max(1, Math.abs(b.val));
+    if (evalAt(f2, v, b.val - h) * evalAt(f2, v, b.val + h) < 0) inflRows.push({ b, v: val });
+  });
+  out.answer.push('inflection points: ' + (inflRows.length ? inflRows.map((r) => pointText(r.b, r.v)).join(', ') : 'none'));
+  const cBps = inflRows.map((r) => r.b).concat(polesNum).sort((p, q) => p.val - q.val);
+  const cIv = signIntervals(f2, v, cBps);
+  const isBreak = (b) => isPole(b);
+  out.answer.push('concave up on: ' + (mergeSame(cIv, 1, isBreak).join(' \u222a ') || 'nowhere'));
+  out.answer.push('concave down on: ' + (mergeSame(cIv, -1, isBreak).join(' \u222a ') || 'nowhere'));
+  out.work.push("f'(" + v + ') = ' + fmtS(simp(f1)) + ";  f''(" + v + ') = ' + fmtS(simp(f2)));
+  if (!rational) out.notes.push('For this kind of function zeros, extrema and inflection points were searched numerically between -50 and 50.');
+  return out;
+});
+/** Text of the intervals with the given sign; neighbours with the same sign merge unless a break (pole) lies between them. */
+function mergeSame(ivs, sign, isBreak) {
+  const groups = [];
+  let cur = null;
+  ivs.forEach((iv) => {
+    if (iv.sign === sign) {
+      if (cur && iv.loB && !isBreak(iv.loB) && cur.hiB === iv.loB) {
+        cur.hiB = iv.hiB;
+      } else {
+        cur = { loB: iv.loB, hiB: iv.hiB };
+        groups.push(cur);
+      }
+    } else cur = null;
+  });
+  return groups.map((g) => '(' + (g.loB ? bpText(g.loB) : '-\u221e') + ', ' + (g.hiB ? bpText(g.hiB) : '\u221e') + ')');
+}
+
+// ---- domain -------------------------------------------------------------------------------------------------------------------------
+/** Restrictions from denominators, even roots, logarithms and inverse trig functions. */
+function domainConditions(S, x, acc) {
+  const walk = (e) => {
+    if (freeOf(e, x)) return;
+    if (e.k === '^') {
+      if (e.e.k === 'n' && e.e.q.sign() < 0 && !freeOf(e.b, x)) acc.push({ expr: e.b, op: '!=' });
+      if (e.e.k === 'n' && !e.e.q.isInt() && e.e.q.d % 2n === 0n && !freeOf(e.b, x)) acc.push({ expr: e.b, op: e.e.q.sign() < 0 ? '>' : '>=' });
+      if (!freeOf(e.e, x)) {
+        // a^g(x): a > 0 is needed only when a is symbolic; ignored for numeric bases
+      }
+      walk(e.b);
+      walk(e.e);
+    } else if (e.k === 'f') {
+      const a = e.a[0];
+      if (e.fn === 'ln' && !freeOf(a, x)) acc.push({ expr: a, op: '>' });
+      if ((e.fn === 'asin' || e.fn === 'acos') && !freeOf(a, x)) {
+        acc.push({ expr: sSub(S1, a), op: '>=' });
+        acc.push({ expr: sAdd([S1, a]), op: '>=' });
+      }
+      if (e.fn === 'tan' && !freeOf(a, x)) acc.push({ expr: sFn('cos', [a]), op: '!=' });
+      e.a.forEach(walk);
+    } else if (e.k === '+' || e.k === '*') e.a.forEach(walk);
+  };
+  walk(S);
+  return acc;
+}
+function domainOf(S, x) {
+  const conds = domainConditions(S, x, []);
+  if (!conds.length) return 'all real numbers';
+  const seen = new Set();
+  const uniq = conds.filter((c) => {
+    const k = c.op + '|' + key(c.expr);
+    return seen.has(k) ? false : seen.add(k);
+  });
+  if (uniq.some((c) => c.expr.k === 'f')) return 'all real numbers except where ' + uniq.map((c) => fmtS(c.expr) + ' ' + c.op + ' 0').join(' and ') + ' fails';
+  try {
+    const parsed = uniq.map((c) => ({ lhs: sAst(simp(c.expr)), op: c.op, rhs: { t: 'num', q: Q0, f: 0, text: '0' } }));
+    const res = solveInequalities(parsed, x);
+    const line = res.answer.find((a) => /\u2208/.test(a));
+    const text = line ? line.replace(/^.*?\u2208\s*/, '').replace(/\s*\(interval notation\)\s*$/, '') : res.answer.join('  ');
+    return text || 'all real numbers';
+  } catch (e) {
+    if (e instanceof MathError) return 'where ' + uniq.map((c) => fmtS(simp(c.expr)) + ' ' + c.op + ' 0').join(' and ');
+    throw e;
+  }
+}
+defCmd('domain', (n) => {
+  const { S, v } = funcArgs(n, 1, 2, 'f and optionally the variable');
+  const out = newOut();
+  out.answer.push('domain: ' + domainOf(S, v));
+  out.work.push('Conditions: denominators \u2260 0, even roots \u2265 0, logarithms > 0, arcsin/arccos arguments in [-1, 1]');
+  return out;
+});
+
+// ---- integrals as applications ----------------------------------------------------------------------------------------------------
+/** \u222b S dv from lo to hi (S objects, or {inf}); {S} when exact, {num} otherwise. */
+function integralValue(S, v, lo, hi) {
+  const a = boundNum(lo);
+  const b = boundNum(hi);
+  const num = integrateNumeric(S, v, a, b);
+  if (num.diverges) return { diverges: true };
+  const F = antiderivative(S, v);
+  let exact = null;
+  if (F) {
+    try {
+      const top = endValue(F, v, hi, -1);
+      const bot = endValue(F, v, lo, 1);
+      if (top && bot) exact = simp(sSub(top, bot));
+    } catch (e) {
+      exact = null;
+    }
+    if (exact) {
+      const ev = numS(exact, {});
+      if (!isFinite(ev) || (num.ok && Math.abs(ev - num.value) > 1e-6 * (1 + Math.abs(num.value)))) exact = null;
+    }
+  }
+  if (exact) return { S: exact, num: numS(exact, {}) };
+  if (num.ok) return { num: num.value };
+  return { failed: true };
+}
+function integralLine(label, r) {
+  if (r.diverges) return label + ' = \u221e (the integral diverges)';
+  if (r.failed) throw new MathError('the integral could not be evaluated');
+  if (r.S) return label + ' = ' + symText(r.S);
+  const rec = recognizeLoose(r.num);
+  return label + ' = ' + (rec && !(rec.rational && !rec.text.includes('/')) ? rec.text + ' (\u2248 ' + fmtNum(r.num) + ')' : '\u2248 ' + fmtNum(r.num));
+}
+const bnd = (node) => boundOf(node);
+defCmd('areabetween area_between', (n) => {
+  needArgs(n, 3, 5, 'f, g, the variable and optionally the limits a, b');
+  const f = fromAst(n.args[0]);
+  const g = fromAst(n.args[1]);
+  const v = varOfArg(n.args[2]);
+  const out = newOut();
+  let breakpoints;
+  if (n.args.length === 5) breakpoints = [{ S: geoVal(n.args[3]) }, { S: geoVal(n.args[4]) }].map((b) => ({ S: b.S, val: numS(b.S, {}) }));
+  else {
+    const roots = realRootsOf(sSub(f, g), v);
+    if (roots.length < 2) throw new MathError('the two curves meet at fewer than two points; give the limits: areabetween(f, g, ' + v + ', a, b)');
+    breakpoints = roots;
+    out.work.push('The curves meet at ' + v + ' = ' + roots.map(bpText).join(', '));
+  }
+  const diff = sSub(f, g);
+  // split the interval at every crossing so that |f \u2212 g| can be integrated piece by piece
+  const lo = breakpoints[0].val;
+  const hi = breakpoints[breakpoints.length - 1].val;
+  const inner = realRootsOf(diff, v, lo, hi).filter((b) => b.val > lo + 1e-9 && b.val < hi - 1e-9);
+  const cuts = [breakpoints[0]].concat(breakpoints.length > 2 && n.args.length < 5 ? breakpoints.slice(1, -1) : inner, [breakpoints[breakpoints.length - 1]]).sort((p, q) => p.val - q.val).filter((b, k, arr) => k === 0 || Math.abs(b.val - arr[k - 1].val) > 1e-9);
+  let total = S0;
+  let totalNum = 0;
+  let exact = true;
+  for (let i = 0; i < cuts.length - 1; i++) {
+    const mid = (cuts[i].val + cuts[i + 1].val) / 2;
+    const sgn = evalAt(diff, v, mid) >= 0 ? 1 : -1;
+    const piece = integralValue(sgn > 0 ? diff : sNeg(diff), v, { S: cuts[i].S || decimalS(cuts[i].val) }, { S: cuts[i + 1].S || decimalS(cuts[i + 1].val) });
+    if (piece.diverges || piece.failed) throw new MathError('the area could not be computed');
+    totalNum += piece.num;
+    if (piece.S && exact) total = sAdd([total, piece.S]);
+    else exact = false;
+    out.work.push('On [' + bpText(cuts[i]) + ', ' + bpText(cuts[i + 1]) + '] the ' + (sgn > 0 ? 'first' : 'second') + ' curve is on top');
+  }
+  out.answer.push(integralLine('area', exact ? { S: simp(total), num: totalNum } : { num: totalNum }));
+  out.work.push('Area = \u222b |f \u2212 g| dx between the meeting points');
+  out.value = exact ? { S: simp(total) } : { num: totalNum };
+  return out;
+});
+function revolveCmd(label, build) {
+  return (n) => {
+    const out = newOut();
+    const r = build(n, out);
+    out.answer.push(integralLine(label, r));
+    if (r.S) out.value = { S: r.S };
+    else if (r.num !== undefined) out.value = { num: r.num };
+    return out;
+  };
+}
+defCmd('volumerev volumeofrevolution', revolveCmd('volume', (n, out) => {
+  needArgs(n, 4, 5, 'f, the variable, a, b (about the x-axis), or f, g, the variable, a, b for a washer');
+  const washer = n.args.length === 5;
+  const f = fromAst(n.args[0]);
+  const g = washer ? fromAst(n.args[1]) : S0;
+  const v = varOfArg(n.args[washer ? 2 : 1]);
+  const a = bnd(n.args[washer ? 3 : 2]);
+  const b = bnd(n.args[washer ? 4 : 3]);
+  const body = washer ? sSub(sq(f), sq(g)) : sq(f);
+  out.work.push('V = \u03c0 \u222b ' + (washer ? '(f\u00b2 \u2212 g\u00b2)' : 'f\u00b2') + ' d' + v + ' from ' + intLimitsText(a, b) + '   (disk/washer method, rotating about the x-axis)');
+  const r = integralValue(body, v, a, b);
+  return r.S ? { S: simp(sMul([S_PI, r.S])), num: Math.PI * r.num } : r.num !== undefined ? { num: Math.PI * r.num } : r;
+}));
+defCmd('shells shellmethod', revolveCmd('volume', (n, out) => {
+  needArgs(n, 4, 4, 'f, the variable, a, b (rotating about the y-axis)');
+  const f = fromAst(n.args[0]);
+  const v = varOfArg(n.args[1]);
+  const a = bnd(n.args[2]);
+  const b = bnd(n.args[3]);
+  out.work.push('V = 2\u03c0 \u222b x\u00b7f(x) dx from ' + intLimitsText(a, b) + '   (cylindrical shells, rotating about the y-axis)');
+  const r = integralValue(sMul([sV(v), f]), v, a, b);
+  return r.S ? { S: simp(sMul([sI(2), S_PI, r.S])), num: 2 * Math.PI * r.num } : r.num !== undefined ? { num: 2 * Math.PI * r.num } : r;
+}));
+defCmd('arclength', revolveCmd('arc length', (n, out) => {
+  needArgs(n, 4, 4, 'f, the variable, a, b');
+  const f = fromAst(n.args[0]);
+  const v = varOfArg(n.args[1]);
+  const a = bnd(n.args[2]);
+  const b = bnd(n.args[3]);
+  const d = diffS(f, v);
+  out.work.push('L = \u222b \u221a(1 + f\'(' + v + ')\u00b2) d' + v + ' from ' + intLimitsText(a, b) + ',  f\' = ' + fmtS(simp(d)));
+  return integralValue(sSqrt(sAdd([S1, sq(d)])), v, a, b);
+}));
+defCmd('surfacearearev surfaceofrevolution', revolveCmd('surface area', (n, out) => {
+  needArgs(n, 4, 4, 'f, the variable, a, b (rotating about the x-axis)');
+  const f = fromAst(n.args[0]);
+  const v = varOfArg(n.args[1]);
+  const a = bnd(n.args[2]);
+  const b = bnd(n.args[3]);
+  const d = diffS(f, v);
+  out.work.push('S = 2\u03c0 \u222b f\u00b7\u221a(1 + f\'\u00b2) d' + v + ' from ' + intLimitsText(a, b));
+  const r = integralValue(sMul([f, sSqrt(sAdd([S1, sq(d)]))]), v, a, b);
+  return r.S ? { S: simp(sMul([sI(2), S_PI, r.S])), num: 2 * Math.PI * r.num } : r.num !== undefined ? { num: 2 * Math.PI * r.num } : r;
+}));
+defCmd('avgvalue averagevalue meanvalue', (n) => {
+  needArgs(n, 4, 4, 'f, the variable, a, b');
+  const f = fromAst(n.args[0]);
+  const v = varOfArg(n.args[1]);
+  const a = bnd(n.args[2]);
+  const b = bnd(n.args[3]);
+  if (a.inf || b.inf) throw new MathError('the interval must be finite');
+  const r = integralValue(f, v, a, b);
+  if (r.diverges || r.failed) throw new MathError('the integral could not be evaluated');
+  const width = simp(sSub(b.S, a.S));
+  const out = newOut();
+  const avg = r.S ? simp(sDiv(r.S, width)) : null;
+  out.answer.push('average value = ' + (avg ? symText(avg) : '\u2248 ' + fmtNum(r.num / numS(width, {}))));
+  out.work.push('f_avg = (1/(b \u2212 a)) \u222b f dx = (1/' + fmtS(width) + ')\u00b7' + (r.S ? wrapNum(r.S) : fmtNum(r.num)));
+  out.value = avg ? { S: avg } : { num: r.num / numS(width, {}) };
+  return out;
+});
+
+// ---- Newton's method ------------------------------------------------------------------------------------------------------------------
+defCmd('newton newtonmethod', (n) => {
+  needArgs(n, 3, 5, 'f, the variable, a starting value and optionally the number of steps');
+  const S = fromAst(n.args[0]);
+  const v = varOfArg(n.args[1]);
+  let x = numArg(n.args[2]);
+  const steps = n.args[3] ? Math.min(30, Number(intArg(n.args[3]))) : 8;
+  const d = diffS(S, v);
+  const out = newOut();
+  const rows = ['n    x_n               f(x_n)'];
+  let converged = false;
+  for (let k = 0; k <= steps; k++) {
+    const fx = evalAt(S, v, x);
+    rows.push(String(k).padEnd(5) + fmtNum(x).padEnd(18) + fmtNum(fx));
+    if (Math.abs(fx) < 1e-13) {
+      converged = true;
+      break;
+    }
+    const dx = evalAt(d, v, x);
+    if (!isFinite(dx) || dx === 0) throw new MathError('the derivative is 0 or undefined at ' + fmtNum(x) + '; choose another starting value');
+    const nx = x - fx / dx;
+    if (!isFinite(nx)) throw new MathError('the iteration left the domain of f');
+    x = nx;
+  }
+  out.answer.push('x \u2248 ' + fmtNum(x) + (converged ? '  (converged)' : '  (after ' + steps + ' steps)'));
+  rows.forEach((r) => out.work.push(r));
+  out.work.push('x_(n+1) = x_n \u2212 f(x_n)/f\'(x_n),  f\' = ' + fmtS(simp(d)));
+  out.value = { num: x };
+  return out;
+});
+
+// ---- implicit differentiation, inverse functions, composition ---------------------------------------------------------------------------
+defCmd('implicit implicitdiff', (n) => {
+  needArgs(n, 1, 4, 'F(x, y) (meaning F = 0) or F and G for F = G');
+  const two = n.args.length >= 2 && n.args[1].t !== 'var';
+  const F = two ? sSub(fromAst(n.args[0]), fromAst(n.args[1])) : fromAst(n.args[0]);
+  const names = n.args.slice(two ? 2 : 1).filter((a) => a.t === 'var').map((a) => a.name);
+  const xN = names[0] || 'x';
+  const yN = names[1] || 'y';
+  if (!varsOfS(F).has(yN)) throw new MathError('the equation does not contain ' + yN);
+  const Fx = diffS(F, xN);
+  const Fy = diffS(F, yN);
+  const y1 = simp(sDiv(sNeg(Fx), Fy));
+  const out = newOut();
+  out.answer.push('d' + yN + '/d' + xN + ' = ' + fmtS(y1));
+  out.work.push('Differentiated both sides with respect to ' + xN + ' (y depends on ' + xN + '):  d' + yN + '/d' + xN + ' = \u2212F_' + xN + ' / F_' + yN + ' = \u2212(' + fmtS(simp(Fx)) + ')/(' + fmtS(simp(Fy)) + ')');
+  try {
+    const total = simp(sAdd([diffS(y1, xN), sMul([diffS(y1, yN), y1])]));
+    const t = fmtS(total);
+    if (t.length < 160) out.answer.push('d\u00b2' + yN + '/d' + xN + '\u00b2 = ' + t + '   (y\' replaced by the expression above; the original equation can simplify it further)');
+  } catch (e) {
+    // second derivative is optional
+  }
+  out.value = { S: y1 };
+  return out;
+});
+defCmd('inversefunction finverse inverse_function', (n) => {
+  const { S, v } = funcArgs(n, 1, 2, 'f and optionally the variable');
+  const Y = sV('$y');
+  let sols = isolateVar(S, Y, v, 0);
+  if (!sols) sols = polynomialSolutions(S, Y, v);
+  if (!sols) throw new MathError('I could not solve y = ' + fmtS(S) + ' for ' + v);
+  const out = newOut();
+  const rename = (e) => simp(subsS(e, '$y', sV(v)));
+  const uniq = [];
+  sols.forEach((s) => {
+    const r = rename(simp(s));
+    if (!uniq.some((u) => key(u) === key(r))) uniq.push(r);
+  });
+  uniq.forEach((r) => out.answer.push('f\u207b\u00b9(' + v + ') = ' + fmtS(r)));
+  if (uniq.length > 1) out.notes.push('The function is not one-to-one, so there are several branches; restrict the domain to choose one.');
+  out.work.push('Swap: y = ' + fmtS(S) + ' and solve for ' + v + ', then rename y as ' + v);
+  return out;
+});
+defCmd('compose composition', (n) => {
+  needArgs(n, 2, 3, 'f, g and optionally the variable');
+  const f = fromAst(n.args[0]);
+  const g = fromAst(n.args[1]);
+  const v = n.args[2] ? varOfArg(n.args[2]) : singleVarOf(sAdd([f, g]));
+  const out = newOut();
+  const fg = simp(subsS(f, v, g));
+  const gf = simp(subsS(g, v, f));
+  out.answer.push('(f\u2218g)(' + v + ') = f(g(' + v + ')) = ' + fmtS(expandS(fg)));
+  out.answer.push('(g\u2218f)(' + v + ') = g(f(' + v + ')) = ' + fmtS(expandS(gf)));
+  return out;
+});
+// ======================================================================
+// 9g. Several variables: gradient, Hessian, Jacobian, divergence, curl, Laplacian,
+//     directional derivatives, tangent planes, critical points of f(x, y), Lagrange multipliers.
+//     Double and triple integrals are nested integrate(...) calls.
+// ======================================================================
+function varNames(args) {
+  const names = [];
+  args.forEach((a) => {
+    if (a.t === 'var') names.push(a.name);
+    else if (a.t === 'list') a.items.forEach((it) => {
+      if (it.t !== 'var') throw new MathError('variables such as [x, y] are needed here');
+      names.push(it.name);
+    });
+  });
+  return names;
+}
+function mvSetup(n, usage) {
+  if (n.args.length < 2) throw new MathError(n.fn + ' needs ' + usage);
+  const f = fromAst(n.args[0]);
+  const names = varNames(n.args.slice(1).filter((a) => a.t === 'var' || (a.t === 'list' && a.items.every((i) => i.t === 'var'))));
+  if (!names.length) throw new MathError(n.fn + ' needs the variables, e.g. ' + n.fn + '(f, x, y)');
+  return { f, names };
+}
+const fmtVec = (S) => '[' + S.map((e) => fmtS(simp(e))).join(', ') + ']';
+function pointArg(node, dim) {
+  if (node.t !== 'list' || node.items.length !== dim) throw new MathError('a point with ' + dim + ' coordinates such as [1, 2] is needed here');
+  return node.items.map(geoVal);
+}
+function atPoint(S, names, pt) {
+  const map = new Map(names.map((nm, i) => [nm, pt[i]]));
+  return simp(expandS(subsMany(S, map)));
+}
+defCmd('grad gradient nabla', (n) => {
+  const { f, names } = mvSetup(n, 'a function and its variables');
+  const out = newOut();
+  const g = names.map((v) => simp(diffS(f, v)));
+  const ptNode = n.args.find((a) => a.t === 'list' && a.items.some((i) => i.t !== 'var'));
+  out.answer.push('\u2207f = ' + fmtVec(g));
+  if (ptNode) {
+    const pt = pointArg(ptNode, names.length);
+    const gv = g.map((e) => atPoint(e, names, pt));
+    out.answer.push('\u2207f at ' + ptText(pt) + ' = ' + fmtVec(gv) + ',   |\u2207f| = ' + symText(simp(sSqrt(sAdd(gv.map((e) => sq(e)))))));
+  }
+  out.work.push('Partial derivatives ' + names.map((v) => '\u2202f/\u2202' + v).join(', ') + ' (the other letters are held constant)');
+  return out;
+});
+defCmd('hessian', (n) => {
+  const { f, names } = mvSetup(n, 'a function and its variables');
+  const H = names.map((a) => names.map((b) => simp(diffS(diffS(f, a), b))));
+  const out = newOut();
+  const cells = H.map((r) => r.map((e) => fmtS(e)));
+  const w = cells[0].map((_, j) => Math.max(...cells.map((r) => r[j].length)));
+  cells.forEach((r) => out.answer.push('[ ' + r.map((c, j) => c.padStart(w[j])).join('  ') + ' ]'));
+  if (names.length === 2) out.work.push('det H = ' + fmtS(simp(expandS(sSub(sMul([H[0][0], H[1][1]]), sMul([H[0][1], H[1][0]]))))));
+  out.work.push('Second partial derivatives \u2202\u00b2f/\u2202' + names[0] + '\u2202' + names[names.length > 1 ? 1 : 0] + ' and so on');
+  return out;
+});
+defCmd('laplacian', (n) => {
+  const { f, names } = mvSetup(n, 'a function and its variables');
+  const out = newOut();
+  out.answer.push('\u2207\u00b2f = ' + fmtS(simp(expandS(sAdd(names.map((v) => diffS(diffS(f, v), v)))))));
+  return out;
+});
+defCmd('jacobian', (n) => {
+  if (n.args.length !== 2 || n.args[0].t !== 'list' || n.args[1].t !== 'list') throw new MathError('jacobian([f, g], [x, y]) needs a list of functions and a list of variables');
+  const fs = n.args[0].items.map(fromAst);
+  const names = varNames([n.args[1]]);
+  const J = fs.map((f) => names.map((v) => simp(diffS(f, v))));
+  const out = newOut();
+  const cells = J.map((r) => r.map((e) => fmtS(e)));
+  const w = cells[0].map((_, j) => Math.max(...cells.map((r) => r[j].length)));
+  cells.forEach((r) => out.answer.push('[ ' + r.map((c, j) => c.padStart(w[j])).join('  ') + ' ]'));
+  if (fs.length === names.length) out.work.push('det J = ' + fmtS(simp(expandS(detS(J)))));
+  return out;
+});
+function detS(M) {
+  if (M.length === 1) return M[0][0];
+  if (M.length === 2) return sSub(sMul([M[0][0], M[1][1]]), sMul([M[0][1], M[1][0]]));
+  return sAdd(M[0].map((e, j) => sMul([sI(j % 2 ? -1 : 1), e, detS(M.slice(1).map((r) => r.filter((_, k) => k !== j)))])));
+}
+defCmd('divergence div', (n) => {
+  if (n.args.length !== 2 || n.args[0].t !== 'list' || n.args[1].t !== 'list') throw new MathError('divergence([P, Q, R], [x, y, z]) needs the field and the variables');
+  const F = n.args[0].items.map(fromAst);
+  const names = varNames([n.args[1]]);
+  if (F.length !== names.length) throw new MathError('the field and the variable list must have the same length');
+  const out = newOut();
+  out.answer.push('div F = ' + fmtS(simp(expandS(sAdd(F.map((c, i) => diffS(c, names[i])))))));
+  return out;
+});
+defCmd('curl', (n) => {
+  if (n.args.length !== 2 || n.args[0].t !== 'list' || n.args[1].t !== 'list') throw new MathError('curl([P, Q, R], [x, y, z]) needs the field and the variables');
+  const F = n.args[0].items.map(fromAst);
+  const [x, y, z] = varNames([n.args[1]]);
+  const d = (e, v) => diffS(e, v);
+  const out = newOut();
+  if (F.length === 2) {
+    out.answer.push('curl F (scalar) = ' + fmtS(simp(expandS(sSub(d(F[1], x), d(F[0], y))))));
+    return out;
+  }
+  if (F.length !== 3 || z === undefined) throw new MathError('curl needs a field with 2 or 3 components');
+  out.answer.push('curl F = ' + fmtVec([sSub(d(F[2], y), d(F[1], z)), sSub(d(F[0], z), d(F[2], x)), sSub(d(F[1], x), d(F[0], y))].map((e) => simp(expandS(e)))));
+  return out;
+});
+defCmd('directional directionalderivative', (n) => {
+  needArgs(n, 4, 4, 'f, the variables [x, y], the point [a, b] and the direction [u, v]');
+  const f = fromAst(n.args[0]);
+  const names = varNames([n.args[1]]);
+  const pt = pointArg(n.args[2], names.length);
+  const dir = pointArg(n.args[3], names.length);
+  const len = simp(sSqrt(sAdd(dir.map((c) => sq(c)))));
+  if (zeroS(len)) throw new MathError('the direction cannot be the zero vector');
+  const g = names.map((v) => atPoint(simp(diffS(f, v)), names, pt));
+  const dd = simp(expandS(sDiv(sAdd(g.map((e, i) => sMul([e, dir[i]]))), len)));
+  const out = newOut();
+  out.answer.push('D_u f = ' + symText(dd));
+  out.work.push('\u2207f at the point = ' + fmtVec(g) + ';  unit direction u = v/|v| with |v| = ' + symText(len) + ';  D_u f = \u2207f \u00b7 u');
+  out.value = { S: dd };
+  return out;
+});
+defCmd('tangentplane', (n) => {
+  needArgs(n, 5, 5, 'f, x, y, a, b');
+  const f = fromAst(n.args[0]);
+  const [xn, yn] = [varOfArg(n.args[1]), varOfArg(n.args[2])];
+  const a = geoVal(n.args[3]);
+  const b = geoVal(n.args[4]);
+  const at = (e) => simp(expandS(subsMany(e, new Map([[xn, a], [yn, b]]))));
+  const z0 = at(f);
+  const fx = at(diffS(f, xn));
+  const fy = at(diffS(f, yn));
+  const plane = simp(expandS(sAdd([z0, sMul([fx, sSub(sV(xn), a)]), sMul([fy, sSub(sV(yn), b)])])));
+  const out = newOut();
+  out.answer.push('z = ' + fmtS(plane));
+  out.work.push('f = ' + symText(z0) + ',  f_' + xn + ' = ' + symText(fx) + ',  f_' + yn + ' = ' + symText(fy) + ' at (' + fmtS(a) + ', ' + fmtS(b) + ');  z = f + f_' + xn + '(' + xn + ' \u2212 a) + f_' + yn + '(' + yn + ' \u2212 b)');
+  return out;
+});
+
+// ---- critical points of f(x, y) and Lagrange multipliers -----------------------------------------------------
+function definiteness(Hn) {
+  // leading principal minors of a symmetric matrix (numbers)
+  const minors = [];
+  for (let k = 1; k <= Hn.length; k++) minors.push(detNum(Hn.slice(0, k).map((r) => r.slice(0, k))));
+  if (minors.every((m) => m > 1e-9)) return 'local minimum';
+  if (minors.every((m, i) => (i % 2 === 0 ? m < -1e-9 : m > 1e-9))) return 'local maximum';
+  if (minors.some((m) => Math.abs(m) <= 1e-9)) return 'inconclusive (the second-derivative test fails: determinant 0)';
+  return 'saddle point';
+}
+function detNum(M) {
+  if (M.length === 1) return M[0][0];
+  if (M.length === 2) return M[0][0] * M[1][1] - M[0][1] * M[1][0];
+  return M[0].reduce((s, e, j) => s + (j % 2 ? -1 : 1) * e * detNum(M.slice(1).map((r) => r.filter((_, k) => k !== j))), 0);
+}
+function multiCritical(n) {
+  const f = fromAst(n.args[0]);
+  const names = varNames(n.args.slice(1).filter((a) => a.t === 'var'));
+  if (names.length < 2 || names.length > 3) throw new MathError('critical points of functions of 2 or 3 variables are supported');
+  const g = names.map((v) => simp(diffS(f, v)));
+  const H = names.map((a, i) => names.map((b) => diffS(g[i], b)));
+  const F = (x) => {
+    const env = {};
+    names.forEach((nm, i) => { env[nm] = x[i]; });
+    return g.map((e) => {
+      try {
+        return numS(e, env);
+      } catch (e2) {
+        return NaN;
+      }
+    });
+  };
+  const sols = newtonSolutions(F, names.length);
+  const out = newOut();
+  out.work.push('\u2207f = ' + fmtVec(g) + ' = 0 solved numerically (Newton from many starting points); then the second-derivative test with the Hessian');
+  if (!sols.length) {
+    out.answer.push('no critical points found');
+    return out;
+  }
+  sols.forEach((s) => {
+    const env = {};
+    names.forEach((nm, i) => { env[nm] = s[i]; });
+    const fv = numS(f, env);
+    const Hn = H.map((r) => r.map((e) => numS(e, env)));
+    let kind = definiteness(Hn);
+    if (names.length === 2) {
+      const D = Hn[0][0] * Hn[1][1] - Hn[0][1] * Hn[1][0];
+      kind = D > 1e-9 ? (Hn[0][0] > 0 ? 'local minimum' : 'local maximum') : D < -1e-9 ? 'saddle point' : 'inconclusive (D = 0)';
+    }
+    out.answer.push('(' + names.map((nm, i) => nm + ' ' + describeEq(s[i])).join(', ') + '):  f ' + describeEq(fv) + ',  ' + kind);
+  });
+  out.notes.push('Critical points are found numerically near the origin (|coordinate| \u2264 10); there could be others far away.');
+  return out;
+}
+defCmd('lagrange lagrangemultipliers', (n) => {
+  needArgs(n, 4, 6, 'f, the constraint g (and its value c), and the variables: lagrange(f, g, c, x, y)');
+  const f = fromAst(n.args[0]);
+  const gS = fromAst(n.args[1]);
+  let c = S0;
+  let rest = n.args.slice(2);
+  if (rest[0].t !== 'var') {
+    c = geoVal(rest[0]);
+    rest = rest.slice(1);
+  }
+  const names = varNames(rest);
+  if (names.length < 2 || names.length > 3) throw new MathError('give two or three variables');
+  const gc = simp(sSub(gS, c));
+  const lam = '$lam';
+  const fg = names.map((v) => simp(diffS(f, v)));
+  const gg = names.map((v) => simp(diffS(gc, v)));
+  const eqs = fg.map((e, i) => sSub(e, sMul([sV(lam), gg[i]]))).concat([gc]);
+  const F = (x) => {
+    const env = {};
+    names.forEach((nm, i) => { env[nm] = x[i]; });
+    env[lam] = x[names.length];
+    return eqs.map((e) => {
+      try {
+        return numS(e, env);
+      } catch (e2) {
+        return NaN;
+      }
+    });
+  };
+  const sols = newtonSolutions(F, names.length + 1);
+  const out = newOut();
+  out.work.push('Solve \u2207f = \u03bb\u2207g together with g = ' + symText(c) + ':  ' + names.map((v, i) => '\u2202f/\u2202' + v + ' = \u03bb\u00b7\u2202g/\u2202' + v).join(', '));
+  if (!sols.length) {
+    out.answer.push('no solution of the Lagrange conditions found');
+    return out;
+  }
+  const rows = sols.map((s) => {
+    const env = {};
+    names.forEach((nm, i) => { env[nm] = s[i]; });
+    return { s, fv: numS(f, env) };
+  }).sort((a, b) => a.fv - b.fv);
+  rows.forEach((r) => out.answer.push('(' + names.map((nm, i) => nm + ' ' + describeEq(r.s[i])).join(', ') + '):  f ' + describeEq(r.fv) + ',  \u03bb = ' + fmtNum(r.s[names.length])));
+  if (rows.length > 1) {
+    out.answer.push('largest value of f on the constraint: ' + describeNumber(rows[rows.length - 1].fv) + ';  smallest: ' + describeNumber(rows[0].fv));
+    out.notes.push('These are the candidates found; if the constraint curve is not closed and bounded, the largest/smallest of them need not be a true maximum/minimum.');
+  } else out.notes.push('Only one candidate was found; check whether it is a maximum or a minimum (e.g. compare with a nearby point of the constraint).');
+  return out;
+});
+// ======================================================================
+// 9h. Laplace transforms:  laplace(f, t, s)  and  ilaplace(F, s, t)
+//     Table rules with linearity, the shift theorem and multiplication by t^n; the inverse
+//     uses partial fractions (linear and quadratic factors).
+// ======================================================================
+function rewriteHyperbolic(f) {
+  const walk = (e) => {
+    if (e.k === 'f' && (e.fn === 'sinh' || e.fn === 'cosh') && e.a.length === 1) {
+      const a = walk(e.a[0]);
+      const ep = sExp(a);
+      const em = sExp(sNeg(a));
+      return e.fn === 'sinh' ? sMul([sN(new Q(1n, 2n)), sSub(ep, em)]) : sMul([sN(new Q(1n, 2n)), sAdd([ep, em])]);
+    }
+    if (e.k === '+' || e.k === '*' || e.k === '^' || e.k === 'f') return mapS(e, walk);
+    return e;
+  };
+  return walk(f);
+}
+function linearIn_(g, t) {
+  // g = a1*t + a0 (a1, a0 free of t)
+  const cs = polyCoeffsS(g, t);
+  if (!cs || cs.length > 2) return null;
+  return { a1: cs.length === 2 ? cs[1] : S0, a0: cs[0] };
+}
+/** One product term c\u00b7t^n\u00b7e^(a t)\u00b7(trig or nothing) -> its Laplace transform in s. */
+function laplaceTerm(term, t, s) {
+  const fs = term.k === '*' ? term.a : [term];
+  const consts = [];
+  let n = 0;
+  let a = S0;
+  let trig = null;
+  for (const f of fs) {
+    if (freeOf(f, t)) consts.push(f);
+    else if (f.k === 'v' && f.name === t) n += 1;
+    else if (f.k === '^' && f.b.k === 'v' && f.b.name === t && f.e.k === 'n' && f.e.q.isInt() && f.e.q.sign() >= 0) n += Number(f.e.q.n);
+    else if (f.k === '^' && isConstE(f.b)) {
+      const lin = linearIn_(f.e, t);
+      if (!lin) throw new MathError('unsupported exponent in the Laplace transform: ' + fmtS(f));
+      a = sAdd([a, lin.a1]);
+      consts.push(sExp(lin.a0));
+    } else if (f.k === 'f' && (f.fn === 'sin' || f.fn === 'cos') && !trig) {
+      const lin = linearIn_(f.a[0], t);
+      if (!lin || !zeroS(simp(lin.a0)) || zeroS(simp(lin.a1))) throw new MathError('only sin(bt) and cos(bt) are supported (no phase shift); write sin(t + c) as an expanded sum');
+      trig = { fn: f.fn, b: lin.a1 };
+    } else throw new MathError('I cannot transform the factor ' + fmtS(f) + ' (supported: powers of t, e^(at), sin(bt), cos(bt), sums and constants)');
+  }
+  const sa = sSub(sV(s), a);
+  let G;
+  if (!trig) G = sPow(sa, SM1);
+  else if (trig.fn === 'sin') G = sDiv(trig.b, sAdd([sq(sa), sq(trig.b)]));
+  else G = sDiv(sa, sAdd([sq(sa), sq(trig.b)]));
+  for (let i = 0; i < n; i++) G = sNeg(diffS(G, s));
+  return sMul(consts.concat([G]));
+}
+function laplaceTransformS(f, t, s) {
+  let g = expandS(rewriteHyperbolic(simp(f)));
+  // trig powers / products -> multiple angles when a power or a product of trig functions is present
+  const kids = (e) => (e.k === '+' || e.k === '*' || e.k === 'f' ? e.a : e.k === '^' ? [e.b, e.e] : []);
+  const isTrig = (x) => x.k === 'f' && (x.fn === 'sin' || x.fn === 'cos');
+  const hasTrigPower = (e) => (e.k === '^' && isTrig(e.b)) || (e.k === '*' && e.a.filter(isTrig).length > 1) || kids(e).some(hasTrigPower);
+  if (hasTrigPower(g)) {
+    g = rewriteTrigProducts(g, t);
+    g = expandS(g);
+  }
+  const parts = termsOf(g).map((tm) => laplaceTerm(tm, t, s));
+  return sAdd(parts);
+}
+/** sin^2(bt) = (1 - cos 2bt)/2, sin\u00b7cos = sin(2bt)/2 ... (product-to-sum rules for sin/cos with linear arguments) */
+function rewriteTrigProducts(e, t) {
+  const walk = (x) => {
+    if (x.k === '^' && x.b.k === 'f' && (x.b.fn === 'sin' || x.b.fn === 'cos') && x.e.k === 'n' && x.e.q.isInt() && x.e.q.n >= 2n && x.e.q.n <= 8n) {
+      let r = S1;
+      const k = Number(x.e.q.n);
+      let acc = [x.b];
+      for (let i = 1; i < k; i++) acc.push(x.b);
+      acc = acc.map((q) => walk(q));
+      r = acc.reduce((p, q) => productToSum(p, q), S1);
+      return r;
+    }
+    if (x.k === '*') {
+      const trig = x.a.filter((q) => (q.k === 'f' && (q.fn === 'sin' || q.fn === 'cos')) || (q.k === '^' && q.b.k === 'f'));
+      if (trig.length > 1 || trig.some((q) => q.k === '^')) {
+        const others = x.a.filter((q) => !trig.includes(q));
+        const prod = trig.map(walk).reduce((p, q) => productToSum(p, q), S1);
+        return expandS(sMul(others.concat([prod])));
+      }
+    }
+    if (x.k === '+' || x.k === '*' || x.k === '^' || x.k === 'f') return mapS(x, walk);
+    return x;
+  };
+  return walk(e);
+}
+function productToSum(p, q) {
+  // p, q are sums of terms c\u00b7sin/cos(b t); multiply with the product-to-sum identities
+  const pa = termsOf(expandS(p));
+  const qa = termsOf(expandS(q));
+  const out = [];
+  pa.forEach((x) => qa.forEach((y) => out.push(trigPair(x, y))));
+  return sAdd(out);
+}
+function splitTrig(term) {
+  const fs = term.k === '*' ? term.a : [term];
+  const trig = fs.find((f) => f.k === 'f' && (f.fn === 'sin' || f.fn === 'cos'));
+  if (!trig) return { c: term, trig: null };
+  return { c: sMul(fs.filter((f) => f !== trig)), trig };
+}
+function trigPair(x, y) {
+  const A = splitTrig(x);
+  const B = splitTrig(y);
+  if (!A.trig || !B.trig) return sMul([x, y]);
+  const c = sMul([A.c, B.c]);
+  const u = A.trig.a[0];
+  const v = B.trig.a[0];
+  const sum = (a, b) => simp(sAdd([a, b]));
+  const diff = (a, b) => simp(sSub(a, b));
+  const h = sN(new Q(1n, 2n));
+  const f = A.trig.fn;
+  const g = B.trig.fn;
+  if (f === 'sin' && g === 'sin') return sMul([c, h, sSub(sFn('cos', [diff(u, v)]), sFn('cos', [sum(u, v)]))]);
+  if (f === 'cos' && g === 'cos') return sMul([c, h, sAdd([sFn('cos', [diff(u, v)]), sFn('cos', [sum(u, v)])])]);
+  if (f === 'sin' && g === 'cos') return sMul([c, h, sAdd([sFn('sin', [sum(u, v)]), sFn('sin', [diff(u, v)])])]);
+  return sMul([c, h, sAdd([sFn('sin', [sum(u, v)]), sFn('sin', [diff(v, u)])])]);
+}
+
+defCmd('laplace laplacetransform', (n) => {
+  needArgs(n, 1, 3, 'f(t), and optionally the variables t and s');
+  const f = fromAst(n.args[0]);
+  const t = n.args[1] ? varOfArg(n.args[1]) : singleVarOf(f, 't');
+  const s = n.args[2] ? varOfArg(n.args[2]) : t === 's' ? 'p' : 's';
+  const out = newOut();
+  const F = laplaceTransformS(f, t, s);
+  let shown = simp(F);
+  try {
+    const tog = simp(togetherDeep(shown));
+    if (fmtS(tog).length <= fmtS(shown).length * 1.5) shown = tog;
+  } catch (e) {
+    // keep the sum of fractions
+  }
+  out.answer.push('L{' + fmtS(f) + '} = ' + fmtS(shown));
+  out.work.push('Linearity, L{t\u207f e\u1d43\u1d57 sin bt} etc. from the table, and multiplication by t as \u2212d/ds');
+  // numerical check of the defining integral at a safe value of s
+  try {
+    const s0 = 9;
+    const lhs = integrateNumeric(simp(sMul([f, sExp(sMul([sI(-s0), sV(t)]))])), t, 0, 60);
+    const rhs = numS(F, { [s]: s0 });
+    if (lhs.ok && Math.abs(lhs.value - rhs) < 1e-6 * (1 + Math.abs(rhs))) out.check = 'the defining integral \u222b\u2080^\u221e f(t)\u00b7e^(\u2212st) dt at s = ' + s0 + ' equals ' + fmtNum(rhs);
+  } catch (e) {
+    // no numerical check
+  }
+  out.notes.push('Valid for s larger than the largest exponent of e^(at) in f.');
+  out.value = { S: shown };
+  return out;
+});
+COMMANDS.laplace.show = (n) => 'L{' + showRaw(n.args[0]) + '}';
+
+// ---- inverse transform -------------------------------------------------------------------------------------------------
+function ilaplaceTerm(term, s, t) {
+  const fac = term.fac;
+  const num = term.num;
+  const k = term.power;
+  const T = sV(t);
+  const qS = (q) => sN(q);
+  if (fac.length === 2) {
+    // (s - a)^k   with fac = s + c0/c1
+    const a = fac[0].neg().div(fac[1]);
+    const A = num[0].div(fac[1].pow(k));
+    const kf = bigFactorial(BigInt(k - 1));
+    return sMul([qS(A.div(new Q(kf))), sPow(T, sI(k - 1)), sExp(sMul([qS(a), T]))]);
+  }
+  if (fac.length === 3) {
+    // normalise to s^2 + p s + q
+    const c2 = fac[2];
+    const p = fac[1].div(c2);
+    const q = fac[0].div(c2);
+    const a = p.neg().div(qInt(2));
+    const w2 = q.sub(p.mul(p).div(qInt(4)));
+    const N1 = num.length > 1 ? num[1] : Q0;
+    const N0 = num[0];
+    const scale = c2.pow(k);
+    const L = N1.div(scale);
+    const M = N0.div(scale);
+    const shiftM = M.add(L.mul(a)); // numerator L (s - a) + (M + L a)
+    const e = sExp(sMul([qS(a), T]));
+    const root = simp(sSqrt(qS(w2.abs())));
+    const rt = sMul([root, T]);
+    // f_k = L^-1{1/(u^2 + w2)^k},  g_k = L^-1{u/(u^2 + w2)^k}  (u = s - a), by the recursion
+    //   g_k = t f_(k-1) / (2(k-1)),   f_k = (f_(k-1) - g_k') / w2
+    let f = w2.sign() > 0 ? sDiv(sFn('sin', [rt]), root) : sDiv(sFn('sinh', [rt]), root);
+    let g = w2.sign() > 0 ? sFn('cos', [rt]) : sFn('cosh', [rt]);
+    for (let j = 2; j <= k; j++) {
+      g = expandS(sMul([T, f, sN(new Q(1n, BigInt(2 * (j - 1))))]));
+      f = expandS(sDiv(sSub(f, diffS(g, t)), qS(w2)));
+    }
+    return sMul([e, sAdd([sMul([qS(L), g]), sMul([qS(shiftM), f])])]);
+  }
+  throw new MathError('I can invert fractions whose denominators factor into linear terms (any power) and quadratics (any power)');
+}
+function inverseLaplaceS(F, s, t) {
+  const rf = toRFS(expandS(F), s);
+  if (rf.n.length >= rf.d.length) throw new MathError('the fraction must be proper (the numerator of lower degree than the denominator); an improper one would need delta functions');
+  const ap = apartRF(rf);
+  let f = S0;
+  ap.terms.forEach((tm) => {
+    f = sAdd([f, ilaplaceTerm(tm, s, t)]);
+  });
+  return f;
+}
+defCmd('ilaplace inverselaplace', (n) => {
+  needArgs(n, 1, 3, 'F(s), and optionally the variables s and t');
+  const F = fromAst(n.args[0]);
+  const s = n.args[1] ? varOfArg(n.args[1]) : singleVarOf(F, 's');
+  const t = n.args[2] ? varOfArg(n.args[2]) : s === 't' ? 'x' : 't';
+  const out = newOut();
+  const f = simp(expandS(inverseLaplaceS(F, s, t)));
+  out.answer.push('L\u207b\u00b9{' + fmtS(F) + '} = ' + fmtS(f));
+  out.work.push('Partial fractions of F(s), then the table entries 1/(s\u2212a)\u207f, (s\u2212a)/((s\u2212a)\u00b2+b\u00b2), b/((s\u2212a)\u00b2+b\u00b2)');
+  try {
+    const back = laplaceTransformS(f, t, s);
+    if (sameFunction(simp(back), simp(F), [s], 6)) out.check = 'transforming the result back gives F(s)';
+  } catch (e) {
+    // no check
+  }
+  out.value = { S: f };
+  return out;
+});
+COMMANDS.ilaplace.show = (n) => 'L\u207b\u00b9{' + showRaw(n.args[0]) + '}';
+// ======================================================================
+// 9i. More differential equations: Bernoulli, homogeneous (y/x), exact (with an integrating
+//     factor), Euler-Cauchy, variation of parameters, systems of linear equations,
+//     and the differential form  M dx + N dy = 0.
+// ======================================================================
+
+// ---- the form  M dx + N dy = 0  ->  N y' + M = 0 ---------------------------------------------------------------------------------
+function convertDifferentialForm(s) {
+  if (!/\bd[a-z]\b/.test(s) || !/=/.test(s)) return s;
+  return s.split(/([;\n])/).map((part) => convertDiffPart(part)).join('');
+}
+function convertDiffPart(part) {
+  const eq = /^(.*?)=\s*0\s*$/.exec(part.trim());
+  if (!eq) return part;
+  const body = eq[1];
+  const hits = [];
+  const re = /(^|[^a-z0-9_])d([a-z])(?![a-z0-9_(])/g;
+  let m;
+  while ((m = re.exec(body))) hits.push({ idx: m.index + m[1].length, end: re.lastIndex, v: m[2] });
+  if (hits.length !== 2 || hits[0].v === hits[1].v) return part;
+  const cut = (a, b) => body.slice(a, b).replace(/^[\s*]+|[\s*]+$/g, '').replace(/^\+\s*/, '');
+  const first = cut(0, hits[0].idx) || '1';
+  const second = cut(hits[0].end, hits[1].idx) || '1';
+  const [uA, uB] = [hits[0].v, hits[1].v]; // first * d(uA) + second * d(uB) = 0
+  // uB depends on uA: second * uB' + first = 0
+  return '(' + second + ')*' + uB + "' + (" + first + ') = 0';
+}
+
+// ---- first-order special equations ----------------------------------------------------------------------------------------------
+const yPower = (t, y) => {
+  // t = coef(x) * y^k  ->  {k (Q), coef (S)} or null
+  const fs = t.k === '*' ? t.a : [t];
+  let k = Q0;
+  const coef = [];
+  for (const f of fs) {
+    if (f.k === 'v' && f.name === y) k = k.add(Q1);
+    else if (f.k === '^' && f.b.k === 'v' && f.b.name === y && f.e.k === 'n') k = k.add(f.e.q);
+    else if (Array.from(varsOfS(f)).includes(y)) return null;
+    else coef.push(f);
+  }
+  return { k, coef: sMul(coef) };
+}
+function bernoulliSolve(h, y, x, consts, out) {
+  const terms = termsOf(expandS(h));
+  const parts = terms.map((t) => yPower(t, y));
+  if (parts.some((p) => !p)) return null;
+  const exps = Array.from(new Set(parts.map((p) => p.k.toString())));
+  if (exps.length !== 2 || !exps.includes('1')) return null;
+  const nStr = exps.find((e) => e !== '1');
+  const nq = parts.find((p) => p.k.toString() === nStr).k;
+  if (nq.isZero()) return null;
+  const sum = (kStr) => sAdd(parts.filter((p) => p.k.toString() === kStr).map((p) => p.coef));
+  const a = simp(sum('1'));
+  const b = simp(sum(nStr));
+  const m = Q1.sub(nq); // 1 - n
+  // v = y^(1-n):  v' = (1-n) a v + (1-n) b
+  const pcoef = simp(sMul([sN(m.neg()), a]));
+  const P = antiderivative(pcoef, x) || (freeOf(pcoef, x) ? sMul([pcoef, sV(x)]) : null);
+  if (!P) return null;
+  const mu = sExp(P);
+  const integrand = simp(sMul([mu, sN(m), b]));
+  const I = isNumVal(integrand, 0) ? S0 : antiderivative(integrand, x);
+  if (!I) return null;
+  consts.push('C1');
+  const v = expandS(sMul([sPow(mu, SM1), sAdd([I, sV('C1')])]));
+  out.work.push('Bernoulli equation y\' = a(x)\u00b7y + b(x)\u00b7y\u207f with n = ' + nq.toString() + ': substitute v = y^' + m.toString() + ' to get the linear equation v\' ' + (a.k === 'n' && a.q.sign() >= 0 ? '\u2212 ' : '+ ') + '\u2026 (integrating factor \u03bc = ' + fmtS(mu) + ')');
+  const root = Q1.div(m);
+  return { sol: simp(sPow(simp(v), sN(root))) };
+}
+function isHomogeneousDegree0(h, y, x) {
+  const pts = [[1.3, 0.7], [2.1, -1.2], [0.6, 1.9], [-1.4, 0.8]];
+  const f = (a, b) => {
+    try {
+      return numS(h, { [x]: a, [y]: b });
+    } catch (e) {
+      return NaN;
+    }
+  };
+  return pts.every(([a, b]) => {
+    const v = f(a, b);
+    const w = f(3.7 * a, 3.7 * b);
+    return isFinite(v) && isFinite(w) && Math.abs(v - w) < 1e-9 * (1 + Math.abs(v));
+  });
+}
+function homogeneousFirstOrder(F, h, y, x, consts, out) {
+  if (!isHomogeneousDegree0(h, y, x)) return null;
+  const U = '$u';
+  const Fu = simp(subsMany(h, new Map([[x, S1], [y, sV(U)]])));
+  const den = simp(sSub(Fu, sV(U)));
+  if (isNumVal(den, 0)) {
+    consts.push('C1');
+    out.work.push('Homogeneous equation with F(u) = u: y = C1\u00b7x');
+    return { sol: sMul([sV('C1'), sV(x)]) };
+  }
+  const G = antiderivative(simp(sPow(den, SM1)), U);
+  if (!G) return null;
+  consts.push('C1');
+  out.work.push('Homogeneous equation y\' = F(y/x): put y = x\u00b7u, then x\u00b7u\' = F(u) \u2212 u is separable: \u222b du/(F(u) \u2212 u) = ln|x| + C1');
+  const lnx = sFn('ln', [sFn('abs', [sV(x)])]);
+  const R = sAdd([lnx, sV('C1')]);
+  const cands = solveSeparable(G, R, U, x, lnx).map((c) => simp(sMul([sV(x), c]))).filter((c) => odeResidualOk(F, y, x, c));
+  if (cands.length) return { sol: cands[0], alt: cands.slice(1) };
+  const implicit = subsS(G, U, sDiv(sV(y), sV(x)));
+  out.answer.push(fmtS(simp(implicit)) + ' = ' + fmtS(R));
+  out.notes.push('The solution is given implicitly in y/x.');
+  return { implicit: true };
+}
+function exactFirstOrder(F, cp, rest, y, x, consts, out) {
+  let M = simp(rest);
+  let N = simp(cp);
+  const exactDiff = (m, n2) => simp(sSub(diffS(m, y), diffS(n2, x)));
+  let d = exactDiff(M, N);
+  let how = 'exact equation';
+  if (!isNumVal(expandS(d), 0)) {
+    // integrating factor depending on x only or on y only
+    const t1 = simp(sDiv(d, N));
+    const t2 = simp(sDiv(sNeg(d), M));
+    let mu = null;
+    if (freeOf(t1, y)) {
+      const I = antiderivative(t1, x);
+      if (I) mu = sExp(stripLnAbs(I));
+    }
+    if (!mu && freeOf(t2, x)) {
+      const I = antiderivative(t2, y);
+      if (I) mu = sExp(stripLnAbs(I));
+    }
+    if (!mu) return null;
+    M = simp(sMul([mu, M]));
+    N = simp(sMul([mu, N]));
+    d = exactDiff(M, N);
+    if (!isNumVal(expandS(d), 0) && !sameFunction(simp(diffS(M, y)), simp(diffS(N, x)), [x, y], 6)) return null;
+    how = 'integrating factor \u03bc = ' + fmtS(simp(mu));
+  } else how = 'exact equation (\u2202M/\u2202y = \u2202N/\u2202x)';
+  const Psi0 = antiderivative(M, x) || (freeOf(M, x) ? sMul([M, sV(x)]) : null);
+  if (!Psi0) return null;
+  const rem = simp(sSub(N, diffS(Psi0, y)));
+  if (!freeOf(rem, x)) return null;
+  const phi = isNumVal(rem, 0) ? S0 : antiderivative(rem, y) || (freeOf(rem, y) ? sMul([rem, sV(y)]) : null);
+  if (phi === null) return null;
+  const Psi = simp(expandS(sAdd([Psi0, phi])));
+  consts.push('C1');
+  out.work.push('Written as M dx + N dy = 0 with M = ' + fmtS(M) + ', N = ' + fmtS(N) + ' (' + how + '): \u03c8(x, y) = \u222bM dx + g(y) with \u03c8 = C1');
+  let sols = null;
+  try {
+    sols = solveLiteralFor(Psi, sV('C1'), y);
+  } catch (e) {
+    sols = null;
+  }
+  const good = (sols || []).map((s) => simp(s)).filter((s) => odeResidualOk(F, y, x, s));
+  if (good.length) return { sol: good[0], alt: good.slice(1) };
+  out.answer.push(fmtS(Psi) + ' = C1');
+  out.notes.push('The solution is given implicitly.');
+  return { implicit: true };
+}
+/** Try the special first-order methods; returns {sol, alt} | {implicit: true} | null. */
+function firstOrderSpecial(F, cp, rest, h, y, x, consts, out) {
+  let r = null;
+  try {
+    r = bernoulliSolve(h, y, x, consts, out);
+    if (r && !odeResidualOk(F, y, x, r.sol)) {
+      consts.length = 0;
+      r = null;
+    }
+  } catch (e) {
+    if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+    r = null;
+  }
+  if (r) return r;
+  const tries = [
+    () => exactFirstOrder(F, cp, rest, y, x, consts, out),
+    () => homogeneousFirstOrder(F, h, y, x, consts, out),
+  ];
+  for (const t of tries) {
+    consts.length = 0;
+    try {
+      r = t();
+    } catch (e) {
+      if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+      r = null;
+    }
+    if (r) return r;
+  }
+  return null;
+}
+
+// ---- variation of parameters and Euler-Cauchy equations -----------------------------------------------------------------------------
+/** y_p for y'' + p y' + q y = g given a basis y1, y2 (g already divided by the leading coefficient). */
+const tanToSinCos = (e) => {
+  const walk = (t) => {
+    if (t.k === 'f' && t.fn === 'ln') return t; // keep ln|sec x + tan x| readable
+    if (t.k === 'f' && t.fn === 'tan') return sDiv(sFn('sin', t.a.map(walk)), sFn('cos', t.a.map(walk)));
+    if (t.k === 'f' && t.fn === 'cot') return sDiv(sFn('cos', t.a.map(walk)), sFn('sin', t.a.map(walk)));
+    if (t.k === 'f' && t.fn === 'sec') return sDiv(S1, sFn('cos', t.a.map(walk)));
+    if (t.k === 'f' && t.fn === 'csc') return sDiv(S1, sFn('sin', t.a.map(walk)));
+    if (t.k === '+' || t.k === '*' || t.k === '^' || t.k === 'f') return mapS(t, walk);
+    return t;
+  };
+  return walk(e);
+};
+/** The shorter of the expression and its trig-simplified rewrite. */
+function tidyTrig(e) {
+  let best = simp(e);
+  try {
+    const alt = simplifyTrigS(simp(expandS(tanToSinCos(best))));
+    if (fmtS(alt).length < fmtS(best).length) best = alt;
+  } catch (err) {
+    // keep the original
+  }
+  return best;
+}
+function variationOfParameters(y1, y2, g, x) {
+  let W = simp(expandS(sSub(sMul([y1, diffS(y2, x)]), sMul([diffS(y1, x), y2]))));
+  W = tidyTrig(W);
+  if (isNumVal(W, 0)) return null;
+  const i1 = simp(expandS(sDiv(sMul([y2, g]), W)));
+  const i2 = simp(expandS(sDiv(sMul([y1, g]), W)));
+  const A = antiderivative(i1, x);
+  const B = antiderivative(i2, x);
+  if (!A || !B) return null;
+  return tidyTrig(expandS(sAdd([sNeg(sMul([y1, A])), sMul([y2, B])])));
+}
+function eulerBasis(A, B, Cc, x) {
+  // A x^2 y'' + B x y' + Cc y = 0  ->  A r(r-1) + B r + Cc = 0
+  const cs = [Cc, B.sub(A), A];
+  const { basis, roots } = homogeneousBasisX(cs, x);
+  return { basis, roots };
+}
+/** Like homogeneousBasis but in x^r: real roots -> x^r (x^r ln x for repeats), complex a \u00b1 bi -> x^a cos(b ln x), x^a sin(b ln x). */
+function homogeneousBasisX(cs, x) {
+  const roots = charRootsS(cs);
+  const X = sV(x);
+  const lx = sFn('ln', [X]);
+  const basis = [];
+  roots.forEach((r) => {
+    for (let m = 0; m < r.mult; m++) {
+      const pow = sPow(X, r.re);
+      const lp = m ? sPow(lx, sI(m)) : S1;
+      if (!r.im) basis.push(sMul([pow, lp]));
+      else {
+        basis.push(sMul([pow, lp, sFn('cos', [sMul([r.im, lx])])]));
+        basis.push(sMul([pow, lp, sFn('sin', [sMul([r.im, lx])])]));
+      }
+    }
+  });
+  return { basis, roots };
+}
+function eulerCauchy(cks, g, x, consts, out) {
+  if (cks.length !== 3) return null;
+  const X2 = sq(sV(x));
+  const A = simp(sDiv(cks[2], X2));
+  const B = simp(sDiv(cks[1], sV(x)));
+  const Cc = cks[0];
+  if (![A, B, Cc].every((e) => e.k === 'n')) return null;
+  if (A.q.isZero()) return null;
+  const { basis, roots } = eulerBasis(A.q, B.q, Cc.q, x);
+  if (basis.length !== 2) return null;
+  let yh = S0;
+  basis.forEach((b, i) => {
+    yh = sAdd([yh, sMul([sV('C' + (i + 1)), b])]);
+    consts.push('C' + (i + 1));
+  });
+  out.work.push('Euler\u2013Cauchy equation (x\u00b2 y\'\' + \u2026 with y = x\u02b3): characteristic equation ' + polyText([Cc.q, B.q.sub(A.q), A.q], 'r') + ' = 0, roots ' + roots.map((r) => (r.im ? fmtS(r.re) + ' \u00b1 ' + fmtS(r.im) + 'i' : fmtS(r.re)) + (r.mult > 1 ? ' (\u00d7' + r.mult + ')' : '')).join(', ') + ';  valid for x > 0');
+  let yp = S0;
+  if (!isNumVal(simp(g), 0)) {
+    // x = e^t turns  A x\u00b2 y'' + B x y' + C y = R(x)  into  A y_tt + (B \u2212 A) y_t + C y = R(e^t)  with constant coefficients
+    const T = '$t';
+    let ypT = null;
+    try {
+      ypT = undeterminedCoefficients([Cc.q, B.q.sub(A.q), A.q], simp(subsS(simp(sNeg(g)), x, sExp(sV(T)))), T);
+    } catch (e) {
+      if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+    }
+    if (ypT) {
+      yp = simp(subsS(ypT, T, sFn('ln', [sV(x)])));
+      out.work.push('Particular solution (x = e^t gives constant coefficients, then undetermined coefficients): ' + fmtS(yp));
+    } else {
+      const gStd = simp(sDiv(sNeg(g), cks[2]));
+      yp = variationOfParameters(basis[0], basis[1], gStd, x);
+      if (!yp) throw new MathError('I could not integrate the terms needed for variation of parameters');
+      out.work.push('Particular solution by variation of parameters: ' + fmtS(yp));
+    }
+  }
+  return { sol: sAdd([yh, yp]) };
+}
+
+// ---- systems of linear equations with constant coefficients -----------------------------------------------------------------------------
+/** u_i' = sum_j M_ij u_j + g_i(t) for a list of first-order equations: {M (Q matrix), names, indep, forcing[]} */
+function parseODESystem(odes, depNames) {
+  const names = depNames.slice().sort();
+  const n = names.length;
+  const eqs = new Map();
+  const vars = new Set();
+  odes.forEach((st) => {
+    const Fq = simp(sSub(fromAst(st.lhs), fromAst(st.rhs)));
+    const dv = Array.from(varsOfS(Fq)).filter((v) => /'$/.test(v));
+    if (dv.length !== 1 || dv[0].length !== 2) throw new MathError('a system must consist of first-order equations such as x\' = 3x + y');
+    eqs.set(dv[0].slice(0, -1), Fq);
+    varsOfS(Fq).forEach((v) => vars.add(v));
+  });
+  if (eqs.size !== n) throw new MathError('give one first-order equation for each unknown function');
+  const others = Array.from(vars).filter((v) => !names.includes(v) && !/'$/.test(v));
+  if (others.length > 1) throw new MathError('the system has more than one independent variable (' + others.join(', ') + ')');
+  const indep = others[0] || 't';
+  const zero = new Map(names.map((nm) => [nm, S0]));
+  const M = [];
+  const forcing = [];
+  names.forEach((nm) => {
+    const Fq = eqs.get(nm);
+    const k = simp(diffS(Fq, nm + "'"));
+    if (k.k !== 'n' || k.q.isZero()) throw new MathError('each equation must contain ' + nm + '\' with a constant coefficient');
+    const rest = simp(sSub(Fq, sMul([k, sV(nm + "'")])));
+    M.push(names.map((c) => {
+      const e = simp(sNeg(sDiv(diffS(rest, c), k)));
+      if (e.k !== 'n') throw new MathError('only constant coefficients are supported in systems');
+      return e.q;
+    }));
+    forcing.push(simp(sNeg(sDiv(subsMany(rest, zero), k))));
+  });
+  return { M, names, indep, forcing };
+}
+/** x(0) = 1  ->  {name, point, value} for one of the unknown functions */
+function parseSystemIC(st, deps) {
+  if (st.kind !== 'eq') return null;
+  const l = st.lhs;
+  if (l.t === 'bin' && l.op === '*' && l.a.t === 'var' && deps.includes(l.a.name) && isConstantAst(l.b) && isConstantAst(st.rhs)) return { name: l.a.name, point: fromAst(l.b), value: fromAst(st.rhs) };
+  return null;
+}
+/** Solutions of x' = M x for a rational eigenvalue lam of algebraic multiplicity mult (Jordan chains):
+ *  for each v in the generalised eigenspace ker (M - lam I)^mult:  e^(lam t) (v + t N v + t^2/2 N^2 v + ...) */
+function jordanSolutions(M, lam, mult, T, addSolution) {
+  const n = M.length;
+  const N = M.map((row, i) => row.map((v, j) => (i === j ? v.sub(lam) : v)));
+  const pw = [mIdent(n)];
+  for (let k = 1; k <= mult; k++) pw.push(mMul(pw[k - 1], N));
+  const basis = mNullspace(pw[mult]).map(primitiveVector);
+  const E = sExp(sMul([sN(lam), T]));
+  basis.forEach((v) => {
+    const terms = [];
+    let fact = 1;
+    for (let k = 0; k < mult; k++) {
+      if (k > 0) fact *= k;
+      const Nv = mMul(pw[k], v.map((x) => [x])).map((r) => r[0]);
+      if (Nv.every((x) => x.isZero())) break;
+      terms.push({ k, Nv, fact });
+    }
+    addSolution(Array.from({ length: n }, (_, i) => simp(expandS(sMul([sAdd(terms.map(({ k, Nv, fact: f }) => sMul([sN(Nv[i].div(qInt(f))), sPow(T, sN(qInt(k)))]))), E])))));
+  });
+}
+function odeSystemSolve(sts, odes, ics, out) {
+  const deps = [];
+  odes.forEach((st) => {
+    const find = (n) => {
+      if (n.t === 'dvar' && !deps.includes(n.name)) deps.push(n.name);
+      else if (n.t === 'neg' || n.t === 'fact' || n.t === 'pct' || n.t === 'named') find(n.a);
+      else if (n.t === 'bin') {
+        find(n.a);
+        find(n.b);
+      } else if (n.t === 'call') n.args.forEach(find);
+    };
+    find(st.lhs);
+    find(st.rhs);
+  });
+  const sys = parseODESystem(odes, deps);
+  const { M, names, indep } = sys;
+  const n = names.length;
+  if (n < 2 || n > 3) throw new MathError('systems of 2 or 3 equations are supported');
+  if (sys.forcing.some((g) => !isNumVal(simp(g), 0))) throw new MathError('only homogeneous systems (no extra terms in t) are supported');
+  const T = sV(indep);
+  const consts = [];
+  const comps = names.map(() => S0);
+  let cIdx = 0;
+  const addSolution = (vec) => {
+    cIdx++;
+    consts.push('C' + cIdx);
+    vec.forEach((e, i) => { comps[i] = sAdd([comps[i], sMul([sV('C' + cIdx), e])]); });
+  };
+  // eigenvalues of M
+  const charp = charPoly(M);
+  const rootsI = polyRoots(charp);
+  const q2 = (q) => sN(q);
+  out.work.push('Matrix A = ' + JSON.stringify(M.map((r) => r.map((q) => q.toString()))).replace(/"/g, '') + ';  characteristic polynomial ' + polyText(charp, '\u03bb') + ' = 0');
+  const evS = [];
+  rootsI.real.forEach((r) => {
+    const S = rootS(r) || null;
+    if (!S) throw new MathError('the eigenvalues must be rational or quadratic surds');
+    evS.push({ S, q: r.q || null, mult: r.mult, val: r.val });
+  });
+  const cplx = rootsI.complex.filter((z) => z.im > 0);
+  if (n === 2) {
+    const [[a, b], [c, d]] = M;
+    const tr = a.add(d);
+    const det = a.mul(d).sub(b.mul(c));
+    const disc = tr.mul(tr).sub(qInt(4).mul(det));
+    const half = new Q(1n, 2n);
+    if (disc.sign() > 0) {
+      const sq_ = simp(sSqrt(q2(disc)));
+      [1, -1].forEach((sg) => {
+        const lam = simp(sMul([q2(half), sAdd([q2(tr), sg > 0 ? sq_ : sNeg(sq_)])]));
+        let vec;
+        if (!b.isZero()) vec = [q2(b), simp(sSub(lam, q2(a)))];
+        else if (!c.isZero()) vec = [simp(sSub(lam, q2(d))), q2(c)];
+        else vec = a.eq(Q0) && sg < 0 ? [S0, S1] : (Math.abs(numS(lam, {}) - a.toNumber()) < 1e-9 ? [S1, S0] : [S0, S1]);
+        addSolution(vec.map((e) => simp(sMul([e, sExp(sMul([lam, T]))]))));
+      });
+    } else if (disc.isZero()) {
+      const lam = q2(tr.mul(half));
+      const E = sExp(sMul([lam, T]));
+      if (b.isZero() && c.isZero() && a.eq(d)) {
+        addSolution([E, S0]);
+        addSolution([S0, E]);
+      } else {
+        jordanSolutions(M, tr.mul(half), 2, T, addSolution);
+      }
+    } else {
+      const alpha = q2(tr.mul(half));
+      const beta = simp(sSqrt(q2(disc.neg().div(qInt(4)))));
+      const E = sExp(sMul([alpha, T]));
+      const cs = sFn('cos', [sMul([beta, T])]);
+      const sn = sFn('sin', [sMul([beta, T])]);
+      // \u03bb = \u03b1 + i\u03b2, eigenvector (b, \u03bb - a) = p + i q with p = (b, \u03b1 - a), q = (0, \u03b2)  (or (\u03bb - d, c) when b = 0)
+      let p;
+      let qv;
+      if (!b.isZero()) {
+        p = [q2(b), simp(sSub(alpha, q2(a)))];
+        qv = [S0, beta];
+      } else {
+        p = [simp(sSub(alpha, q2(d))), q2(c)];
+        qv = [beta, S0];
+      }
+      addSolution(p.map((pi, i) => simp(expandS(sMul([E, sSub(sMul([pi, cs]), sMul([qv[i], sn]))])))));
+      addSolution(p.map((pi, i) => simp(expandS(sMul([E, sAdd([sMul([pi, sn]), sMul([qv[i], cs])])])))));
+    }
+  } else {
+    // 3x3: rational eigenvalues with a full set of eigenvectors
+    if (cplx.length || evS.some((e) => !e.q)) throw new MathError('for 3 equations the eigenvalues must all be rational');
+    let total = 0;
+    evS.forEach((e) => {
+      const B = M.map((row, i) => row.map((v, j) => (i === j ? v.sub(e.q) : v)));
+      const vecs = mNullspace(B);
+      total += Math.max(vecs.length, e.mult);
+      if (vecs.length < e.mult) {
+        jordanSolutions(M, e.q, e.mult, T, addSolution);
+        return;
+      }
+      vecs.forEach((v0) => {
+        const v = primitiveVector(v0);
+        addSolution(v.map((c) => simp(sMul([q2(c), sExp(sMul([q2(e.q), T]))]))));
+      });
+    });
+    if (total !== 3) throw new MathError('this system could not be solved');
+  }
+  // initial conditions x(0) = a, y(0) = b
+  const sol = new Map(names.map((nm, i) => [nm, comps[i]]));
+  if (ics.length) {
+    if (ics.length !== consts.length) throw new MathError('this system needs ' + consts.length + ' initial conditions (for example x(0) = 1, y(0) = 2)');
+    const rowsA = [];
+    const rhsA = [];
+    ics.forEach((ic) => {
+      const e = sol.get(ic.name);
+      const at = subsS(e, indep, ic.point);
+      rowsA.push(consts.map((c) => simp(diffS(at, c))));
+      rhsA.push(simp(ic.value));
+    });
+    const vals = solveLinearS(rowsA, rhsA);
+    if (!vals) throw new MathError('the initial conditions do not determine the constants');
+    names.forEach((nm) => sol.set(nm, simp(expandS(subsMany(sol.get(nm), new Map(consts.map((c, i) => [c, vals[i]])))))));
+  }
+  // check by substitution
+  let ok = true;
+  names.forEach((nm, i) => {
+    const lhs = diffS(sol.get(nm), indep);
+    const rhs = sAdd(names.map((c, j) => sMul([q2(M[i][j]), sol.get(c)])));
+    if (!sameFunction(simp(lhs), simp(rhs), [indep, ...consts].filter((v) => varsOfS(lhs).has(v) || varsOfS(rhs).has(v)), 6)) ok = false;
+  });
+  names.forEach((nm) => out.answer.push(nm + '(' + indep + ') = ' + fmtODE(simp(sol.get(nm)))));
+  out.check = ok ? 'substituting the solution back into every equation gives equal sides' : null;
+  if (!ics.length) out.notes.push(consts.join(', ').replace(/, ([^,]*)$/, ' and $1') + ' are arbitrary constants; initial conditions such as x(0) = 1, y(0) = 0 fix them.');
+  return out;
 }
 
 // ======================================================================
@@ -7458,6 +9333,38 @@ defMat('proj projection', (args) => {
   const k = dotQ(u, v).div(dotQ(v, v));
   return mat([v.map((x) => x.mul(k))], { vec: true });
 }, [2, 'two vectors (projection of the first onto the second)']);
+defMat('gramschmidt orthogonalize orthonormalize', (args, n, out) => {
+  // the vectors are the rows of one matrix, or several vectors given one by one
+  let vecs;
+  if (args.length === 1 && args[0].t === 'mat' && !args[0].vec) vecs = args[0].a;
+  else vecs = args.map(flat);
+  if (vecs.length < 2) throw new MathError('gramschmidt needs at least two vectors, e.g. gramschmidt([1, 1, 0], [1, 0, 1], [0, 1, 1])');
+  const basis = [];
+  const skipped = [];
+  vecs.forEach((v, idx) => {
+    let w = v.slice();
+    basis.forEach((b) => {
+      const k = dotQ(v, b).div(dotQ(b, b));
+      w = w.map((x, i) => x.sub(k.mul(b[i])));
+    });
+    if (w.every((x) => x.isZero())) skipped.push(idx + 1);
+    else basis.push(w);
+  });
+  const show = (v) => '[' + v.map((q) => q.toString()).join(', ') + ']';
+  out.work.push('Gram-Schmidt: u\u2096 = v\u2096 \u2212 \u03a3 (v\u2096\u00b7u\u2c7c)/(u\u2c7c\u00b7u\u2c7c) u\u2c7c  (subtract the projections onto the earlier vectors)');
+  basis.forEach((b, i) => out.answer.push('u' + (i + 1) + ' = ' + show(b) + '   (length ' + fmtS(simp(sSqrt(sN(dotQ(b, b))))) + ')'));
+  out.work.push('Orthonormal basis (each u\u2096 divided by its length):');
+  basis.forEach((b, i) => {
+    const nrm = sSqrt(sN(dotQ(b, b)));
+    out.work.push('e' + (i + 1) + ' = [' + b.map((x) => fmtS(simp(sDiv(sN(x), nrm)))).join(', ') + ']');
+  });
+  if (skipped.length) out.notes.push('Vector ' + skipped.join(', ') + ' is a combination of the earlier ones, so it adds nothing and was dropped.');
+  let ortho = true;
+  basis.forEach((b, i) => basis.forEach((c, j) => { if (i < j && !dotQ(b, c).isZero()) ortho = false; }));
+  out.check = ortho ? 'all pairs of the new vectors have dot product 0' : null;
+  out.__done = true;
+  return mat([[Q0]], { __skip: true });
+}, [1, 'two or more vectors, e.g. gramschmidt([1, 1, 0], [1, 0, 1], [0, 1, 1])']);
 defMat('unit normalize', (args, n, out) => {
   const u = flat(args[0]);
   const nrm = sSqrt(sN(dotQ(u, u)));
@@ -8201,7 +10108,8 @@ defCmd('powerset subsets', (n) => {
 // ---- text patterns: mod, congruences, bases, choose -----------------------------------------------------------------
 /** Called by normalizeText: turns "17 mod 5", "3x \u2261 4 (mod 7)", "255 to binary", "5 choose 2" into commands. */
 function convertDiscrete(s) {
-  if (!/mod|\u2261|equiv|binary|octal|hex|base|choose|0[xbo][0-9a-f]|integer|diophant|\bc\(|\bp\(|\d[cp]\d|_/i.test(s)) return s;
+  if (!/mod|\u2261|equiv|binary|octal|hex|base|choose|0[xbo][0-9a-f]|integer|diophant|\bc\(|\bp\(|\d[cp]\d|_|anagram|arrang|permut/i.test(s)) return s;
+  s = convertWordCounting(s);
   s = s.replace(/\\equiv/g, '\u2261').replace(/\\pmod\s*\{([^{}]*)\}/g, ' mod $1').replace(/\\bmod/g, ' mod ').replace(/\\pmod\s*(\d+)/g, ' mod $1');
   // congruences  L \u2261 R (mod m)
   s = s.replace(/([^\n;,\u2261]+?)\s*(?:\u2261|\bcongruent\s+to\b)\s*([^\n;,\u2261]+?)\s*[(,]?\s*(?:\bmod\b|\bmodulo\b)\s*(\d+)\s*\)?/gi, (m, l, r, mod) => {
@@ -8247,6 +10155,128 @@ function parseBase(digits, b) {
     v = v * BigInt(b) + BigInt(d);
   }
   return v;
+}
+// ======================================================================
+// 11b. Counting and probability extras: dice, letter arrangements, birthday problem, Pascal rows, circular arrangements
+// ======================================================================
+/** ways[s] = number of ways n dice with `sides` faces add up to s (exact, big integers) */
+function diceWays(nDice, sides) {
+  let ways = new Map([[0, 1n]]);
+  for (let i = 0; i < nDice; i++) {
+    const next = new Map();
+    ways.forEach((w, s) => {
+      for (let f = 1; f <= sides; f++) next.set(s + f, (next.get(s + f) || 0n) + w);
+    });
+    ways = next;
+  }
+  return ways;
+}
+defCmd('dice dicesum diceprob', (n) => {
+  needArgs(n, 2, 3, 'the number of dice, the number of faces and optionally the sum, e.g. dice(2, 6, 7)');
+  const nd = Number(intArg(n.args[0]));
+  const sides = Number(intArg(n.args[1]));
+  if (nd < 1 || nd > 60) throw new MathError('between 1 and 60 dice are supported');
+  if (sides < 2 || sides > 200) throw new MathError('a die needs between 2 and 200 faces');
+  const ways = diceWays(nd, sides);
+  const total = BigInt(sides) ** BigInt(nd);
+  const out = newOut();
+  const P = (w) => new Q(w, total);
+  const sums = Array.from(ways.keys()).sort((a, b) => a - b);
+  const mean = new Q(BigInt(nd * (sides + 1)), 2n);
+  const variance = new Q(BigInt(nd) * BigInt(sides * sides - 1), 12n);
+  if (n.args[2]) {
+    const t = Number(intArg(n.args[2]));
+    const w = ways.get(t) || 0n;
+    let le = 0n;
+    let ge = 0n;
+    ways.forEach((v, s) => {
+      if (s <= t) le += v;
+      if (s >= t) ge += v;
+    });
+    out.answer.push('P(sum = ' + t + ') = ' + qText(P(w)) + '   (' + w + ' of the ' + total + ' equally likely outcomes)');
+    out.work.push('P(sum \u2264 ' + t + ') = ' + qText(P(le)) + ';  P(sum \u2265 ' + t + ') = ' + qText(P(ge)));
+    out.value = { q: P(w) };
+  } else {
+    out.answer.push('sums from ' + sums[0] + ' to ' + sums[sums.length - 1] + ';  most likely ' + sums.filter((s) => ways.get(s) === sums.reduce((m, x) => (ways.get(x) > m ? ways.get(x) : m), 0n)).join(' or ') + '  (' + total + ' equally likely outcomes)');
+    out.work.push('number of ways for each sum: ' + sums.map((s) => s + ': ' + ways.get(s)).join(', '));
+    out.value = { q: mean };
+  }
+  out.work.push(nd + ' dice with ' + sides + ' faces:  mean sum = ' + qText(mean) + ',  variance = ' + qText(variance));
+  return out;
+});
+COMMANDS.dice.show = (n) => 'dice: ' + n.args.map(showRaw).join(', ') + ' (number of dice, faces' + (n.args[2] ? ', sum' : '') + ')';
+
+// ---- letters of a word: the model writes  arrangements of MISSISSIPPI ----------------------------------------------------------------
+const WORD_BASE = 27n;
+const encodeWord = (w) => Array.from(w.toUpperCase()).reduce((v, c) => v * WORD_BASE + BigInt(c.charCodeAt(0) - 64), 0n);
+function decodeWord(v) {
+  let s = '';
+  while (v > 0n) {
+    s = String.fromCharCode(64 + Number(v % WORD_BASE)) + s;
+    v /= WORD_BASE;
+  }
+  return s;
+}
+defCmd('anagrams wordperm arrangementsof', (n) => {
+  needArgs(n, 1, 1, 'a word');
+  const word = decodeWord(intArg(n.args[0]));
+  if (word.length < 1 || word.length > 60 || /[^A-Z]/.test(word)) throw new MathError('give a word of letters, for example arrangements of MISSISSIPPI');
+  const counts = new Map();
+  Array.from(word).forEach((c) => counts.set(c, (counts.get(c) || 0) + 1));
+  const total = bigFactorial(BigInt(word.length));
+  let div = 1n;
+  counts.forEach((k) => { div *= bigFactorial(BigInt(k)); });
+  const out = newOut();
+  out.work.push('The word ' + word + ' has ' + word.length + ' letters: ' + Array.from(counts).map(([c, k]) => c + ' \u00d7' + k).join(', '));
+  out.work.push(word.length + '! / (' + Array.from(counts.values()).map((k) => k + '!').join('\u00b7') + ') \u2014 repeated letters make some arrangements identical');
+  return intOut(out, total / div);
+});
+COMMANDS.anagrams.show = (n) => 'distinct arrangements of the letters of ' + decodeWord(intArg(n.args[0]));
+
+// ---- birthday problem, Pascal rows, circular arrangements ----------------------------------------------------------------------
+defCmd('birthday birthdayproblem', (n) => {
+  needArgs(n, 1, 2, 'the number of people (and optionally the number of days, default 365)');
+  const people = Number(intArg(n.args[0]));
+  const days = n.args[1] ? Number(intArg(n.args[1])) : 365;
+  if (people < 1 || people > 5000 || days < 1 || days > 100000) throw new MathError('use at most 5000 people and 100000 days');
+  let allDifferent = Q1;
+  for (let i = 0; i < people; i++) allDifferent = allDifferent.mul(new Q(BigInt(Math.max(days - i, 0)), BigInt(days)));
+  const p = Q1.sub(allDifferent);
+  const out = newOut();
+  out.answer.push('P(at least two of ' + people + ' people share a birthday) = ' + (p.isInt() ? p.toString() : fmtNum(p.toNumber())));
+  out.work.push('P(all different) = ' + Array.from({ length: Math.min(people, 4) }, (_, i) => '(' + (days - i) + '/' + days + ')').join('\u00b7') + (people > 4 ? '\u00b7\u00b7\u00b7' : '') + ' = ' + fmtNum(allDifferent.toNumber()) + ';  the answer is 1 minus that (' + days + ' equally likely days)');
+  if (days === 365 && people < 366) {
+    let need = 1;
+    let q = Q1;
+    while (need < 366 && Q1.sub(q).toNumber() < 0.5) {
+      q = q.mul(new Q(BigInt(365 - need + 1), 365n));
+      need++;
+    }
+    out.notes.push('With 365 days, ' + (need - 1) + ' or ' + need + ' people is where the chance first passes 50%.');
+  }
+  out.value = { q: p };
+  return out;
+});
+defCmd('pascal pascalrow', (n) => {
+  const [r] = ints(n, 1, 1, 'the row number (row 0 is 1)');
+  if (r < 0n || r > 200n) throw new MathError('rows 0 to 200 are supported');
+  const row = Array.from({ length: Number(r) + 1 }, (_, k) => binom(r, BigInt(k)));
+  const out = newOut();
+  out.answer.push(row.join(', '));
+  out.work.push('Row ' + r + ' of Pascal\'s triangle: C(' + r + ', k) for k = 0 \u2026 ' + r + ';  the entries add up to 2^' + r + ' = ' + 2n ** r);
+  return out;
+});
+defCmd('circular circularperm', (n) => {
+  const [r] = ints(n, 1, 1, 'the number of people around the table');
+  nonNeg(r, 'circular');
+  if (r < 1n) throw new MathError('at least one person is needed');
+  return intOut(newOut(), bigFactorial(r - 1n), r + ' people around a round table (rotations count as the same seating): (' + r + ' \u2212 1)!');
+});
+
+/** Called by convertDiscrete: "arrangements of MISSISSIPPI" -> anagrams(<encoded word>) */
+const WORD_STOP = new Set(['the', 'of', 'a', 'an', 'n', 'objects', 'items', 'people', 'persons', 'letters', 'elements', 'things', 'books', 'balls', 'students', 'digits', 'numbers', 'boys', 'girls', 'men', 'women', 'children', 'cards', 'colors', 'colours', 'flags', 'seats', 'chairs', 'ways', 'all', 'these', 'those', 'them', 'such', 'that', 'this', 'with', 'from', 'size', 'distinct', 'different', 'possible', 'many', 'letter', 'word', 'words']);
+function convertWordCounting(s) {
+  return s.replace(/\b(?:how\s+many\s+)?(?:(?:distinct|different|possible|unique)\s+)?(?:anagrams?|arrangements?|permutations?|rearrangements?|ways\s+(?:to\s+)?(?:arrange|rearrange))(?:\s+are\s+there)?\s*(?:\(\s*|\s*(?:(?:of|for|from)\s+)?)(?:the\s+)?(?:(?:letters|word|name)\s+(?:of\s+|in\s+)?)?(?:the\s+)?(?:word\s+)?["'\u201c\u201d]?([A-Za-z]{3,})["'\u201c\u201d]?\s*\)?/gi, (m, w) => (WORD_STOP.has(w.toLowerCase()) ? m : 'anagrams(' + encodeWord(w) + ')'));
 }
 // ======================================================================
 // 12. Statistics and probability
@@ -9236,7 +11266,7 @@ defCmd('midpoint', (n) => {
   out.answer.push('midpoint = ' + ptText(p.map((c, k) => simp(sDiv(sAdd([c, q[k]]), sI(2))))));
   return out;
 });
-defCmd('slope gradient', (n) => {
+defCmd('slope', (n) => {
   const [p, q] = twoPoints(n);
   if (p.length !== 2) throw new MathError('slope needs 2D points');
   const dx = simp(sSub(q[0], p[0]));
@@ -10763,11 +12793,13 @@ HELP.index = [
   'PHOTO MATH SOLVER - help topics (ask with  help <topic>):',
   '  syntax      how to write the math (digits, letters, ^, sqrt, fractions, matrices, units)',
   '  equations   equations, systems, inequalities, formulas ("solve for t"), complex numbers',
-  '  calculus    integrate, diff, limit, taylor, sum, product, differential equations',
+  '  calculus    integrate, diff, limit, taylor, sum, product, tangent lines, curve study, areas and volumes',
+  '  ode         differential equations (first order, linear of any order, systems) and Laplace transforms',
   '  algebra     factor, expand, simplify, apart, gcd, lcm, divide, complex numbers',
   '  matrix      determinant, inverse, eigenvalues, rank, systems, vectors',
   '  number      primes, divisors, modular arithmetic, counting, sequences, sets, number bases',
   '  stats       mean, standard deviation, regression, binomial/normal/t/chi-square, tests',
+  '  multivar    partial derivatives, gradient, Hessian, double integrals, critical points of f(x, y), Lagrange multipliers\n  optimize    linear programming (maximize ... subject to ...), maxima and minima, Newton\'s method',
   '  geometry    shapes, triangles, coordinates, conic sections',
   '  units       unit conversion;  finance;  chemistry;  physics',
   '  plot        graphs of functions, parametric and polar curves',
@@ -10802,7 +12834,39 @@ HELP.calculus = [
   '  limit(f, x, a)  limit(f, x, a, 1)  limit; the 4th argument 1 or -1 selects the side;  a may be oo',
   '  taylor(f, x, a, n)                 Taylor polynomial of order n around a  (maclaurin for a = 0)',
   '  sum(f, k, a, b)  product(f, k, a, b)   finite and infinite sums (convergence is reported)',
-  '  ODEs: y\' = 3y,  y\' + 2y = e^x,  y\'\' - 3y\' + 2y = 0,  y\'\' + y = sin(x),  with initial conditions y(0) = 1, y\'(0) = 0',
+  '  tangent(f, x, a)                   tangent and normal line at x = a',
+  '  critical(f, x)  critical(f, x, a, b)   critical points with max/min classification; with [a, b] also the absolute max and min',
+  '  inflection(f, x)   analyze(f, x)       full study: domain, intercepts, asymptotes, increasing/decreasing, extrema, inflection, concavity',
+  '  domain(f, x)   inversefunction(f, x)   compose(f, g, x)   implicit(x^2 + y^2 - 25)  (dy/dx and d2y/dx2)   newton(f, x, x0)',
+  '  areabetween(f, g, x)  or  areabetween(f, g, x, a, b)   volumerev(f, x, a, b)  volumerev(f, g, x, a, b)  (about the x-axis)',
+  '  shells(f, x, a, b)  (about the y-axis)   arclength(f, x, a, b)   surfacearea of revolution: surfacearearev(f, x, a, b)   avgvalue(f, x, a, b)',
+  '  differential equations and Laplace transforms:  help ode',
+].join('\n');
+HELP.ode = [
+  'DIFFERENTIAL EQUATIONS (write the equation as it is; add initial conditions after a comma or semicolon: y(0) = 1, y\'(0) = 0)',
+  '  first order:  y\' = 3y   y\' + 2y = e^x   y\' = x*y   y\' = y(1 - y)   y\' - y/x = x^2   y\' + y = x*y^3 (Bernoulli)   y\' = (x + y)/x (homogeneous)',
+  '                (x + y) dx + (x - y) dy = 0   or   M dx + N dy = 0   (exact equations and integrating factors depending on x or y only)',
+  '  linear, constant coefficients, any order:  y\'\' - 3y\' + 2y = 0   y\'\' + y = sin(x)   y\'\'\' - y = e^(2x)   y\'\' + 4y = tan(2x)   (forcing: polynomials, exponentials, sin, cos, sinh, cosh, products; order 2 also tan, sec, ln, 1/x ... by variation of parameters)',
+  '  Euler-Cauchy:  x^2*y\'\' + x*y\' + y = ln(x)         systems:  x\' = 3x + y; y\' = x + 3y; x(0) = 1, y(0) = 0   (2 or 3 equations, constant coefficients)',
+  '  laplace(f, t)   laplace(f, t, s)   ilaplace(F, s)   ilaplace(F, s, t)       e.g. laplace(t^2*e^(-3t) + sin(2t), t),  ilaplace((s+1)/(s^2+2s+5), s)',
+  '  every solution is checked by substituting it back into the equation',
+].join('\n');
+HELP.multivar = [
+  'SEVERAL VARIABLES',
+  '  partial derivatives: diff(x^2*y, y)   grad(f, x, y)   grad(f, [x, y], [1, 2])  (gradient at a point)   hessian(f, x, y)   laplacian(f, x, y, z)',
+  '  jacobian([f, g], [x, y])   divergence([P, Q, R], [x, y, z])   curl([P, Q, R], [x, y, z])   directional(f, [x, y], [a, b], [u, v])   tangentplane(f, x, y, a, b)',
+  '  critical points of f(x, y) (and f(x, y, z)) with the second-derivative test:   critical(x^3 - 3*x*y + y^3, x, y)',
+  '  Lagrange multipliers:   lagrange(x*y, x + y, 10, x, y)   (maximise/minimise f on g = c);  lagrange(f, g, x, y) means g = 0',
+  '  double and triple integrals are nested:   integrate(integrate(x*y, y, 0, x), x, 0, 2)   (inner limits may contain the outer variable)',
+].join('\n');
+HELP.optimize = [
+  'OPTIMISATION',
+  '  linear programming, written as in the book (up to 4 variables, exact):',
+  '     maximize 3x + 2y subject to x + y <= 4, x <= 3, x, y >= 0',
+  '     minimize 2x + 3y subject to x + y >= 4, x + 3y >= 6, x, y >= 0          add "x and y are integers" for integer programs',
+  '     answers: the optimum, every corner point of the feasible region, "unbounded" or "no feasible solution"',
+  '  one variable: critical(f, x)   critical(f, x, a, b)  (absolute max/min on [a, b])   analyze(f, x)   newton(f, x, x0)',
+  '  two variables: critical(f, x, y)   lagrange(f, g, c, x, y)',
 ].join('\n');
 HELP.algebra = [
   'ALGEBRA AND COMPLEX NUMBERS',
@@ -10819,6 +12883,7 @@ HELP.matrix = [
   '  det(A) inv(A) transpose(A) trace(A) rank(A) rref(A) nullspace(A) [kernel] colspace(A) [columnspace] charpoly(A)',
   '  eigen(A) [eig]  (eigenvalues + eigenvectors)   diagonalize(A)   lu(A)   linsolve(A, b)   A*B   A^3   A^-1   2A + B',
   '  dot(u, v) cross(u, v) norm(v) [magnitude, length] normalize(v) angle(u, v) proj(u, v) [projection]',
+  '  gramschmidt([1,1,0],[1,0,1],[0,1,1])  [orthogonalize, orthonormalize]   orthogonal and orthonormal basis (rows of a matrix also work)',
   '  A system  2x + y = 5; x - y = 1  can also be written directly as equations.',
 ].join('\n');
 HELP.number = [
@@ -10828,6 +12893,7 @@ HELP.number = [
   '  crt([2,3],[3,5])  or  x \u2261 2 (mod 3), x \u2261 3 (mod 5)       3x \u2261 4 (mod 7)  =  congruence(3x, 4, 7) [solvecongruence]       diophantine(3x + 5y, 1)  (3x+5y=1 in integers)',
   '  factorial(n)  ncr(n, k)  (or 5 choose 2, C(5,2), 5C2)   npr(n, k)   multiset(n, k)   multinomial(2,3,1)   catalan(n)',
   '  fibonacci(n) lucas(n) derangements(n) stirling1(n,k) stirling2(n,k) bell(n) partitions(n)',
+  '  dice(2, 6)  dice(3, 6, 10)  (distribution / P(sum = 10) of 3 six-sided dice)   anagrams of MISSISSIPPI  (distinct arrangements of the letters)   birthday(23)   pascal(6)   circular(8)',
   '  sequence(2, 6, 12, 20)   next terms + general term (arithmetic, geometric, polynomial, Fibonacci-type)',
   '  arith(a1, d, n)  nth term and sum;   geom(a1, r, n)  nth term and sum (infinite sum when |r| < 1)',
   '  union([1,2],[2,3]) intersection(A, B) setdiff(A, B) symdiff(A, B) powerset(n)',
@@ -10871,7 +12937,7 @@ HELP.plot = [
 ].join('\n');
 const HELP_ALIAS = {
   '': 'index', help: 'index', commands: 'index', all: 'index', topics: 'index', input: 'syntax', notation: 'syntax', solve: 'equations', inequalities: 'equations', systems: 'equations', formulas: 'equations',
-  ode: 'calculus', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
+  diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
   discrete: 'number', counting: 'number', probability: 'stats', statistics: 'stats', geometry: 'geometry', conic: 'geometry', conics: 'geometry', triangles: 'geometry',
   finance: 'units', chemistry: 'units', physics: 'units', conversion: 'units', graph: 'plot', plots: 'plot', plotting: 'plot', graphs: 'plot',
 };
@@ -10883,6 +12949,194 @@ function helpFor(text) {
   const key0 = HELP[topic] ? topic : HELP_ALIAS[topic];
   if (!key0 || !HELP[key0]) return HELP.index + '\n(unknown topic "' + topic + '")';
   return HELP[key0];
+}
+// ======================================================================
+// 16. Linear programming:  "maximize 3x + 2y subject to x + y <= 4, x <= 3, x >= 0, y >= 0"
+//     Exact: every vertex of the feasible region is found with rational arithmetic.
+//     Add the word "integer(s)" to restrict the variables to whole numbers.
+// ======================================================================
+const LP_START = /^\s*(?:please\s+)?(maxim(?:ize|ise)|minim(?:ize|ise)|max|min)\b(?!\s*\()\s*:?\s*([\s\S]*)$/;
+const LP_BIG = qInt(10).pow(9);
+
+function splitObjective(rest) {
+  const m = /(?:\b(?:subject\s+to|such\s+that|where|given|constraints?|under)\b|\bs\.\s?t\.|\bs\/t\b)\s*:?|:/.exec(rest);
+  if (m) return [rest.slice(0, m.index), rest.slice(m.index + m[0].length)];
+  const parts = rest.split(/[;\n]/);
+  if (parts.length > 1) return [parts[0], parts.slice(1).join(';')];
+  return null;
+}
+function lpConstraintTexts(text) {
+  let s = text.replace(/\band\b/g, ';');
+  // "x, y >= 0" -> "x >= 0; y >= 0"
+  s = s.replace(/((?:\u0002?[a-z](?:_\(?\w+\)?)?\s*,\s*)+\u0002?[a-z](?:_\(?\w+\)?)?)\s*(>=|<=|>|<)\s*([^,;\n]+)/g, (m, vars, op, rhs) => vars.split(',').map((v) => v.trim() + ' ' + op + ' ' + rhs.trim()).join('; '));
+  return s.split(/[;\n,]/).map((t) => t.trim()).filter(Boolean);
+}
+const LP_SHOW = { '<=': '\u2264', '>=': '\u2265', '<': '<', '>': '>', '=': '=' };
+
+function solveSquare(A, b) {
+  const n = A.length;
+  const { M, pivots, inconsistent } = rrefQ(A.map((r, i) => r.concat([b[i]])), n);
+  if (inconsistent || pivots.length < n) return null;
+  return M.map((r) => r[n]);
+}
+function* combinations_(m, k) {
+  const idx = Array.from({ length: k }, (_, i) => i);
+  if (k > m) return;
+  for (;;) {
+    yield idx.slice();
+    let i = k - 1;
+    while (i >= 0 && idx[i] === m - k + i) i--;
+    if (i < 0) return;
+    idx[i]++;
+    for (let j = i + 1; j < k; j++) idx[j] = idx[j - 1] + 1;
+  }
+}
+function tryLinearProgram(text) {
+  const m0 = LP_START.exec(text);
+  if (!m0) return null;
+  const goal = /^max/.test(m0[1]) ? 1 : -1;
+  const parts = splitObjective(m0[2]);
+  if (!parts) return null;
+  let objText = parts[0].trim();
+  const integerOnly = /\binteger|\bwhole\s+numbers?/.test(text);
+  const nonNeg = /non-?\s?negative/.test(text);
+  // clauses such as "x and y are integers" are not constraints
+  const consClean = parts[1]
+    .replace(/(?:[,;]\s*|\band\s+)?(?:\u0002?[a-z]\s*(?:,|\band\b)\s*)*\u0002?[a-z]\s+(?:are|is)\s+(?:all\s+)?(?:non-?\s?negative\s+)?(?:integers?|whole\s+numbers?)\b/g, ' ')
+    .replace(/[^;,\n]*\b(?:integers?|whole\s+numbers?|non-?\s?negative)\b[^;,\n]*/g, ' ');
+  const consText = lpConstraintTexts(consClean);
+  if (!consText.length && !nonNeg) return null;
+  // "z = 3x + 2y" -> the expression on the right
+  const eqAt = topLevelRelations(objText).find((o) => o.op === '=');
+  if (eqAt) objText = objText.slice(eqAt.i + 1);
+  objText = cleanStatement(objText);
+  let objNode;
+  try {
+    objNode = parseExpression(objText);
+  } catch (e) {
+    return null;
+  }
+  const sts = consText.map((t) => parseStatement(cleanStatement(t)));
+  if (sts.some((s) => s.kind === 'expr')) throw new MathError('each constraint needs a relation such as x + y <= 4');
+  const vars = new Set();
+  collectVars(objNode, vars);
+  const conds = [];
+  sts.forEach((st) => {
+    if (st.kind === 'eq') conds.push({ lhs: st.lhs, op: '=', rhs: st.rhs });
+    else st.conds.forEach((c) => conds.push(c));
+  });
+  conds.forEach((c) => {
+    collectVars(c.lhs, vars);
+    collectVars(c.rhs, vars);
+  });
+  const names = sortedVars(vars);
+  if (nonNeg) names.forEach((nm) => conds.push({ lhs: { t: 'var', name: nm }, op: '>=', rhs: { t: 'num', q: Q0, f: 0, text: '0' } }));
+  if (names.length < 1 || names.length > 4) throw new MathError('linear programs with 1 to 4 variables are supported');
+  if (conds.length > 16) throw new MathError('at most 16 constraints are supported');
+  const form = (lhs, rhs) => affineForm({ lhs, rhs }, names);
+  const obj = form(objNode, { t: 'num', q: Q0, f: 0, text: '0' });
+  if (!obj) throw new MathError('the objective must be linear in the variables');
+  // constraints as  a\u00b7x <= b
+  const rows = [];
+  const shown = [];
+  conds.forEach((c) => {
+    const f = form(c.lhs, c.rhs);
+    if (!f) throw new MathError('every constraint must be linear: ' + showRaw(c.lhs) + ' ' + c.op + ' ' + showRaw(c.rhs));
+    const a = f.coef;
+    const b = f.c0.neg();
+    const flip = c.op === '>=' || c.op === '>';
+    const norm = flip ? a.map((v) => v.neg()) : a;
+    const nb = flip ? b.neg() : b;
+    rows.push({ a: norm, b: nb });
+    if (c.op === '=') rows.push({ a: a.map((v) => v.neg()), b: b.neg() });
+    shown.push(showRaw(c.lhs) + ' ' + LP_SHOW[c.op] + ' ' + showRaw(c.rhs));
+  });
+  const n = names.length;
+  const box = [];
+  names.forEach((_, j) => {
+    const up = names.map((__, k) => (k === j ? Q1 : Q0));
+    box.push({ a: up, b: LP_BIG, box: true });
+    box.push({ a: up.map((v) => v.neg()), b: LP_BIG, box: true });
+  });
+  const all = rows.concat(box);
+  const feasible = (x) => all.every((r) => r.a.reduce((s, c, j) => s.add(c.mul(x[j])), Q0).sub(r.b).sign() <= 0);
+  const verts = [];
+  const seen = new Set();
+  for (const idx of combinations_(all.length, n)) {
+    const x = solveSquare(idx.map((i) => all[i].a), idx.map((i) => all[i].b));
+    if (!x || !feasible(x)) continue;
+    const key0 = x.map((q) => q.toString()).join('|');
+    if (seen.has(key0)) continue;
+    seen.add(key0);
+    verts.push(x);
+  }
+  const out = newOut();
+  const readAs = (goal > 0 ? 'maximize ' : 'minimize ') + showRaw(objNode) + ' subject to ' + shown.join(';  ');
+  const objVal = (x) => obj.coef.reduce((s, c, j) => s.add(c.mul(x[j])), obj.c0);
+  const pointText = (x) => '(' + names.map((nm, j) => nm + ' = ' + qText(x[j])).join(', ') + ')';
+  if (!verts.length) {
+    out.answer.push('no feasible solution: the constraints contradict each other');
+    return { readAs, out };
+  }
+  const onBox = (x) => x.some((q) => q.abs().sub(LP_BIG).sign() >= 0);
+  const real = verts.filter((x) => !onBox(x));
+  let best = null;
+  verts.forEach((x) => {
+    const v = objVal(x).mul(qInt(goal));
+    if (best === null || v.sub(best).sign() > 0) best = v;
+  });
+  const optimal = verts.filter((x) => objVal(x).mul(qInt(goal)).eq(best));
+  if (optimal.every(onBox)) {
+    out.answer.push('unbounded: the objective can be made arbitrarily ' + (goal > 0 ? 'large' : 'small') + ' inside the feasible region');
+    return { readAs, out };
+  }
+  const optimalReal = optimal.filter((x) => !onBox(x));
+  if (integerOnly) {
+    if (real.length !== verts.length) throw new MathError('integer programming needs a bounded feasible region');
+    const lo = names.map((_, j) => floorQ(real.reduce((m, x) => (x[j].sub(m).sign() < 0 ? x[j] : m), real[0][j])));
+    const hi = names.map((_, j) => real.reduce((m, x) => (x[j].sub(m).sign() > 0 ? x[j] : m), real[0][j]));
+    const spans = names.map((_, j) => Number(floorQ(hi[j]).n - lo[j].n) + 1);
+    if (spans.reduce((a, b) => a * b, 1) > 2000000) throw new MathError('the integer search region is too large');
+    let bestI = null;
+    let bestPts = [];
+    const cur = [];
+    const rec = (j) => {
+      if (j === n) {
+        const x = cur.map((v) => qInt(v));
+        if (!feasible(x)) return;
+        const v = objVal(x).mul(qInt(goal));
+        if (bestI === null || v.sub(bestI).sign() > 0) {
+          bestI = v;
+          bestPts = [x];
+        } else if (v.eq(bestI)) bestPts.push(x);
+        return;
+      }
+      for (let v = Number(lo[j].n); v <= Number(floorQ(hi[j]).n); v++) {
+        cur[j] = v;
+        rec(j + 1);
+      }
+    };
+    rec(0);
+    if (!bestPts.length) {
+      out.answer.push('no integer point satisfies all the constraints');
+      return { readAs, out };
+    }
+    out.answer.push((goal > 0 ? 'maximum' : 'minimum') + ' value ' + qText(objVal(bestPts[0])) + ' (integer solution) at ' + bestPts.slice(0, 4).map(pointText).join(' or '));
+    out.work.push('Without the integer requirement the optimum is ' + qText(objVal(optimalReal[0])) + ' at ' + pointText(optimalReal[0]) + '; the best whole-number point of the region was found by checking every one');
+    return { readAs, out };
+  }
+  out.answer.push((goal > 0 ? 'maximum' : 'minimum') + ' value = ' + qText(objVal(optimalReal[0])) + ' at ' + optimalReal.slice(0, 4).map(pointText).join(' and ') + (optimal.length > 1 ? '  (optimal along a whole edge: every point between these corners' + (optimal.some(onBox) ? ', and along the unbounded edge,' : '') + ' gives the same value)' : ''));
+  // vertices listed in order around the region for two variables
+  let listed = real;
+  if (n === 2 && real.length > 2) {
+    const cx = real.reduce((s, x) => s + x[0].toNumber(), 0) / real.length;
+    const cy = real.reduce((s, x) => s + x[1].toNumber(), 0) / real.length;
+    listed = real.slice().sort((p, q) => Math.atan2(p[1].toNumber() - cy, p[0].toNumber() - cx) - Math.atan2(q[1].toNumber() - cy, q[0].toNumber() - cx));
+  }
+  if (real.length !== verts.length) out.notes.push('The feasible region is unbounded, but the objective is bounded in this direction.');
+  out.work.push('Corner points of the feasible region (objective value in brackets): ' + listed.map((x) => pointText(x) + ' [' + qText(objVal(x)) + ']').join(';  '));
+  out.work.push('The optimum of a linear objective lies at a corner point; all corner points were found exactly by solving every pair/triple of constraint boundaries and keeping the feasible ones.');
+  return { readAs, out };
 }
 
 // ======================================================================

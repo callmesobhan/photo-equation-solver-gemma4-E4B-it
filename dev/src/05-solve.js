@@ -678,20 +678,10 @@ function solveFloatLinear(A, b) {
   }
   return x;
 }
-function solveNonlinear(eqs, vars) {
-  const out = newOut();
-  const n = vars.length;
-  if (eqs.length !== n) {
-    throw new MathError('there are ' + n + ' unknowns (' + vars.join(', ') + ') but ' + eqs.length + ' equation' + (eqs.length === 1 ? '' : 's') + '; I need the same number of equations as unknowns');
-  }
-  if (n > 3) throw new MathError('at most 3 unknowns are supported for non-linear systems');
-  const env = {};
-  const F = (x) => {
-    vars.forEach((nm, i) => { env[nm] = x[i]; });
-    return eqs.map((e) => evalNum(e.lhs, env) - evalNum(e.rhs, env));
-  };
+/** Real solutions of F(x) = 0 (F: array of n numbers -> array of n residuals) by Newton's method from a grid of starting points. */
+function newtonSolutions(F, n) {
   const norm = (a) => Math.max(...a.map(Math.abs));
-  const grid = n === 3 ? [-6, -2, -0.5, 0.5, 2, 6] : [-10, -5, -2.5, -1, -0.3, 0.3, 1, 2.5, 5, 10];
+  const grid = n >= 4 ? [-5, -1.5, -0.4, 0.4, 1.5, 5] : n === 3 ? [-6, -2, -0.5, 0.5, 2, 6] : [-10, -5, -2.5, -1, -0.3, 0.3, 1, 2.5, 5, 10];
   const starts = [[]];
   for (let k = 0; k < n; k++) {
     const next = [];
@@ -736,6 +726,21 @@ function solveNonlinear(eqs, vars) {
     if (sols.length >= 12) break;
   }
   sols.sort((a, b) => a[0] - b[0] || (a[1] || 0) - (b[1] || 0));
+  return sols;
+}
+function solveNonlinear(eqs, vars) {
+  const out = newOut();
+  const n = vars.length;
+  if (eqs.length !== n) {
+    throw new MathError('there are ' + n + ' unknowns (' + vars.join(', ') + ') but ' + eqs.length + ' equation' + (eqs.length === 1 ? '' : 's') + '; I need the same number of equations as unknowns');
+  }
+  if (n > 3) throw new MathError('at most 3 unknowns are supported for non-linear systems');
+  const env = {};
+  const F = (x) => {
+    vars.forEach((nm, i) => { env[nm] = x[i]; });
+    return eqs.map((e) => evalNum(e.lhs, env) - evalNum(e.rhs, env));
+  };
+  const sols = newtonSolutions(F, n);
   out.work.push('Type: system of ' + n + ' non-linear equations - solved numerically (Newton’s method from many starting points)');
   if (!sols.length) {
     out.answer.push('no real solution found');
@@ -827,6 +832,8 @@ function solveProblem(text, solveFor) {
     norm = sp.text;
     solveFor = solveFor || sp.target;
   }
+  const lp = tryLinearProgram(norm);
+  if (lp) return lp;
   const parts = splitStatements(stripAsk(norm)).map(cleanStatement).filter(Boolean);
   if (!parts.length) throw new MathError('no math was found in the input');
   let sts = parts.map(parseStatement);

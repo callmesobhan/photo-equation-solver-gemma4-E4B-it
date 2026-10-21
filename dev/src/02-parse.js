@@ -164,6 +164,7 @@ function normalizeText(raw) {
   s = s.replace(/\binfinity\b|\binf\b/g, 'oo');
   s = convertLogBase(s);
   s = convertNotation(s);
+  s = convertDifferentialForm(s);
   if ((s.match(/\|/g) || []).length % 2 === 0) {
     let open = true;
     s = s.replace(/\|/g, () => ((open = !open) ? ')' : 'abs('));
@@ -253,12 +254,15 @@ function splitTopLevel(s, re) {
 
 /** Split into separate statements (system of equations / several relations). */
 function splitStatements(s) {
-  let parts = splitTopLevel(s, /^(?:[;\n\r]+|\band\b|&)/).map((p) => p.trim()).filter(Boolean);
-  if (parts.length === 1 && topLevelRelations(parts[0]).length >= 2 && parts[0].includes(',')) {
-    const trimmed = splitTopLevel(parts[0], /^,/).map((p) => p.trim()).filter(Boolean);
-    if (trimmed.length > 1 && trimmed.every((p) => topLevelRelations(p).length > 0)) parts = trimmed;
-  }
-  return parts;
+  const parts = splitTopLevel(s, /^(?:[;\n\r]+|\band\b|&)/).map((p) => p.trim()).filter(Boolean);
+  // a piece such as "x(0) = 1, y(0) = 0" holds several statements separated by commas
+  return parts.flatMap((part) => {
+    if (topLevelRelations(part).length >= 2 && part.includes(',')) {
+      const trimmed = splitTopLevel(part, /^,/).map((p) => p.trim()).filter(Boolean);
+      if (trimmed.length > 1 && trimmed.every((p) => topLevelRelations(p).length > 0)) return trimmed;
+    }
+    return [part];
+  });
 }
 
 /** Drop a trailing question such as ", find x", "(x = ?)" or ", x = ?". */
@@ -340,6 +344,11 @@ function tokenize(s) {
         tok = { t: 'const', v: 'e' };
         i++;
       } else {
+        // a long word directly before "(" that contains no known function or command is a function this solver does not have
+        const word = /^[a-z]{5,}(?=\()/.exec(rest);
+        if (word && !FN_NAMES.some((f) => word[0].includes(f)) && !Object.keys(COMMANDS).some((f) => word[0].includes(f)) && !/pi|oo/.test(word[0])) {
+          throw new MathError('"' + word[0] + '" is not a function this solver knows; see "help" for the supported functions and commands');
+        }
         tok = { t: 'id', v: c };
         i++;
       }

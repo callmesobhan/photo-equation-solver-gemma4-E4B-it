@@ -68,6 +68,7 @@ COMMANDS.diff.show = (n) => {
 // ---- integrals -----------------------------------------------------------------------------------------------------
 /** Value of F at a bound (limit when the bound is infinite or F blows up there). Returns S or null. */
 function endValue(F, v, bound, side) {
+  if (!bound.inf && (varsOfS(bound.S).size || Array.from(varsOfS(F)).some((u) => u !== v))) return simp(subsS(F, v, bound.S)); // other letters present: plain substitution
   if (!bound.inf) {
     const an = numS(bound.S, {});
     if (!singularAt(F, v, an)) {
@@ -114,6 +115,20 @@ defCmd('integrate integral', (n) => {
   }
   const lo = boundOf(bounds[0]);
   const hi = boundOf(bounds[1]);
+  const otherLetters = Array.from(varsOfS(S)).filter((u) => u !== v).length || (lo.S && varsOfS(lo.S).size) || (hi.S && varsOfS(hi.S).size);
+  if (otherLetters) {
+    // the integrand or a limit contains other letters (inner integral of a double integral, a parameter): exact only
+    const F = antiderivative(S, v);
+    if (!F) throw new MathError('I could not find an antiderivative of ' + fmtS(S) + ' (it is needed because other letters appear)');
+    const top = endValue(F, v, hi, -1);
+    const bot = endValue(F, v, lo, 1);
+    if (!top || !bot) throw new MathError('the limits could not be substituted');
+    const res = simp(expandS(sSub(top, bot)));
+    out.work.push('Definite integral of ' + fmtS(S) + ' from ' + intLimitsText(lo, hi) + ' (the other letters are treated as constants / the limits)');
+    out.work.push('Antiderivative: ' + fmtS(F));
+    out.answer.push(fmtS(res));
+    return withValue(out, res);
+  }
   const a = boundNum(lo);
   const b = boundNum(hi);
   const num = integrateNumeric(S, v, a, b);

@@ -107,7 +107,7 @@ function clearDenominators(E, v) {
     if (!bases.size) return E;
     let mult = S1;
     bases.forEach((x) => { mult = sMul([mult, sPow(x.b, sI(x.p))]); });
-    E = expandS(sMul([E, mult]));
+    E = expandS(sAdd(termsOf(E).map((t) => sMul([t, mult]))));
   }
   return E;
 }
@@ -169,7 +169,7 @@ function togetherDeep(e) {
     y.a.forEach(collect);
     let D = S1;
     bases.forEach((z) => { D = sMul([D, sPow(z.b, sI(z.p))]); });
-    return sDiv(expandS(sMul([y, D])), D);
+    return sDiv(expandS(sAdd(termsOf(y).map((t) => sMul([t, D])))), D);
   };
   return go(e);
 }

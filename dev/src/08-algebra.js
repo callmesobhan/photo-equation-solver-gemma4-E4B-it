@@ -316,11 +316,12 @@ function apartRF(r) {
       basis.forEach((b, idx) => {
         if (b.f === f && b.j === j) num[b.k] = coefs[idx];
       });
-      const nt = ptrim(num.slice());
+      // the denominator is content * (product of the primitive factors): n/d = poly + (1/content) * sum
+      const nt = ptrim(num.slice().map((c) => c.div(fp.content)));
       if (nt.length) terms.push({ num: nt, fac: f.poly, power: j });
     }
   }
-  return { poly: qpart, terms, content: fp.content };
+  return { poly: qpart, terms };
 }
 
 function apartText(ap, v) {

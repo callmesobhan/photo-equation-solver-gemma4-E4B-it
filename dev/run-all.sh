@@ -25,10 +25,18 @@ if "$PY" -c "import numpy, sympy, scipy" 2>/dev/null; then
   echo; echo "== 6. symbolic core vs sympy (random expressions, derivatives, expansion)"; node cas-props.mjs "$tmp/test-index.html"
   echo; echo "== 7. calculus battery: integrals, limits, sums vs sympy / scipy";          node calc-battery.mjs "$skill"
   echo; echo "== 8. discrete maths and statistics vs sympy / scipy / numpy";             for s in 7 11; do node disc-battery.mjs "$skill" $s; done
+  echo; echo "== 8b. calculus applications vs sympy / scipy";                              for s in 1 2; do node calcapps-battery.mjs "$skill" $s; done
+  echo; echo "== 8c. multivariable calculus vs sympy";                                    for s in 1 2; do node multivar-battery.mjs "$skill" $s; done
+  echo; echo "== 8d. linear programming vs scipy.optimize.linprog";                         for s in 1 2; do node lp-battery.mjs "$skill" $s; done
+  echo; echo "== 8e. Laplace transforms vs sympy / numerical integration";                   for s in 1 2; do node laplace-battery.mjs "$skill" $s; done
   echo; echo "== 9. linear algebra vs sympy";                                            for s in 1 2; do node linalg-battery.mjs "$skill" $s; done
 else
   echo; echo "== 6-9. skipped (python3 with numpy, sympy, scipy not found; see tests/requirements.txt)"
 fi
+echo; echo "== 8f. differential equations: every answer substituted back into its equation"; node ode-battery.mjs "$skill"; for s in 1 2; do node ode-fuzz.mjs "$skill" $s 400; done
+echo; echo "== 8h. random limits, Taylor polynomials, definite integrals (pole detection) and finite sums, checked numerically"; for s in 1 2; do node calc-random-battery.mjs "$skill" $s 80; done
+echo; echo "== 8i. random equations (rational, radical, exponential, log, abs, polynomial) and inequalities, checked by a numerical scan"; for s in 1 2; do node eq-battery.mjs "$skill" $s 80; done
+echo; echo "== 8g. random rational functions (non-monic factors): apart, integrals, inverse Laplace, checked numerically"; for s in 1 2; do node rational-battery.mjs "$skill" $s 100; done
 if "$PY" -c "import pint, periodictable, numpy_financial" 2>/dev/null; then
   echo; echo "== 10. geometry, units, chemistry, finance, complex numbers vs pint / periodictable / numpy-financial"; for s in 3 4; do node applied-battery.mjs "$skill" $s; done
 else

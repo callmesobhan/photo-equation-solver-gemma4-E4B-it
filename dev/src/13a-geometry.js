@@ -212,7 +212,7 @@ defCmd('midpoint', (n) => {
   out.answer.push('midpoint = ' + ptText(p.map((c, k) => simp(sDiv(sAdd([c, q[k]]), sI(2))))));
   return out;
 });
-defCmd('slope gradient', (n) => {
+defCmd('slope', (n) => {
   const [p, q] = twoPoints(n);
   if (p.length !== 2) throw new MathError('slope needs 2D points');
   const dx = simp(sSub(q[0], p[0]));

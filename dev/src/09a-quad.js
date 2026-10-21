@@ -150,13 +150,52 @@ function integrateNumeric(S, x, a, b) {
     const nb = (Math.abs(vals[i - 1]) + Math.abs(vals[i + 1])) / 2;
     if (!isFinite(v) || (Math.abs(v) > 1e6 * Math.max(1, med) && Math.abs(v) > 20 * nb && Math.abs(v) > 1e6)) bad.push(a + ((b - a) * i) / N);
   }
+  // poles that fall between sample points: a sign change that ends in a huge value (not in zero), or a sharp spike whose peak is huge
+  const xAt = (i) => a + ((b - a) * i) / N;
+  let brackets = 0;
+  for (let i = 0; i < N && brackets < 300; i++) {
+    const v0 = vals[i];
+    const v1 = vals[i + 1];
+    if (!isFinite(v0) || !isFinite(v1) || v0 * v1 >= 0) continue;
+    brackets++;
+    let l = xAt(i);
+    let h = xAt(i + 1);
+    const sl = Math.sign(v0);
+    for (let it = 0; it < 70; it++) {
+      const m = (l + h) / 2;
+      const fm = f(m);
+      if (!isFinite(fm)) break;
+      if (Math.sign(fm) === sl) l = m;
+      else h = m;
+    }
+    const peak = Math.max(Math.abs(f(l)), Math.abs(f(h)));
+    if (peak > 1e8 * Math.max(1, med)) bad.push((l + h) / 2);
+  }
+  for (let i = 1; i < N; i++) {
+    const v = Math.abs(vals[i]);
+    if (!isFinite(v) || v < 8 * Math.max(1, med) || v < Math.abs(vals[i - 1]) || v < Math.abs(vals[i + 1]) || v < 3 * Math.min(Math.abs(vals[i - 1]), Math.abs(vals[i + 1]))) continue;
+    let l = xAt(i - 1);
+    let h = xAt(i + 1);
+    for (let it = 0; it < 80; it++) {
+      const m1 = l + (h - l) / 3;
+      const m2 = h - (h - l) / 3;
+      if (Math.abs(f(m1)) < Math.abs(f(m2))) l = m1;
+      else h = m2;
+    }
+    if (Math.abs(f((l + h) / 2)) > 1e8 * Math.max(1, med)) bad.push((l + h) / 2);
+  }
+  bad.sort((p, q) => p - q);
   if (bad.length) {
+    // one probe per cluster of suspicious points: how fast does |f| grow when we approach it?
+    const clusters = bad.filter((t, i) => i === 0 || t - bad[i - 1] > (b - a) / 200);
+    for (const x0 of clusters) {
+      const probe = (d) => Math.max(Math.abs(f(x0 + d)), Math.abs(f(x0 - d)));
+      const p1 = probe(1e-4);
+      const p2 = probe(1e-7);
+      const p = Math.log(p2 / p1) / Math.log(1000);
+      if (isFinite(p) && p >= 0.95) return { value: Infinity, ok: false, diverges: true, note: 'the integrand has a non-integrable singularity near ' + fmtNum(x0) };
+    }
     const x0 = bad[Math.floor(bad.length / 2)];
-    const probe = (d) => Math.max(Math.abs(f(x0 + d)), Math.abs(f(x0 - d)));
-    const p1 = probe(1e-4);
-    const p2 = probe(1e-7);
-    const p = Math.log(p2 / p1) / Math.log(1000);
-    if (isFinite(p) && p >= 0.95) return { value: Infinity, ok: false, diverges: true, note: 'the integrand has a non-integrable singularity near ' + fmtNum(x0) };
     const cuts = [a].concat(bad.filter((t, i) => i === 0 || t - bad[i - 1] > (b - a) / 50), [b]);
     let total = 0;
     let ok = true;
