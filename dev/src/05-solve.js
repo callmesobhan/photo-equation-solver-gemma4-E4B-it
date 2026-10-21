@@ -778,6 +778,16 @@ function evaluateExpression(node) {
   } catch (e) {
     if (!(e instanceof NotAlgebraic)) throw e;
   }
+  try {
+    const S = fromAst(node);
+    const ev = varsOfS(S).size ? NaN : numS(S, {});
+    if (isFinite(ev)) {
+      out.answer.push(symText(S));
+      return out;
+    }
+  } catch (e) {
+    if (!(e instanceof MathError)) throw e;
+  }
   const val = evalNum(node, {});
   if (!isFinite(val)) throw new MathError('the result is undefined or not a real number');
   out.answer.push(describeNumber(val));
@@ -811,7 +821,13 @@ function compareConstants(lhs, op, rhs) {
 
 // ---- driver for one problem -----------------------------------------------------------
 function solveProblem(text, solveFor) {
-  const parts = splitStatements(stripAsk(normalizeText(text))).map(cleanStatement).filter(Boolean);
+  let norm = normalizeText(text);
+  const sp = splitTarget(norm);
+  if (sp.target) {
+    norm = sp.text;
+    solveFor = solveFor || sp.target;
+  }
+  const parts = splitStatements(stripAsk(norm)).map(cleanStatement).filter(Boolean);
   if (!parts.length) throw new MathError('no math was found in the input');
   let sts = parts.map(parseStatement);
   const special = trySpecial(sts, solveFor);
@@ -851,6 +867,7 @@ function solveProblem(text, solveFor) {
     const vars = new Set();
     eqs.forEach((e) => { collectVars(e.lhs, vars); collectVars(e.rhs, vars); });
     const names = sortedVars(vars);
+    if (solveFor && !names.includes(solveFor)) solveFor = names.find((n) => n.toLowerCase() === String(solveFor).toLowerCase()) || solveFor;
     if (names.length === 0) {
       out = newOut();
       const res = eqs.map((e) => compareConstants(e.lhs, '=', e.rhs));
@@ -858,6 +875,8 @@ function solveProblem(text, solveFor) {
       out.answer.push(all ? 'True: both sides are equal (' + fmtNum(res[0].l) + ')' : 'False: ' + fmtNum(res[0].l) + ' ≠ ' + fmtNum(res[0].r));
     } else if (names.length === 1 && eqs.length === 1) {
       out = solveOneUnknown(eqs[0], names[0]);
+    } else if (names.length >= 2 && eqs.length === 1 && !affineForm(eqs[0], names)) {
+      out = solveLiteralEquation(eqs[0], names, solveFor);
     } else {
       const forms = eqs.map((e) => affineForm(e, names));
       if (forms.every(Boolean)) out = solveLinear(eqs, names, forms, solveFor);

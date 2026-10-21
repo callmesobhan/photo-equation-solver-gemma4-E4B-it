@@ -18,7 +18,7 @@ function parseRequest(data) {
   let solveFor = '';
   const asText = (x) => (x && typeof x === 'object' ? String(x.equation || x.problem || x.text || '') : String(x === undefined || x === null ? '' : x));
   if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-    solveFor = String(obj.solve_for || obj.solveFor || obj.variable || obj.unknown || '').trim().toLowerCase();
+    solveFor = String(obj.solve_for || obj.solveFor || obj.variable || obj.unknown || '').trim();
     if (Array.isArray(obj.problems)) obj.problems.forEach((p) => problems.push(asText(p)));
     else if (Array.isArray(obj.equations)) problems.push(obj.equations.map(asText).join(';'));
     else {
@@ -38,7 +38,7 @@ function parseRequest(data) {
 }
 
 function explain(e) {
-  if (e instanceof MathError) return e.message;
+  if (e instanceof MathError) return unmarkLetters(e.message);
   if (e instanceof RangeError) return 'the numbers or expression are too large to handle';
   return 'unexpected failure (' + (e && e.message ? e.message : e) + ')';
 }

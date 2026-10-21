@@ -150,6 +150,8 @@ function normalizeText(raw) {
     .replace(/[“”‘’]/g, '')
     .replace(/[αβγδθλμφωρσ]/g, (c) => GREEK[c]);
   s = s.replace(/(\d+(?:\.\d+)?|[a-zA-Z])\s*°/g, '($1*pi/180)').replace(/°/g, '*pi/180');
+  s = convertDiscrete(s);
+  s = convertSubscripts(s);
   if (/[\\$]/.test(s)) s = convertLatex(s);
   s = convertSemicolonMatrices(s);
   // A lone opening brace in front of a system of equations.
@@ -158,7 +160,7 @@ function normalizeText(raw) {
   s = s.replace(/\*\*/g, '^').replace(/=>/g, '>=').replace(/=</g, '<=').replace(/==/g, '=');
   s = s.replace(/([\d)])[ \t]+[xX][ \t]+([\d(])/g, '$1*$2');
   s = s.replace(/(^|[^\d.\/])(\d+)[ \t]+(\d+)[ \t]*\/[ \t]*(\d+)(?![\d.])/g, '$1($2+$3/$4)');
-  s = s.toLowerCase().replace(/%\s*of\s+/g, '% * ');
+  s = markUppercaseLetters(s).toLowerCase().replace(/%\s*of\s+/g, '% * ');
   s = s.replace(/\binfinity\b|\binf\b/g, 'oo');
   s = convertLogBase(s);
   s = convertNotation(s);
@@ -167,6 +169,40 @@ function normalizeText(raw) {
     s = s.replace(/\|/g, () => ((open = !open) ? ')' : 'abs('));
   }
   return s;
+}
+
+/** A single capital letter (E, F, V, R ...) is a variable of its own, distinct from the small letter: \u0002 + letter. */
+function markUppercaseLetters(s) {
+  return s.replace(/[A-Z]/g, (L, off) => {
+    const before = s[off - 1] || '';
+    const after = s[off + 1] || '';
+    if (/[A-Za-z\u0002]/.test(before) || /[A-Za-z]/.test(after)) return L;
+    if (L === 'E' && /[\d.]/.test(before) && /[\d+-]/.test(after)) return L; // 1.5E3
+    return '\u0002' + L.toLowerCase();
+  });
+}
+/** Show the marker as the capital letter again (error messages quote the text). */
+const unmarkLetters = (s) => String(s).replace(/\u0002([a-z])/g, (m, l) => l.toUpperCase());
+
+/** r1, r2 / x0, v0 written without an underscore are subscripted letters (r_1, r_2, x_0), not products. */
+function convertSubscripts(s) {
+  if (!/[a-z]\d/i.test(s)) return s;
+  const lowered = s.toLowerCase();
+  const seen = new Map();
+  lowered.replace(/(^|[^a-z0-9_.])([a-df-z])(\d{1,2})(?![a-z0-9(.])/g, (m, pre, l, d) => {
+    if (!seen.has(l)) seen.set(l, new Set());
+    seen.get(l).add(d);
+    return m;
+  });
+  lowered.replace(/([a-df-z])_\(?(\d{1,2})\)?/g, (m, l, d) => {
+    if (!seen.has(l)) seen.set(l, new Set());
+    seen.get(l).add(d);
+    return m;
+  });
+  return s.replace(/(^|[^a-zA-Z0-9_.])([a-df-zA-DF-Z])(\d{1,2})(?![a-zA-Z0-9(.])/g, (m, pre, l, d) => {
+    const set = seen.get(l.toLowerCase());
+    return set && (set.size > 1 || d === '0') ? pre + l + '_(' + d + ')' : m;
+  });
 }
 
 const HAS_REL = /<=|>=|!=|=|<|>/;
@@ -271,11 +307,20 @@ function tokenize(s) {
     }
     const rest = s.slice(i);
     let tok;
-    if (/[0-9.]/.test(c)) {
+    if (c === '\u0002') {
+      const sm = /^\u0002([a-z])(?:_(?:\(([0-9a-z]+)\)|([0-9]+|[a-z])(?![a-z0-9(])))?/.exec(rest);
+      if (!sm) throw new MathError('unexpected character in "' + unmarkLetters(s) + '"');
+      tok = { t: 'id', v: sm[1].toUpperCase() + (sm[2] || sm[3] ? '_' + (sm[2] || sm[3]) : '') };
+      i += sm[0].length;
+    } else if (/[0-9.]/.test(c)) {
       const m = /^(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?/.exec(rest);
       if (!m) throw new MathError('unexpected "' + c + '"');
       tok = { t: 'num', v: m[0] };
       i += m[0].length;
+    } else if (/[a-z]/.test(c) && rest[1] === '_' && /^[a-z]_(?:\(([0-9a-z]+)\)|([0-9]+|[a-z])(?![a-z0-9(]))/.test(rest)) {
+      const sm = /^[a-z]_(?:\(([0-9a-z]+)\)|([0-9]+|[a-z]))/.exec(rest);
+      tok = { t: 'id', v: c + '_' + (sm[1] || sm[2]) };
+      i += sm[0].length;
     } else if (/[a-z]/.test(c)) {
       const cmd = commandAt(rest);
       const fn = FN_NAMES.find((f) => rest.startsWith(f));
@@ -339,7 +384,7 @@ function parseExpression(src) {
   let i = 0;
   const peek = () => toks[i];
   const fail = (msg) => {
-    throw new MathError(msg + ' in "' + src + '"');
+    throw new MathError(msg + ' in "' + unmarkLetters(src) + '"');
   };
   const isOp = (tk, v) => !!tk && tk.t === 'op' && tk.v === v;
   const startsPrimary = (tk) => !!tk && (tk.t === 'num' || tk.t === 'id' || tk.t === 'const' || tk.t === 'fn' || tk.t === 'lp' || tk.t === 'lb');
@@ -579,8 +624,8 @@ function showRaw(n) {
   if (op === '*') {
     const l = show(n.a, n.a.t === 'bin' && n.a.op === '/' ? 7 : 2);
     const r = show(n.b, n.b.t === 'neg' || (n.b.t === 'bin' && n.b.op === '/') ? 7 : 2);
-    const implicit = /[0-9a-zπ)!%⁰-⁹²³¹\]]$/.test(l) && /^[a-zπ√([]/.test(r) && !/^[a-z]{2,}/.test(r) && !(/[a-z]$/.test(l) && /^e(\^|$)/.test(r));
-    const spaced = /[0-9a-zπ)!%⁰-⁹²³¹\]]$/.test(l) && (/^[a-z]{2,}/.test(r) || /^e(\^|$)/.test(r));
+    const implicit = /[0-9a-zA-Zπ)!%⁰-⁹²³¹\]]$/.test(l) && /^[a-zA-Zπ√(]/.test(r) && !/^[a-z]{2,}/.test(r) && !(/[a-zA-Z]$/.test(l) && /^e(\^|$)/.test(r)) && !(/\]$/.test(l) && /^\[/.test(r));
+    const spaced = /[0-9a-zA-Zπ)!%⁰-⁹²³¹\]]$/.test(l) && (/^[a-z]{2,}/.test(r) || /^e(\^|$)/.test(r));
     return l + (implicit ? '' : spaced ? ' ' : '·') + r;
   }
   if (op === '/') return show(n.a, 2) + '/' + show(n.b, n.b.t === 'neg' ? 7 : 3);

@@ -698,9 +698,9 @@ function fromAst(n) {
         case 'cbrt': return sPow(args[0], sN(new Q(1n, 3n)));
         case 'root': return sPow(args[1], sDiv(S1, args[0]));
         case 'exp': return sExp(args[0]);
-        case 'log10': return sDiv(sFn('ln', [args[0]]), sFn('ln', [sI(10)]));
-        case 'log2': return sDiv(sFn('ln', [args[0]]), sFn('ln', [sI(2)]));
-        case 'log': return args.length > 1 ? sDiv(sFn('ln', [args[0]]), sFn('ln', [args[1]])) : sDiv(sFn('ln', [args[0]]), sFn('ln', [sI(10)]));
+        case 'log10': return sLogBase(args[0], sI(10));
+        case 'log2': return sLogBase(args[0], sI(2));
+        case 'log': return args.length > 1 ? sLogBase(args[0], args[1]) : sLogBase(args[0], sI(10));
         default:
           if (AST_FN[n.fn]) return sFn(AST_FN[n.fn], args);
           throw new MathError('"' + n.fn + '" cannot be used inside this kind of expression');
@@ -708,6 +708,22 @@ function fromAst(n) {
     }
     default: throw new MathError('this expression cannot be used here');
   }
+}
+
+/** log of a in base b; a whole or fractional power of b collapses to a number (log(8, 2) = 3). */
+function sLogBase(a, b) {
+  if (a.k === 'n' && b.k === 'n' && a.q.sign() > 0 && b.q.sign() > 0 && !b.q.eq(Q1)) {
+    const f = Math.log(a.q.toNumber()) / Math.log(b.q.toNumber());
+    const fr = isFinite(f) ? toFraction(f, 24) : null;
+    if (fr && fr.q > 0 && Math.abs(fr.p) <= 200) {
+      const p = BigInt(fr.p);
+      const qd = BigInt(fr.q);
+      const lhs = b.q.pow(Number(p < 0n ? -p : p));
+      const rhs = a.q.pow(Number(qd));
+      if ((p >= 0n ? lhs.eq(rhs) : lhs.mul(rhs).eq(Q1))) return sN(new Q(p, qd));
+    }
+  }
+  return sDiv(sFn('ln', [a]), sFn('ln', [b]));
 }
 
 // ---- bridge to rational functions in one variable ---------------------------------------------------
