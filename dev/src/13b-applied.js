@@ -766,6 +766,7 @@ function convertApplied(s) {
   s = convertPlotWords(s);
   // balancing chemical equations and formula commands
   s = s.replace(/[₀-₉]/g, (c) => String(c.charCodeAt(0) - 0x2080));
+  s = convertChem2(s);
   s = s.replace(/\bbalance\s*(?:the\s+)?(?:equation|reaction)?\s*[:(]?\s*([A-Za-z0-9()\[\]·+ ]+?(?:->|=>|→|⟶|⇌|=)[A-Za-z0-9()\[\]·+ ]+?)\s*(?:\)\s*)?(?=$|[;\n])/gi, (m, rxn) => 'balance(' + chemIndex(rxn.trim().replace(/\)$/, '')) + ')');
   // a bare reaction such as "H2 + O2 -> H2O": every term a real formula and the same elements on both sides
   s = s.replace(/^\s*([A-Za-z0-9()\[\]·+ ]+?)\s*(?:->|=>|→|⟶|⇌)\s*([A-Za-z0-9()\[\]·+ ]+?)\s*$/, (m, lhs, rhs) => {

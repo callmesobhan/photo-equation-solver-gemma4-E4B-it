@@ -18,7 +18,7 @@ HELP.index = [
   '  stats       mean, standard deviation, regression, binomial/normal/t/chi-square, tests',
   '  multivar    partial derivatives, gradient, Hessian, double integrals, critical points of f(x, y), Lagrange multipliers\n  optimize    linear programming (maximize ... subject to ...), maxima and minima, Newton\'s method',
   '  geometry    shapes, triangles, coordinates, conic sections',
-  '  units       unit conversion;  finance;  chemistry;  physics',
+  '  units       unit conversion;  physics formulas\n  chemistry   molar mass, balancing, stoichiometry, limiting reagent, empirical formulas, pH, buffers, gases, elements, electron configurations\n  finance     interest, loans and amortization, bonds, depreciation, NPV / IRR / MIRR, growth rates',
   '  plot        graphs of functions, parametric and polar curves',
   'Write every command as name(arguments). The answer always starts with "Read as:" - check it matches the picture.',
 ].join('\n');
@@ -127,6 +127,11 @@ HELP.matrix = [
   '  eigen(A) [eig]  (eigenvalues + eigenvectors)   diagonalize(A)   lu(A)   linsolve(A, b)   A*B   A^3   A^-1   2A + B',
   '  dot(u, v) cross(u, v) norm(v) [magnitude, length] normalize(v) angle(u, v) proj(u, v) [projection]',
   '  gramschmidt([1,1,0],[1,0,1],[0,1,1])  [orthogonalize, orthonormalize]   orthogonal and orthonormal basis (rows of a matrix also work)',
+  '  qr(A) [qrdecomposition]  Q (orthonormal columns) and R (upper triangular), exact radicals   cholesky(A) [choleskydecomposition, ldl]  A = G Gᵀ and the rational L D Lᵀ',
+  '  definite(A) [posdef, positivedefinite, definiteness, classifymatrix]  positive / negative (semi)definite or indefinite, with minors and eigenvalue signs',
+  '  pinv(A) [pseudoinverse, moorepenrose]  exact Moore-Penrose inverse   leastsquares(A, b) [lstsq, normalequations]  x̂, fitted values, residual (minimum-norm when rank-deficient)',
+  '  svd(A) [singularvalues]  singular values (exact when possible), rank, norm, condition number, U and V as decimals',
+  '  expm(A) [matrixexp, matrixexponential]  e^A   expm(A, t)  e^(At) exactly when the eigenvalues are rational or A is 2×2   jordan(A) [jordanform]  Jordan form J and P with A = P J P⁻¹ (rational eigenvalues)',
   '  A system  2x + y = 5; x - y = 1  can also be written directly as equations.',
 ].join('\n');
 HELP.number = [
@@ -171,14 +176,33 @@ HELP.geometry = [
   '                  (circle, ellipse, parabola, hyperbola: center, radius, foci, vertices, directrix, asymptotes)',
 ].join('\n');
 HELP.units = [
-  'UNITS, FINANCE, CHEMISTRY, PHYSICS',
+  'UNITS AND PHYSICS',
   '  convert 5 km to miles    72 °F to °C    60 mph to km/h    2.5 GB to MB    1 atm to psi   (length, mass, time, area, volume, speed, force, pressure, energy, power, data, angle, temperature)',
-  '  compound(1000, 5%, 10)  compound(P, r, years, n per year)   continuous(P, r, t)   simpleinterest(P, r, t)',
-  '  loan(200000, 6.5, 30)  (monthly payment)   annuityfv(pmt, rate, N)   annuitypv(pmt, rate, N)   npv(rate, cf0, cf1, ...)   irr(cf0, cf1, ...)   effrate(r, n)   doubletime(r)',
   '  pctchange(old, new)   pctof(part, whole)   ratio(12, 18, 30)   sci(12345.678)   sigfigs(x, n)',
-  '  molarmass(Ca(OH)2)   percentcomp(C6H12O6)   moles(18, H2O)   grams(2, NaCl)   balance H2 + O2 -> H2O   ph(0.001)   poh(x)   hconc(pH)',
   '  suvat(u=0, a=9.8, t=3)  (give 3 of s u v a t)   projectile(20, 30)  (speed, angle in degrees)   freefall(45)',
   '  any physics formula: write it as an equation and solve for a letter  (F = m*a;  v^2 = u^2 + 2*a*s solve for s)',
+  '  (chemistry and finance have their own topics: help chemistry, help finance)',
+].join('\n');
+HELP.chemistry = [
+  'CHEMISTRY   (formulas are written as usual: Ca(OH)2, CuSO4·5H2O, Fe2(SO4)3)',
+  '  molarmass(Ca(OH)2)   percentcomp(C6H12O6)   moles(18, H2O)   grams(2, NaCl)   molarity(0.5, 2)  molarity(5.85, NaCl, 0.5)',
+  '  balance H2 + O2 -> H2O   (a bare reaction "H2 + O2 -> H2O" is balanced too)',
+  '  stoich(H2 + O2 -> H2O, 4 g H2, H2O)  [stoichiometry]   grams / moles of a wanted substance;   limiting(H2 + O2 -> H2O, 4 g H2, 32 g O2)  [limitingreagent]   limiting reagent, theoretical yield, excess left   percentyield(actual, theoretical)',
+  '  empirical(C 40, H 6.7, O 53.3)  [empiricalformula]  from percentages or masses (add ; 180 for a molar mass: molecular formula too)   molecular(CH2O, 180.16)  [molecularformula]',
+  '  ph(0.001) poh(x) hconc(pH)   weakacid(1.8e-5, 0.10)  pH and percent ionization of a weak acid (exact quadratic)   weakbase(Kb, C)   buffer(4.76, 0.20, 0.10)  [hendersonhasselbalch]  pH from pKa (or Ka), [A-] and [HA]',
+  '  dilution(12, 25, 0.5, x)  C1 V1 = C2 V2, the unknown written as x   idealgas(x, 22.4, 1, 273.15)  P (atm) V (L) n (mol) T (K) [gaslaw]   combinedgas(1, 2, 300, x, 1, 350)',
+  '  halflife(5730, 10000, 100)  fraction / amount left after a time   decaytime(5730, 25%)  time to fall to a fraction',
+  '  element(Fe)  element(26)  element(iron)  [elementinfo, periodic]   name, mass, period, group, block, configuration   electronconfig(Fe3+)  [electronconfiguration, econfig]  or  electron configuration of Cu',
+].join('\n');
+HELP.finance = [
+  'FINANCE   (rates may be written 5%, 5 or 0.05)',
+  '  compound(1000, 5%, 10)  compound(P, r, years, n per year)   continuous(P, r, t)   simpleinterest(P, r, t)   effrate(r, n)   doubletime(r)   rule72(6%)  [ruleof72]',
+  '  loan(200000, 6.5, 30)  (monthly payment)   amortization(200000, 6%, 30)  [amortize, schedule]  payment, total interest and the first rows of the schedule: amortization(P, r, years, per year, rows)',
+  '  loanbalance(200000, 6%, 30, 120)  [remainingbalance]  balance after 120 payments   payoff(10000, 8%, 300)  payments needed with a given payment',
+  '  annuityfv(pmt, rate, N)   annuitypv(pmt, rate, N)   npv(rate, cf0, cf1, ...)   irr(cf0, cf1, ...)   mirr([-1000, 300, 400, 500], 10%, 12%)   payback([-1000, 300, 400, 500])  [paybackperiod]',
+  '  bond(1000, 5%, 6%, 10, 2)  [bondprice]  price, current yield, duration, convexity   (face, coupon rate, yield, years, coupons per year)',
+  '  straightline(10000, 1000, 5)   decliningbalance(10000, 1000, 5)  [doubledeclining, ddb]  (optional 4th argument: factor)   sumofyears(10000, 1000, 5)  [syd]   depreciation tables for cost, salvage value, life',
+  '  cagr(1000, 1800, 5)   realrate(5%, 2%)  [fisher]   breakeven(5000, 25, 15)  (fixed costs, price, variable cost)   pctchange(old, new)',
 ].join('\n');
 HELP.plot = [
   'PLOTS (the picture is returned to the chat; zeros, extrema and the y-intercept are listed)',
@@ -189,7 +213,7 @@ const HELP_ALIAS = {
   '': 'index', help: 'index', commands: 'index', all: 'index', topics: 'index', input: 'syntax', notation: 'syntax', solve: 'equations', inequalities: 'equations', systems: 'equations', formulas: 'equations',
   diffeq: 'ode', differential: 'ode', odes: 'ode', 'differential equations': 'ode', laplace: 'ode', transforms: 'ode', boolean: 'logic', graph: 'logic', graphs: 'logic', networks: 'logic', truthtable: 'logic', 'truth tables': 'logic', propositional: 'logic', recurrence: 'number', recurrences: 'number', parametric: 'curves', polar: 'curves', motion: 'curves', vectorfields: 'curves', lineintegrals: 'curves', coordinates: 'curves', numerics: 'numerical', numericalmethods: 'numerical', 'numerical methods': 'numerical', euler: 'numerical', rungekutta: 'numerical', quadrature: 'numerical', integration: 'calculus', interpolation: 'numerical', rootfinding: 'numerical', splines: 'numerical', lp: 'optimize', optimization: 'optimize', lagrange: 'multivar', multivariable: 'multivar', vectorcalculus: 'multivar', integrals: 'calculus', derivatives: 'calculus', limits: 'calculus', series: 'calculus', complex: 'algebra', matrices: 'matrix', vectors: 'matrix', linear: 'matrix', 'linear algebra': 'matrix',
   discrete: 'number', counting: 'number', probability: 'stats', statistics: 'stats', geometry: 'geometry', conic: 'geometry', conics: 'geometry', triangles: 'geometry',
-  finance: 'units', chemistry: 'units', physics: 'units', conversion: 'units', graph: 'plot', plots: 'plot', plotting: 'plot', graphs: 'plot',
+  finance: 'finance', money: 'finance', loans: 'finance', interest: 'finance', chem: 'chemistry', chemistry: 'chemistry', stoichiometry: 'chemistry', acids: 'chemistry', elements: 'chemistry', physics: 'units', conversion: 'units', 'graph theory': 'logic', graphtheory: 'logic', graph: 'plot', plots: 'plot', plotting: 'plot', graphs: 'plot',
 };
 /** The help text for a request such as "help", "help calculus" or "commands", else null. */
 function helpFor(text) {

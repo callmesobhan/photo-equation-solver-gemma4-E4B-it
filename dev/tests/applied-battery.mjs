@@ -20,7 +20,7 @@ function parseComplex(s) {
   const approx = /\((?:≈|=) ([^)]*)\)\s*$/.exec(s);
   const t = (approx ? approx[1] : s).replace(/\s+/g, '').replace(/−/g, '-');
   if (/[√π/(]/.test(t) && !approx) return null;
-  const m = /^(-?[\d.]+(?:e[+-]?\d+)?)?(?:([+-])([\d.]*(?:e[+-]?\d+)?)i)?$/.exec(t.replace(/^(-?)i$/, '$10+1i').replace(/^(-?[\d.]+)i$/, '0+$1i'));
+  const m = /^(-?[\d.]+(?:e[+-]?\d+)?)?(?:([+-])([\d.]*(?:e[+-]?\d+)?)i)?$/.exec(t.replace(/^i$/, '0+1i').replace(/^-i$/, '0-1i').replace(/^(-?[\d.]+)i$/, '0+$1i'));
   if (!m) { const m2 = /^(-?[\d.]*)i$/.exec(t); if (m2) return [0, m2[1] === '' ? 1 : m2[1] === '-' ? -1 : parseFloat(m2[1])]; return null; }
   const re = m[1] === undefined ? 0 : parseFloat(m[1]);
   const im = m[2] ? (m[2] === '-' ? -1 : 1) * (m[3] === '' ? 1 : parseFloat(m[3])) : 0;

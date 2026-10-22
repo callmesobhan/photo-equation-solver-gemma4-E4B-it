@@ -7,6 +7,7 @@ import numpy_financial as nf
 
 random.seed(int(sys.argv[1]) if len(sys.argv) > 1 else 3)
 ur = pint.UnitRegistry()
+ur.define('iacre = 4046.8564224 * meter ** 2')  # the international acre (newer pint versions default to the US survey acre)
 T = []
 def add(cmd, t, v, **kw): T.append(dict(cmd=cmd, t=t, v=v, **kw))
 R = random.randint
@@ -18,7 +19,7 @@ GROUPS = {
   'mass': {'kg': 'kilogram', 'g': 'gram', 'mg': 'milligram', 'lb': 'pound', 'oz': 'ounce', 'st': 'stone', 'ton': 'ton', 'tonne': 'metric_ton'},
   'time': {'s': 'second', 'ms': 'millisecond', 'min': 'minute', 'h': 'hour', 'day': 'day', 'wk': 'week', 'yr': 'year'},
   'volume': {'L': 'liter', 'mL': 'milliliter', 'gal': 'gallon', 'qt': 'quart', 'pt': 'pint', 'cup': 'cup', 'floz': 'fluid_ounce', 'tbsp': 'tablespoon', 'tsp': 'teaspoon'},
-  'area': {'acre': 'acre', 'ha': 'hectare', 'm2': 'meter**2', 'km2': 'kilometer**2', 'cm2': 'centimeter**2', 'ft2': 'foot**2', 'in2': 'inch**2', 'mi2': 'mile**2'},
+  'area': {'acre': 'iacre', 'ha': 'hectare', 'm2': 'meter**2', 'km2': 'kilometer**2', 'cm2': 'centimeter**2', 'ft2': 'foot**2', 'in2': 'inch**2', 'mi2': 'mile**2'},
   'speed': {'mph': 'mph', 'km/h': 'kilometer/hour', 'm/s': 'meter/second', 'kn': 'knot', 'ft/s': 'foot/second'},
   'pressure': {'Pa': 'pascal', 'kPa': 'kilopascal', 'bar': 'bar', 'atm': 'atmosphere', 'psi': 'psi', 'mmHg': 'mmHg', 'torr': 'torr'},
   'energy': {'J': 'joule', 'kJ': 'kilojoule', 'cal': 'calorie', 'kcal': 'kilocalorie', 'Wh': 'watt_hour', 'kWh': 'kilowatt_hour', 'eV': 'electron_volt', 'BTU': 'BTU'},

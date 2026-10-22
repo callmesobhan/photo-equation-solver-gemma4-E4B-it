@@ -38,11 +38,13 @@ echo; echo "== 8j. numerical methods (ODE steppers, quadrature rules, interpolat
 echo; echo "== 8k. parametric / polar / vector calculus vs sympy / scipy"; for s in 1 2; do node curves-battery.mjs "$skill" $s; done
 echo; echo "== 8l. extra statistics (distributions, two-sample tests, ANOVA, descriptive measures, regressions) vs scipy.stats / numpy"; for s in 1 2; do node stats2-battery.mjs "$skill" $s; done
 echo; echo "== 8m. recurrences, continued fractions, Pell, logic, graph theory vs sympy / networkx / brute force"; for s in 1 2; do node discrete2-battery.mjs "$skill" $s; done
+echo; echo "== 8n. QR, Cholesky, definiteness, pinv, least squares, SVD, matrix exponential, Jordan form vs numpy / scipy / sympy"; for s in 1 2; do node linalg2-battery.mjs "$skill" $s; done
 echo; echo "== 8h. random limits, Taylor polynomials, definite integrals (pole detection) and finite sums, checked numerically"; for s in 1 2; do node calc-random-battery.mjs "$skill" $s 80; done
 echo; echo "== 8i. random equations (rational, radical, exponential, log, abs, polynomial) and inequalities, checked by a numerical scan"; for s in 1 2; do node eq-battery.mjs "$skill" $s 80; done
 echo; echo "== 8g. random rational functions (non-monic factors): apart, integrals, inverse Laplace, checked numerically"; for s in 1 2; do node rational-battery.mjs "$skill" $s 100; done
 if "$PY" -c "import pint, periodictable, numpy_financial" 2>/dev/null; then
   echo; echo "== 10. geometry, units, chemistry, finance, complex numbers vs pint / periodictable / numpy-financial"; for s in 3 4; do node applied-battery.mjs "$skill" $s; done
+  echo; echo "== 10b. elements, electron configurations, empirical formulas, stoichiometry, acids, gases; amortization, bonds, depreciation vs periodictable / mendeleev data / numpy-financial"; for s in 1 2; do node chemfin-battery.mjs "$skill" $s; done
 else
   echo; echo "== 10. skipped (pint, periodictable, numpy-financial not installed)"
 fi

@@ -47,6 +47,8 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `19-stats2.js` | More distributions, two-sample / paired / ANOVA / correlation / variance tests, sample sizes, descriptive measures, rank correlation, multiple and curve regression, Markov chains |
 | `20-discrete2.js` | Euclid with Bézout coefficients, continued fractions, Pell equations, Collatz, Egyptian fractions, sums of two squares, Farey sequences, Hanoi, Josephus, figurate numbers, linear recurrences with closed forms (also from the written `a_n = 5a_(n-1) - 6a_(n-2)` form) |
 | `21-logic-graphs.js` | Propositional logic (truth tables, tautology / equivalence / normal forms, Quine–McCluskey), graph properties, shortest paths, minimum spanning trees, maximum flow, colouring, topological order, BFS / DFS |
+| `22-linalg2.js` | QR, Cholesky / LDLᵀ, definiteness, exact pseudoinverse, least squares, singular values, matrix exponential (exact for rational eigenvalues and 2×2 complex pairs), Jordan form |
+| `23-chem-fin.js` | Elements and electron configurations, empirical / molecular formulas, stoichiometry and limiting reagent, weak acids / bases, buffers, dilution, gas laws, half-life; amortization, loan balance, bonds, depreciation, CAGR, MIRR, payback, break-even |
 | `90-dispatch.js` | Routing of command statements |
 | `99-main.js` | `window.ai_edge_gallery_get_result` entry point and request parsing |
 
@@ -54,7 +56,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 
 | File | What it checks |
 |------|----------------|
-| `cases.mjs` + `run-cases.mjs` | 594 hand-written input → expected output cases |
+| `cases.mjs` + `run-cases.mjs` | 618 hand-written input → expected output cases |
 | `doc-test.mjs` | every example in `SKILL.md` runs; every command appears in the built-in help |
 | `props.mjs`, `gen_expr.py`, `gen_poly.py` | random expressions / polynomials / systems against Fraction and numpy |
 | `cas-props.mjs`, `gen_cas.py` | the symbolic core against sympy |
@@ -73,7 +75,9 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `eq-battery.mjs` | random rational / radical / exponential / logarithmic / absolute-value / polynomial equations (every solution substituted, no sign change of lhs − rhs missed) and inequalities (the printed set agrees with the inequality at hundreds of random points) |
 | `rational-battery.mjs` | random rational functions with non-monic and repeated factors: `apart`, `integrate` and `ilaplace` answers are checked numerically |
 | `discrete2-battery.mjs`, `gen_discrete2.py` | extended Euclid, continued fractions, Pell, sums of squares, linear recurrences, shortest paths, spanning trees, max flow, colouring and truth tables against sympy / networkx / brute force |
+| `chemfin-battery.mjs`, `gen_chemfin.py`, `elements-oracle.json` | elements (name, mass, period, group, block), ground-state electron configurations and unpaired electrons, empirical formulas from rounded percentages, limiting reagents, acids, gases, decay, amortization, bonds, depreciation against periodictable / mendeleev (cached) / numpy-financial |
 | `linalg-battery.mjs`, `gen_linalg.py` | linear algebra against sympy |
+| `linalg2-battery.mjs`, `gen_linalg2.py` | QR, Cholesky, definiteness, pinv, least squares, SVD, expm, Jordan form against numpy / scipy.linalg / sympy (printed matrices are parsed back and compared) |
 | `applied-battery.mjs`, `gen_applied.py` | geometry, triangles, units, chemistry, finance, complex numbers against pint / periodictable / numpy-financial / Python `complex` |
 | `fuzz.mjs`, `fuzz-cmds.mjs` | random garbage text, and every command with random arguments: never crash, hang or print `NaN` |
 | `browser-test.cjs` | the built page in real Chromium, offline, called the way the app calls it (needs Playwright) |

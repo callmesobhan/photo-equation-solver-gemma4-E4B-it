@@ -6,3 +6,4 @@ pint
 periodictable
 numpy-financial
 networkx
+mendeleev   # only to regenerate elements-oracle.json
