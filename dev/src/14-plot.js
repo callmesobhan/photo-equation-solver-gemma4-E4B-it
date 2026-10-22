@@ -108,7 +108,7 @@ function drawPlot(spec) {
     g.moveTo(L, py(v));
     g.lineTo(PLOT_W - R, py(v));
     g.stroke();
-    g.fillText(tickText(v, syTick), L - 6, py(v));
+    if (!spec.hideY) g.fillText(tickText(v, syTick), L - 6, py(v));
   }
   g.strokeStyle = '#222222';
   g.lineWidth = 1.6;
@@ -127,6 +127,8 @@ function drawPlot(spec) {
   g.beginPath();
   g.rect(L, T, PLOT_W - L - R, PLOT_H - T - B);
   g.clip();
+  const frame = { x0, x1, y0, y1, L, T, R, B };
+  if (spec.under) spec.under(g, px, py, frame);
   curves.forEach((pts, k) => {
     g.strokeStyle = PLOT_COLORS[k % PLOT_COLORS.length];
     g.lineWidth = 2.4;
@@ -153,20 +155,23 @@ function drawPlot(spec) {
     g.arc(px(m.x), py(m.y), 4, 0, 2 * Math.PI);
     g.fill();
   });
+  if (spec.over) spec.over(g, px, py, frame);
   g.restore();
   // legend
   g.font = '13px sans-serif';
   g.textAlign = 'left';
   g.textBaseline = 'middle';
-  const lw = Math.min(PLOT_W - L - R - 12, 14 + Math.max(...labels.map((s) => g.measureText(s).width)) + 12);
-  g.fillStyle = 'rgba(255,255,255,0.88)';
-  g.fillRect(L + 6, T + 6, lw, labels.length * 18 + 6);
-  labels.forEach((s, k) => {
-    g.fillStyle = PLOT_COLORS[k % PLOT_COLORS.length];
-    g.fillRect(L + 12, T + 18 + k * 18 - 4, 14, 4);
-    g.fillStyle = '#111111';
-    g.fillText(s, L + 32, T + 18 + k * 18);
-  });
+  if (labels.length) {
+    const lw = Math.min(PLOT_W - L - R - 12, 14 + Math.max(...labels.map((s) => g.measureText(s).width)) + 12);
+    g.fillStyle = 'rgba(255,255,255,0.88)';
+    g.fillRect(L + 6, T + 6, lw, labels.length * 18 + 6);
+    labels.forEach((s, k) => {
+      g.fillStyle = (spec.labelColors && spec.labelColors[k]) || PLOT_COLORS[k % PLOT_COLORS.length];
+      g.fillRect(L + 12, T + 18 + k * 18 - 4, 14, 4);
+      g.fillStyle = '#111111';
+      g.fillText(s, L + 32, T + 18 + k * 18);
+    });
+  }
   const url = canvas.toDataURL('image/png');
   return url.slice(url.indexOf(',') + 1);
 }

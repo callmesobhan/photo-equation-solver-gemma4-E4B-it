@@ -49,6 +49,8 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `21-logic-graphs.js` | Propositional logic (truth tables, tautology / equivalence / normal forms, Quine–McCluskey), graph properties, shortest paths, minimum spanning trees, maximum flow, colouring, topological order, BFS / DFS |
 | `22-linalg2.js` | QR, Cholesky / LDLᵀ, definiteness, exact pseudoinverse, least squares, singular values, matrix exponential (exact for rational eigenvalues and 2×2 complex pairs), Jordan form |
 | `23-chem-fin.js` | Elements and electron configurations, empirical / molecular formulas, stoichiometry and limiting reagent, weak acids / bases, buffers, dilution, gas laws, half-life; amortization, loan balance, bonds, depreciation, CAGR, MIRR, payback, break-even |
+| `24-geometry3d.js` | Planes, lines, distances, angles, skew lines, triple products, spheres and classification of quadric surfaces (exact, from the inertia of the quadratic form) |
+| `25-plot2.js` | Slope fields, scatter plots with a fitted polynomial, histograms, box plots, shaded normal / t / chi-square curves, implicit curves, contour maps, regions of inequalities (marching squares, exact corner points for linear boundaries) |
 | `90-dispatch.js` | Routing of command statements |
 | `99-main.js` | `window.ai_edge_gallery_get_result` entry point and request parsing |
 
@@ -56,7 +58,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 
 | File | What it checks |
 |------|----------------|
-| `cases.mjs` + `run-cases.mjs` | 618 hand-written input → expected output cases |
+| `cases.mjs` + `run-cases.mjs` | 640 hand-written input → expected output cases |
 | `doc-test.mjs` | every example in `SKILL.md` runs; every command appears in the built-in help |
 | `props.mjs`, `gen_expr.py`, `gen_poly.py` | random expressions / polynomials / systems against Fraction and numpy |
 | `cas-props.mjs`, `gen_cas.py` | the symbolic core against sympy |
@@ -76,6 +78,8 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `rational-battery.mjs` | random rational functions with non-monic and repeated factors: `apart`, `integrate` and `ilaplace` answers are checked numerically |
 | `discrete2-battery.mjs`, `gen_discrete2.py` | extended Euclid, continued fractions, Pell, sums of squares, linear recurrences, shortest paths, spanning trees, max flow, colouring and truth tables against sympy / networkx / brute force |
 | `chemfin-battery.mjs`, `gen_chemfin.py`, `elements-oracle.json` | elements (name, mass, period, group, block), ground-state electron configurations and unpaired electrons, empirical formulas from rounded percentages, limiting reagents, acids, gases, decay, amortization, bonds, depreciation against periodictable / mendeleev (cached) / numpy-financial |
+| `geom3d-battery.mjs`, `gen_geom3d.py` | space geometry against sympy.geometry / numpy; quadric surfaces are built from canonical forms by an invertible affine change of variables, so the surface type is known by construction |
+| `plot2-battery.mjs`, `gen_plot2.py` | the numbers printed next to the new pictures (RK4 solutions and equilibria against scipy `solve_ivp`, fits against `numpy.polyfit`, exact histogram counts, box-plot fences, shaded areas against scipy.stats, intercepts, contour ranges, exact region corners and areas against `scipy.optimize.linprog` / `ConvexHull`), and the geometry of the marching-squares curves against the equation (needs the `--expose` build) |
 | `linalg-battery.mjs`, `gen_linalg.py` | linear algebra against sympy |
 | `linalg2-battery.mjs`, `gen_linalg2.py` | QR, Cholesky, definiteness, pinv, least squares, SVD, expm, Jordan form against numpy / scipy.linalg / sympy (printed matrices are parsed back and compared) |
 | `applied-battery.mjs`, `gen_applied.py` | geometry, triangles, units, chemistry, finance, complex numbers against pint / periodictable / numpy-financial / Python `complex` |

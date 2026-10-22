@@ -2496,6 +2496,8 @@ function solveProblem(text, solveFor) {
       out.work.push('Left side = ' + fmtNum(res[0].l) + ', right side = ' + fmtNum(res[0].r));
     } else if (vars.size === 1) {
       out = solveInequalities(conds, sortedVars(vars)[0]);
+    } else if (sortedVars(vars).join('') === 'xy' && !solveFor) {
+      out = pl2Region(conds.map((c) => ({ lhs: c.lhs, op: c.op, rhs: c.rhs })), { vx: 'x', vy: 'y', xr: [-6, 6], yr: [-6, 6], auto: true });
     } else {
       throw new MathError('inequalities with several unknowns (' + sortedVars(vars).join(', ') + ') are not supported');
     }
@@ -2516,6 +2518,8 @@ function solveProblem(text, solveFor) {
       out = newOut();
       out.work.push('Type: conic section (second-degree equation in x and y)');
       analyzeConic(conicCoefficients(eqs[0].lhs, eqs[0].rhs), out);
+    } else if (names.length === 3 && eqs.length === 1 && !solveFor && names.join('') === 'xyz' && (out = newOut()) && analyzeSurface(eqs[0], out)) {
+      // a plane or a quadric surface: the analysis is already in out
     } else if (names.length >= 2 && eqs.length === 1 && !affineForm(eqs[0], names)) {
       out = solveLiteralEquation(eqs[0], names, solveFor);
     } else {
@@ -12425,6 +12429,8 @@ function convertApplied(s) {
   // balancing chemical equations and formula commands
   s = s.replace(/[\u2080-\u2089]/g, (c) => String(c.charCodeAt(0) - 0x2080));
   s = convertChem2(s);
+  s = convertGeometry3d(s);
+  s = convertPlot2(s);
   s = s.replace(/\bbalance\s*(?:the\s+)?(?:equation|reaction)?\s*[:(]?\s*([A-Za-z0-9()\[\]\u00b7+ ]+?(?:->|=>|\u2192|\u27f6|\u21cc|=)[A-Za-z0-9()\[\]\u00b7+ ]+?)\s*(?:\)\s*)?(?=$|[;\n])/gi, (m, rxn) => 'balance(' + chemIndex(rxn.trim().replace(/\)$/, '')) + ')');
   // a bare reaction such as "H2 + O2 -> H2O": every term a real formula and the same elements on both sides
   s = s.replace(/^\s*([A-Za-z0-9()\[\]\u00b7+ ]+?)\s*(?:->|=>|\u2192|\u27f6|\u21cc)\s*([A-Za-z0-9()\[\]\u00b7+ ]+?)\s*$/, (m, lhs, rhs) => {
@@ -12578,7 +12584,7 @@ function drawPlot(spec) {
     g.moveTo(L, py(v));
     g.lineTo(PLOT_W - R, py(v));
     g.stroke();
-    g.fillText(tickText(v, syTick), L - 6, py(v));
+    if (!spec.hideY) g.fillText(tickText(v, syTick), L - 6, py(v));
   }
   g.strokeStyle = '#222222';
   g.lineWidth = 1.6;
@@ -12597,6 +12603,8 @@ function drawPlot(spec) {
   g.beginPath();
   g.rect(L, T, PLOT_W - L - R, PLOT_H - T - B);
   g.clip();
+  const frame = { x0, x1, y0, y1, L, T, R, B };
+  if (spec.under) spec.under(g, px, py, frame);
   curves.forEach((pts, k) => {
     g.strokeStyle = PLOT_COLORS[k % PLOT_COLORS.length];
     g.lineWidth = 2.4;
@@ -12623,20 +12631,23 @@ function drawPlot(spec) {
     g.arc(px(m.x), py(m.y), 4, 0, 2 * Math.PI);
     g.fill();
   });
+  if (spec.over) spec.over(g, px, py, frame);
   g.restore();
   // legend
   g.font = '13px sans-serif';
   g.textAlign = 'left';
   g.textBaseline = 'middle';
-  const lw = Math.min(PLOT_W - L - R - 12, 14 + Math.max(...labels.map((s) => g.measureText(s).width)) + 12);
-  g.fillStyle = 'rgba(255,255,255,0.88)';
-  g.fillRect(L + 6, T + 6, lw, labels.length * 18 + 6);
-  labels.forEach((s, k) => {
-    g.fillStyle = PLOT_COLORS[k % PLOT_COLORS.length];
-    g.fillRect(L + 12, T + 18 + k * 18 - 4, 14, 4);
-    g.fillStyle = '#111111';
-    g.fillText(s, L + 32, T + 18 + k * 18);
-  });
+  if (labels.length) {
+    const lw = Math.min(PLOT_W - L - R - 12, 14 + Math.max(...labels.map((s) => g.measureText(s).width)) + 12);
+    g.fillStyle = 'rgba(255,255,255,0.88)';
+    g.fillRect(L + 6, T + 6, lw, labels.length * 18 + 6);
+    labels.forEach((s, k) => {
+      g.fillStyle = (spec.labelColors && spec.labelColors[k]) || PLOT_COLORS[k % PLOT_COLORS.length];
+      g.fillRect(L + 12, T + 18 + k * 18 - 4, 14, 4);
+      g.fillStyle = '#111111';
+      g.fillText(s, L + 32, T + 18 + k * 18);
+    });
+  }
   const url = canvas.toDataURL('image/png');
   return url.slice(url.indexOf(',') + 1);
 }
@@ -12861,9 +12872,9 @@ HELP.index = [
   '  number      primes, divisors, modular arithmetic, counting, sequences, sets, number bases',
   '  stats       mean, standard deviation, regression, binomial/normal/t/chi-square, tests',
   '  multivar    partial derivatives, gradient, Hessian, double integrals, critical points of f(x, y), Lagrange multipliers\n  optimize    linear programming (maximize ... subject to ...), maxima and minima, Newton\'s method',
-  '  geometry    shapes, triangles, coordinates, conic sections',
+  '  geometry    shapes, triangles, coordinates, conic sections; planes, lines, spheres and quadric surfaces in space',
   '  units       unit conversion;  physics formulas\n  chemistry   molar mass, balancing, stoichiometry, limiting reagent, empirical formulas, pH, buffers, gases, elements, electron configurations\n  finance     interest, loans and amortization, bonds, depreciation, NPV / IRR / MIRR, growth rates',
-  '  plot        graphs of functions, parametric and polar curves',
+  '  plot        graphs of functions, parametric and polar curves, implicit curves, inequality regions, contour maps, slope fields, scatter plots, histograms, box plots, shaded distributions',
   'Write every command as name(arguments). The answer always starts with "Read as:" - check it matches the picture.',
 ].join('\n');
 HELP.syntax = [
@@ -13018,6 +13029,13 @@ HELP.geometry = [
   '  distance([1,2],[4,6])  midpoint(P, Q)  slope(P, Q)  line(P, Q)  pointlinedistance(x0, y0, a, b, c)  polygonarea([0,0],[4,0],[4,3])  centroid(P, Q, R)',
   '  conic sections: just write the equation:  x^2 + y^2 - 6x + 4y - 12 = 0,  x^2/9 + y^2/4 = 1,  y = x^2 - 4x + 3',
   '                  (circle, ellipse, parabola, hyperbola: center, radius, foci, vertices, directrix, asymptotes)',
+  'SPACE (3-D)   points and vectors [x, y, z];  a plane is [a, b, c, d] for ax + by + cz = d, or just the equation 2x + 3y - z = 5;  a line is a point and a direction',
+  '  plane(P, Q, R) [planeinfo]  through three points   plane(P, normal)   plane(2x + 3y - z = 5)  normal, intercepts, distance from the origin   line3d(P, Q) [line3]  vector, parametric and symmetric form',
+  '  pointplane(P, plane) [planedist]  distance and foot   pointline3d(P, A, d)  distance from P to the line through A with direction d   skewlines(A, d1, B, d2) [linedistance]  distance, intersection or parallel',
+  '  lineplane(A, d, plane)  intersection point and angle   planeangle(p1, p2)   planeintersect(p1, p2)  line of intersection   (planes may be written as equations: planeangle(x + y + z = 3, x - y = 0))',
+  '  triplescalar(u, v, w) [tripleproduct, parallelepiped]   tetrahedron(A, B, C, D) volume   trianglearea3d(A, B, C)   dircos(v) [directioncosines]   angle(u, v)   distance(P, Q)   midpoint   centroid',
+  '  sphere([1,2,3], 5)  equation of a sphere from centre and radius   sphere(A, B)  from a diameter   sphere(A, B, C, D)  through four points   sphere(3)  volume and area',
+  '  surfaces: write the equation  x^2/4 + y^2/9 + z^2 = 1,  z = x^2 + y^2,  x^2 + y^2 - z^2 = 1  [quadric(...), surface(...), sphereinfo(...)]  ellipsoid / sphere, hyperboloid, cone, paraboloid, cylinder, planes, with centre and standard form',
 ].join('\n');
 HELP.units = [
   'UNITS AND PHYSICS',
@@ -13052,6 +13070,13 @@ HELP.plot = [
   'PLOTS (the picture is returned to the chat; zeros, extrema and the y-intercept are listed)',
   '  plot(sin(x), x, -2*pi, 2*pi)     plot(x^2, 2x+3, x, -3, 4)  (up to 6 functions)     plot y = x^2 - 4',
   '  plotparam(cos(t), sin(2t), t, 0, 2*pi)       plotpolar(1 + cos(t), t, 0, 2*pi)',
+  '  plotimplicit(x^2 + y^2 = 4)  [implicitplot]  any curve F(x, y) = 0, window optional: plotimplicit(x*y - 1, x, -4, 4, y, -4, 4)   contour(x^2 - y^2, x, -3, 3, y, -3, 3)  [contourplot, levelcurves]  level curves',
+  '  plotregion(y > x^2, x + y < 3, x, -3, 3, y, -3, 5)  [region, shaderegion, feasibleregion]  shaded solution set of inequalities (exact corner points and area when the boundaries are lines);  or just write the inequalities:  x >= 0, y >= 0, x + y <= 4',
+  '  slopefield(x - y, x, -3, 3, y, -3, 3, 0, 1)  [directionfield]  slope field of y\' = f(x, y) with solution curves through the given points (x0, y0, ...)',
+  '  scatter([1,2,3,4],[2,4,5,8])  [scatterplot]  points with the least-squares line;  scatter(xs, ys, 2)  with a parabola (degree 0 = no fit)',
+  '  histogram([2,3,3,4,5,7,8,9], 2)  [hist]  class width 2 (an optional 3rd number is the first class start);  histogram(data)  automatic number of bins;  histbins(data, 4)  4 equal bins',
+  '  boxplot([2,3,3,4,5,7,40])  [boxwhisker]  five-number summary, fences, whiskers and outliers;  boxplot(list1, list2)  side by side',
+  '  normalshade(0, 1, -1.96, 1.96)  [shadenormal]  shaded normal curve and its area (oo = infinity)   tshade(10, -2.228, 2.228)  [shadet]   chisqshade(4, 9.488, oo)  [shadechisq]',
 ].join('\n');
 const HELP_ALIAS = {
   '': 'index', help: 'index', commands: 'index', all: 'index', topics: 'index', input: 'syntax', notation: 'syntax', solve: 'equations', inequalities: 'equations', systems: 'equations', formulas: 'equations',
@@ -14917,7 +14942,7 @@ defCmd('percentrank', (n) => {
   out.work.push('(number below + \u00bd\u00b7number equal)/n \u00d7 100');
   return out;
 });
-defCmd('freqtable frequencytable histogram', (n) => {
+defCmd('freqtable frequencytable', (n) => {
   needArgs(n, 2, 3, 'the data list and the class width (and optionally the first class start): freqtable([..], 5)');
   const vs = sortQ(listArg(n.args[0], 'freqtable'));
   const w = constQ(n.args[1]);
@@ -17693,6 +17718,1257 @@ function convertChem2(s) {
   // words
   s = s.replace(/\belectron\s+configuration\s+(?:of|for)\s+([A-Za-z][A-Za-z0-9^+\-\u2212()]*)/gi, (m, el) => 'electronconfig(' + chemIndex(el) + ')');
   s = s.replace(/\bempirical\s+formula\s+(?:of|for|from)?\s*:?\s*([A-Za-z0-9.%,;\s]+?)\s*$/i, (m, spec) => (/[A-Z]/.test(spec) && /\d/.test(spec) ? 'empirical(' + chemIndex(spec) + ')' : m));
+  return s;
+}
+// ======================================================================
+// 24. Analytic geometry in space: planes, lines, distances, angles, skew lines, triple products, spheres and the classification of
+//     quadric surfaces (ellipsoids, hyperboloids, paraboloids, cones, cylinders).  Points, vectors and planes are lists:
+//     a point [x, y, z], a plane [a, b, c, d] meaning ax + by + cz = d, a line as a point and a direction.
+// ======================================================================
+const g3Vec = (v, what) => {
+  const a = needMat(v, what);
+  const f = a.length === 1 ? a[0] : a[0].length === 1 ? a.map((r) => r[0]) : null;
+  if (!f || f.length !== 3) throw new MathError(what + ' needs a point or vector with three numbers, e.g. [1, 2, 3]');
+  return f;
+};
+const g3Plane = (v, what) => {
+  const a = needMat(v, what);
+  const f = a.length === 1 ? a[0] : a[0].length === 1 ? a.map((r) => r[0]) : null;
+  if (!f || f.length !== 4) throw new MathError(what + ' needs a plane written [a, b, c, d] for ax + by + cz = d (or the equation itself, e.g. 2x + 3y - z = 5)');
+  if (f[0].isZero() && f[1].isZero() && f[2].isZero()) throw new MathError('a plane needs at least one of a, b, c to be non-zero');
+  return f;
+};
+const g3Cross = (u, v) => [u[1].mul(v[2]).sub(u[2].mul(v[1])), u[2].mul(v[0]).sub(u[0].mul(v[2])), u[0].mul(v[1]).sub(u[1].mul(v[0]))];
+const g3Sub = (u, v) => u.map((x, i) => x.sub(v[i]));
+const g3Add = (u, v) => u.map((x, i) => x.add(v[i]));
+const g3Scale = (u, k) => u.map((x) => x.mul(k));
+const g3IsZero = (u) => u.every((x) => x.isZero());
+const g3Show = (u) => '(' + u.map((q) => q.toString()).join(', ') + ')';
+const g3Len = (u) => symText(simp(sSqrt(sN(dotQ(u, u)))));
+const g3Rad = (q) => symText(simp(sSqrt(sN(q))));
+const g3Ratio = (num, den2) => symText(simp(sDiv(sN(num), sSqrt(sN(den2)))));
+const g3Deg = (rad) => fmtNum((rad * 180) / Math.PI) + '\u00b0';
+/** Integer, coprime coefficients with the first non-zero one positive. */
+function g3NormPlane(p) {
+  let L = 1n;
+  p.forEach((q) => { L = (L * q.d) / bgcd(L, q.d); });
+  let ints = p.map((q) => q.n * (L / q.d));
+  let g = 0n;
+  ints.forEach((v) => { g = bgcd(g, babs(v)); });
+  if (g > 1n) ints = ints.map((v) => v / g);
+  const first = ints.find((v) => v !== 0n);
+  if (first < 0n) ints = ints.map((v) => -v);
+  return ints.map((v) => qInt(v));
+}
+function g3PlaneText(p) {
+  const names = ['x', 'y', 'z'];
+  let s = '';
+  for (let i = 0; i < 3; i++) {
+    const c = p[i];
+    if (c.isZero()) continue;
+    const mag = c.sign() < 0 ? c.neg() : c;
+    const term = (mag.eq(Q1) ? '' : mag.toString()) + names[i];
+    s += s ? (c.sign() < 0 ? ' - ' : ' + ') + term : (c.sign() < 0 ? '-' : '') + term;
+  }
+  return s + ' = ' + p[3].toString();
+}
+const g3Out = (out) => {
+  out.__done = true;
+  return mat([[Q0]], { __skip: true });
+};
+function g3LineLines(out, P, d) {
+  const names = ['x', 'y', 'z'];
+  out.work.push('vector form: r = ' + g3Show(P) + ' + t\u00b7' + g3Show(d));
+  const comp = (p, dd) => {
+    if (dd.isZero()) return p.toString();
+    const tt = (dd.abs().eq(Q1) ? '' : dd.abs().toString()) + 't';
+    if (p.isZero()) return (dd.sign() < 0 ? '-' : '') + tt;
+    return p.toString() + (dd.sign() < 0 ? ' - ' : ' + ') + tt;
+  };
+  out.work.push('parametric: ' + names.map((nm, i) => nm + ' = ' + comp(P[i], d[i])).join(',  '));
+  const sym = names.map((nm, i) => (d[i].isZero() ? null : (P[i].isZero() ? nm : '(' + nm + (P[i].sign() < 0 ? ' + ' : ' - ') + P[i].abs().toString() + ')') + '/' + (d[i].sign() < 0 ? '(' + d[i].toString() + ')' : d[i].toString()))).filter(Boolean);
+  const fixed = names.map((nm, i) => (d[i].isZero() ? nm + ' = ' + P[i].toString() : null)).filter(Boolean);
+  out.work.push('symmetric: ' + sym.join(' = ') + (fixed.length ? ',  ' + fixed.join(', ') : ''));
+}
+
+defMat('plane planeinfo', (args, n, out) => {
+  let p;
+  if (args.length === 1) {
+    p = g3Plane(args[0], 'plane');
+  } else if (args.length === 2) {
+    const P = g3Vec(args[0], 'plane (point)');
+    const nv = g3Vec(args[1], 'plane (normal vector)');
+    if (g3IsZero(nv)) throw new MathError('the normal vector must not be zero');
+    p = nv.concat([dotQ(nv, P)]);
+    out.work.push('through ' + g3Show(P) + ' with normal vector ' + g3Show(nv) + ':  n\u00b7(X \u2212 P) = 0');
+  } else if (args.length === 3) {
+    const [A, B, C] = args.map((a) => g3Vec(a, 'plane (point)'));
+    const nv = g3Cross(g3Sub(B, A), g3Sub(C, A));
+    if (g3IsZero(nv)) throw new MathError('the three points lie on one line, so they do not determine a plane');
+    p = nv.concat([dotQ(nv, A)]);
+    out.work.push('normal vector n = AB \u00d7 AC = ' + g3Show(nv));
+  } else throw new MathError('plane needs three points, a point and a normal vector, or a plane [a, b, c, d]');
+  const q = g3NormPlane(p);
+  out.answer.push('plane ' + g3PlaneText(q));
+  const nv = q.slice(0, 3);
+  out.work.push('normal vector ' + g3Show(nv) + ', length ' + g3Len(nv) + ';  distance from the origin ' + g3Ratio(q[3].abs(), dotQ(nv, nv)));
+  const names = ['x', 'y', 'z'];
+  const ic = names.map((nm, i) => (q[i].isZero() ? null : nm + '-intercept ' + q[3].div(q[i]).toString())).filter(Boolean);
+  out.work.push(ic.join(', ') + (ic.length < 3 ? ' (parallel to the axis with no intercept)' : ''));
+  if (args.length === 3) {
+    const ok = args.every((a) => { const P = g3Vec(a, 'plane'); return dotQ(nv, P).eq(q[3]); });
+    out.check = ok ? 'all three points satisfy the equation' : null;
+  }
+  out.value = { q: q[3] };
+  return g3Out(out);
+}, [1, 'a plane [a, b, c, d], a point and a normal, or three points']);
+
+defMat('line3d line3', (args, n, out) => {
+  const P = g3Vec(args[0], 'line3d');
+  const Qp = g3Vec(args[1], 'line3d');
+  const d = g3Sub(Qp, P);
+  if (g3IsZero(d)) throw new MathError('the two points are the same');
+  out.answer.push('direction vector ' + g3Show(d) + ' (length ' + g3Len(d) + ')');
+  g3LineLines(out, P, d);
+  return g3Out(out);
+}, [2, 'two points: line3d([1,2,3], [4,6,3])']);
+
+defMat('pointplane planedist', (args, n, out) => {
+  const P = g3Vec(args[0], 'pointplane');
+  const p = g3Plane(args[1], 'pointplane');
+  const nv = p.slice(0, 3);
+  const nn = dotQ(nv, nv);
+  const num = dotQ(nv, P).sub(p[3]);
+  out.answer.push('distance = ' + g3Ratio(num.sign() < 0 ? num.neg() : num, nn));
+  const foot = g3Sub(P, g3Scale(nv, num.div(nn)));
+  out.work.push('d = |a\u00b7x\u2080 + b\u00b7y\u2080 + c\u00b7z\u2080 \u2212 d| / \u221a(a\u00b2 + b\u00b2 + c\u00b2) = |' + num.toString() + '| / ' + g3Rad(nn));
+  out.work.push('foot of the perpendicular ' + g3Show(foot) + (num.isZero() ? ' (the point lies on the plane)' : ';  the point is on the ' + (num.sign() > 0 ? 'side the normal vector points to' : 'opposite side')));
+  out.check = dotQ(nv, foot).eq(p[3]) ? 'the foot lies in the plane' : null;
+  return g3Out(out);
+}, [2, 'a point and a plane: pointplane([1,2,3], [2,3,-1,5])']);
+
+defMat('pointline3d', (args, n, out) => {
+  const P = g3Vec(args[0], 'pointline3d');
+  const A = g3Vec(args[1], 'pointline3d');
+  const d = g3Vec(args[2], 'pointline3d');
+  if (g3IsZero(d)) throw new MathError('the direction vector must not be zero');
+  const t = dotQ(g3Sub(P, A), d).div(dotQ(d, d));
+  const foot = g3Add(A, g3Scale(d, t));
+  const w = g3Sub(P, foot);
+  out.answer.push('distance = ' + g3Rad(dotQ(w, w)));
+  out.work.push('foot of the perpendicular ' + g3Show(foot) + ' (t = ' + t.toString() + ');  distance = |(P \u2212 A) \u00d7 d| / |d|');
+  out.check = dotQ(w, d).isZero() ? 'the connecting vector is perpendicular to the line' : null;
+  return g3Out(out);
+}, [3, 'a point, a point on the line and the direction: pointline3d([1,2,3], [0,0,0], [1,1,0])']);
+
+defMat('skewlines linedistance', (args, n, out) => {
+  const A = g3Vec(args[0], 'skewlines');
+  const d1 = g3Vec(args[1], 'skewlines');
+  const B = g3Vec(args[2], 'skewlines');
+  const d2 = g3Vec(args[3], 'skewlines');
+  if (g3IsZero(d1) || g3IsZero(d2)) throw new MathError('the direction vectors must not be zero');
+  const nv = g3Cross(d1, d2);
+  const AB = g3Sub(B, A);
+  if (g3IsZero(nv)) {
+    const c = g3Cross(AB, d1);
+    const dist2 = dotQ(c, c).div(dotQ(d1, d1));
+    if (dist2.isZero()) out.answer.push('the lines are parallel and coincide');
+    else out.answer.push('the lines are parallel, distance = ' + g3Rad(dist2));
+    return g3Out(out);
+  }
+  const nn = dotQ(nv, nv);
+  const tri = dotQ(AB, nv);
+  const s = dotQ(g3Cross(AB, d2), nv).div(nn);
+  const t = dotQ(g3Cross(AB, d1), nv).div(nn);
+  const P1 = g3Add(A, g3Scale(d1, s));
+  const P2 = g3Add(B, g3Scale(d2, t));
+  if (tri.isZero()) {
+    out.answer.push('the lines intersect at ' + g3Show(P1));
+    out.work.push('parameters s = ' + s.toString() + ' on the first line and t = ' + t.toString() + ' on the second');
+  } else {
+    out.answer.push('the lines are skew, distance = ' + g3Ratio(tri.sign() < 0 ? tri.neg() : tri, nn));
+    out.work.push('d = |(B \u2212 A)\u00b7(d\u2081 \u00d7 d\u2082)| / |d\u2081 \u00d7 d\u2082|, with d\u2081 \u00d7 d\u2082 = ' + g3Show(nv));
+    out.work.push('closest points ' + g3Show(P1) + ' on the first line and ' + g3Show(P2) + ' on the second');
+    out.check = dotQ(g3Sub(P2, P1), d1).isZero() && dotQ(g3Sub(P2, P1), d2).isZero() ? 'the segment joining them is perpendicular to both lines' : null;
+  }
+  return g3Out(out);
+}, [4, 'point and direction of each line: skewlines([0,0,0],[1,0,0], [0,1,1],[0,1,0])']);
+
+defMat('lineplane', (args, n, out) => {
+  const A = g3Vec(args[0], 'lineplane');
+  const d = g3Vec(args[1], 'lineplane');
+  const p = g3Plane(args[2], 'lineplane');
+  const nv = p.slice(0, 3);
+  const nd = dotQ(nv, d);
+  const gap = p[3].sub(dotQ(nv, A));
+  const sinNum = nd.sign() < 0 ? nd.neg() : nd;
+  const ang = Math.asin(Math.min(1, sinNum.toNumber() / Math.sqrt(dotQ(nv, nv).toNumber() * dotQ(d, d).toNumber())));
+  if (nd.isZero()) {
+    if (gap.isZero()) out.answer.push('the line lies in the plane');
+    else out.answer.push('the line is parallel to the plane, distance = ' + g3Ratio(gap.sign() < 0 ? gap.neg() : gap, dotQ(nv, nv)));
+    return g3Out(out);
+  }
+  const t = gap.div(nd);
+  const X = g3Add(A, g3Scale(d, t));
+  out.answer.push('intersection point ' + g3Show(X) + ' (t = ' + t.toString() + ')');
+  out.work.push('substitute the line into the plane: n\u00b7(A + t d) = D  gives  t = (D \u2212 n\u00b7A)/(n\u00b7d) = ' + t.toString());
+  out.work.push('angle between the line and the plane: sin \u03c6 = |n\u00b7d| / (|n||d|),  \u03c6 = ' + g3Deg(ang));
+  out.check = dotQ(nv, X).eq(p[3]) ? 'the point satisfies the plane equation' : null;
+  return g3Out(out);
+}, [3, 'a point and direction of the line and a plane: lineplane([0,0,0],[1,1,1], [1,2,3,6])']);
+
+defMat('planeangle', (args, n, out) => {
+  const p1 = g3Plane(args[0], 'planeangle');
+  const p2 = g3Plane(args[1], 'planeangle');
+  const n1 = p1.slice(0, 3);
+  const n2 = p2.slice(0, 3);
+  const dp = dotQ(n1, n2);
+  const cr = g3Cross(n1, n2);
+  if (g3IsZero(cr)) {
+    const same = g3NormPlane(p1).every((q, i) => q.eq(g3NormPlane(p2)[i]));
+    out.answer.push(same ? 'the planes coincide' : 'the planes are parallel');
+    return g3Out(out);
+  }
+  const cos = Math.abs(dp.toNumber()) / Math.sqrt(dotQ(n1, n1).toNumber() * dotQ(n2, n2).toNumber());
+  const th = Math.acos(Math.min(1, cos));
+  const cosS = simp(sDiv(sN(dp.sign() < 0 ? dp.neg() : dp), sSqrt(sN(dotQ(n1, n1).mul(dotQ(n2, n2))))));
+  out.answer.push('angle between the planes = ' + g3Deg(th) + (dp.isZero() ? ' (the planes are perpendicular)' : ''));
+  out.work.push('cos \u03b8 = |n\u2081\u00b7n\u2082| / (|n\u2081||n\u2082|) = ' + fmtS(cosS) + ';  n\u2081 = ' + g3Show(n1) + ', n\u2082 = ' + g3Show(n2));
+  return g3Out(out);
+}, [2, 'two planes: planeangle([1,0,0,0], [1,1,0,0])']);
+
+defMat('planeintersect', (args, n, out) => {
+  const p1 = g3Plane(args[0], 'planeintersect');
+  const p2 = g3Plane(args[1], 'planeintersect');
+  const n1 = p1.slice(0, 3);
+  const n2 = p2.slice(0, 3);
+  const d = g3Cross(n1, n2);
+  if (g3IsZero(d)) {
+    const a = g3NormPlane(p1);
+    const b = g3NormPlane(p2);
+    out.answer.push(a.every((q, i) => q.eq(b[i])) ? 'the planes coincide' : 'the planes are parallel: no common point');
+    return g3Out(out);
+  }
+  // a point of the line: set the coordinate with the largest |d_k| to 0 and solve the remaining 2 x 2 system
+  let k = 0;
+  d.forEach((q, i) => { if (q.abs().sub(d[k].abs()).sign() > 0) k = i; });
+  const [i, j] = [0, 1, 2].filter((x) => x !== k);
+  const det = n1[i].mul(n2[j]).sub(n1[j].mul(n2[i]));
+  const P = [Q0, Q0, Q0];
+  P[i] = p1[3].mul(n2[j]).sub(p2[3].mul(n1[j])).div(det);
+  P[j] = n1[i].mul(p2[3]).sub(n2[i].mul(p1[3])).div(det);
+  const dv = primitiveVector(d);
+  out.answer.push('the planes meet in the line through ' + g3Show(P) + ' with direction ' + g3Show(dv));
+  g3LineLines(out, P, dv);
+  out.work.push('direction = n\u2081 \u00d7 n\u2082 = ' + g3Show(d));
+  out.check = dotQ(n1, P).eq(p1[3]) && dotQ(n2, P).eq(p2[3]) ? 'the point lies in both planes' : null;
+  return g3Out(out);
+}, [2, 'two planes: planeintersect([1,1,1,3], [1,-1,0,0])']);
+
+defMat('triplescalar tripleproduct parallelepiped', (args, n, out) => {
+  const [u, v, w] = args.map((a) => g3Vec(a, 'triplescalar'));
+  const t = dotQ(u, g3Cross(v, w));
+  out.answer.push('u\u00b7(v \u00d7 w) = ' + t.toString());
+  out.work.push('volume of the parallelepiped = |u\u00b7(v \u00d7 w)| = ' + (t.sign() < 0 ? t.neg() : t).toString() + ';  volume of the tetrahedron on them = ' + (t.sign() < 0 ? t.neg() : t).div(qInt(6)).toString());
+  out.work.push(t.isZero() ? 'the three vectors are coplanar (linearly dependent)' : 'the three vectors are independent, ' + (t.sign() > 0 ? 'a right-handed' : 'a left-handed') + ' triple');
+  out.value = { q: t };
+  return g3Out(out);
+}, [3, 'three vectors: triplescalar([1,0,0],[0,2,0],[0,0,3])']);
+
+defMat('trianglearea3d', (args, n, out) => {
+  const [A, B, C] = args.map((a) => g3Vec(a, 'trianglearea3d'));
+  const c = g3Cross(g3Sub(B, A), g3Sub(C, A));
+  const area2 = dotQ(c, c);
+  out.answer.push('area = ' + (area2.isZero() ? '0 (the points are collinear)' : symText(simp(sDiv(sSqrt(sN(area2)), sI(2))))));
+  out.work.push('area = |AB \u00d7 AC| / 2 with AB \u00d7 AC = ' + g3Show(c) + ';  sides ' + g3Rad(dotQ(g3Sub(B, A), g3Sub(B, A))) + ', ' + g3Rad(dotQ(g3Sub(C, B), g3Sub(C, B))) + ', ' + g3Rad(dotQ(g3Sub(A, C), g3Sub(A, C))));
+  return g3Out(out);
+}, [3, 'three points: trianglearea3d([0,0,0],[1,0,0],[0,2,0])']);
+
+defMat('tetrahedron', (args, n, out) => {
+  const [A, B, C, D] = args.map((a) => g3Vec(a, 'tetrahedron'));
+  const t = dotQ(g3Sub(B, A), g3Cross(g3Sub(C, A), g3Sub(D, A)));
+  const vol = (t.sign() < 0 ? t.neg() : t).div(qInt(6));
+  out.answer.push(vol.isZero() ? 'volume = 0 (the four points are coplanar)' : 'volume = ' + qLabel(vol));
+  out.work.push('V = |AB\u00b7(AC \u00d7 AD)| / 6 = |' + t.toString() + '| / 6');
+  out.value = { q: vol };
+  return g3Out(out);
+}, [4, 'four points: tetrahedron([0,0,0],[1,0,0],[0,1,0],[0,0,1])']);
+
+defMat('dircos directioncosines', (args, n, out) => {
+  const v = g3Vec(args[0], 'dircos');
+  if (g3IsZero(v)) throw new MathError('the vector must not be zero');
+  const L2 = dotQ(v, v);
+  const names = ['\u03b1', '\u03b2', '\u03b3'];
+  const len = Math.sqrt(L2.toNumber());
+  v.forEach((c, i) => {
+    out.answer.push('cos ' + names[i] + ' = ' + symText(simp(sDiv(sN(c), sSqrt(sN(L2))))) + ',  ' + names[i] + ' = ' + g3Deg(Math.acos(c.toNumber() / len)));
+  });
+  out.work.push('direction cosines are the components of v divided by |v| = ' + g3Len(v) + ';  cos\u00b2\u03b1 + cos\u00b2\u03b2 + cos\u00b2\u03b3 = 1');
+  return g3Out(out);
+}, [1, 'a vector: dircos([1,2,2])']);
+
+function g3Sphere(args, n, out) {
+  let C;
+  let r2;
+  if (args.length === 2 && args[1].t === 'mat') {
+    const A = g3Vec(args[0], 'sphere');
+    const B = g3Vec(args[1], 'sphere');
+    C = g3Scale(g3Add(A, B), new Q(1n, 2n));
+    r2 = dotQ(g3Sub(B, A), g3Sub(B, A)).div(qInt(4));
+    out.work.push('diameter from ' + g3Show(A) + ' to ' + g3Show(B) + ': centre = midpoint, radius = half the distance');
+  } else if (args.length === 2) {
+    C = g3Vec(args[0], 'sphere');
+    const rv = args[1];
+    const S = rv.t === 'num' ? sN(rv.q) : rv.S;
+    const sq = simp(sPow(S, sI(2)));
+    if (sq.k !== 'n') throw new MathError('the radius must be a number whose square is rational, e.g. 3 or sqrt(5)');
+    r2 = sq.q;
+    if (r2.sign() <= 0) throw new MathError('the radius must be positive');
+  } else if (args.length === 4) {
+    const P = args.map((a) => g3Vec(a, 'sphere'));
+    const M = P.map((p) => p.concat([Q1]));
+    const rhs = P.map((p) => dotQ(p, p).neg());
+    const inv = mInv(M);
+    if (!inv) throw new MathError('the four points are coplanar (or three are collinear), so there is no unique sphere through them');
+    const sol = mMul(inv, rhs.map((q) => [q])).map((r) => r[0]);
+    C = sol.slice(0, 3).map((q) => q.neg().div(qInt(2)));
+    r2 = dotQ(C, C).sub(sol[3]);
+    out.work.push('x\u00b2 + y\u00b2 + z\u00b2 + Dx + Ey + Fz + G = 0 through the four points gives D, E, F, G = ' + sol.map((q) => q.toString()).join(', '));
+  } else throw new MathError('sphere needs a centre and a radius, the two ends of a diameter, or four points');
+  const G = dotQ(C, C).sub(r2);
+  const lin = C.map((c) => c.mul(qInt(-2)));
+  const names = ['x', 'y', 'z'];
+  const sq = C.map((c, i) => (c.isZero() ? names[i] + '\u00b2' : '(' + names[i] + (c.sign() < 0 ? ' + ' + c.neg().toString() : ' - ' + c.toString()) + ')\u00b2'));
+  out.answer.push(sq.join(' + ') + ' = ' + r2.toString() + '   (centre ' + g3Show(C) + ', radius ' + g3Rad(r2) + ')');
+  const term = (c, nm) => (c.isZero() ? '' : (c.sign() < 0 ? ' - ' : ' + ') + (c.abs().eq(Q1) ? '' : c.abs().toString()) + nm);
+  out.work.push('expanded: x\u00b2 + y\u00b2 + z\u00b2' + term(lin[0], 'x') + term(lin[1], 'y') + term(lin[2], 'z') + (G.isZero() ? '' : (G.sign() < 0 ? ' - ' : ' + ') + G.abs().toString()) + ' = 0');
+  out.work.push('volume = (4/3)\u03c0 r\u00b3 = ' + fmtNum((4 / 3) * Math.PI * Math.pow(r2.toNumber(), 1.5)) + ',  surface area = 4\u03c0 r\u00b2 = ' + fmtNum(4 * Math.PI * r2.toNumber()));
+  return g3Out(out);
+}
+// sphere(r) is the volume / surface area command of the geometry module; with a point it is the equation of a sphere
+const g3OldSphere = COMMANDS.sphere;
+defCmd('sphere', (n) => {
+  if (n.args.length >= 2 || (n.args[0] && n.args[0].t === 'list')) {
+    const out = newOut();
+    g3Sphere(n.args.map(evalMat), n, out);
+    return out;
+  }
+  return g3OldSphere(n);
+}, true);
+COMMANDS.sphere.show = g3OldSphere.show;
+
+// ---- quadric surfaces ------------------------------------------------------------------------------------------------------------------------
+/** { pos, neg, zero } eigenvalue signs of a symmetric rational matrix (exact, from the characteristic polynomial). */
+function g3Inertia(A) {
+  const nn = A.length;
+  const c = charPoly(A);
+  let zero = 0;
+  while (zero < nn && c[zero].isZero()) zero++;
+  return { pos: la2SignChanges(c), neg: la2SignChanges(c.map((q, i) => (i % 2 ? q.neg() : q))), zero };
+}
+/** The quadratic form of lhs - rhs in x, y, z: { A, b, c } with f = v'Av + b.v + c, or null when it is not a polynomial of degree <= 2. */
+function surfaceCoefficients(eq) {
+  const vars = ['x', 'y', 'z'];
+  const dom = [];
+  const F = (vals) => {
+    const env = new Map(vars.map((name, j) => [name, rfConst(vals[j])]));
+    return rfConstQ(rfSub(evalRF(eq.lhs, env, dom), evalRF(eq.rhs, env, dom)));
+  };
+  const e = (i) => vars.map((_, j) => (i === j ? Q1 : Q0));
+  const half = new Q(1n, 2n);
+  try {
+    const c = F(vars.map(() => Q0));
+    const A = [[Q0, Q0, Q0], [Q0, Q0, Q0], [Q0, Q0, Q0]];
+    const b = [Q0, Q0, Q0];
+    for (let i = 0; i < 3; i++) {
+      const fp = F(e(i));
+      const fm = F(e(i).map((q) => q.neg()));
+      A[i][i] = fp.add(fm).mul(half).sub(c);
+      b[i] = fp.sub(fm).mul(half);
+    }
+    for (let i = 0; i < 3; i++) {
+      for (let j = i + 1; j < 3; j++) {
+        const ee = e(i).map((q, k) => q.add(e(j)[k]));
+        const cross = F(ee).sub(F(e(i))).sub(F(e(j))).add(c);
+        A[i][j] = cross.mul(half);
+        A[j][i] = A[i][j];
+      }
+    }
+    // verify that the quadratic model reproduces the polynomial (degree <= 2)
+    const tests = [[2, 5, -3], [-1, 4, 7], [3, -2, 1], [-5, -3, 6]];
+    for (const t of tests) {
+      const v = t.map((x, k) => new Q(BigInt(x), BigInt(1 + k)));
+      let model = c;
+      v.forEach((vi, i) => {
+        model = model.add(b[i].mul(vi));
+        v.forEach((vj, j) => { model = model.add(A[i][j].mul(vi).mul(vj)); });
+      });
+      if (!F(v).eq(model)) return null;
+    }
+    return { A, b, c };
+  } catch (err) {
+    if (err instanceof NotAlgebraic || err instanceof MathError) return null;
+    throw err;
+  }
+}
+/** Classification of  v'Av + b.v + c = 0:  { name, center, detail }  (exact). */
+function classifyQuadric(A, b, c) {
+  const { pos, neg } = g3Inertia(A);
+  const r = pos + neg;
+  const half = new Q(1n, 2n);
+  const bq = b.map((q) => q.mul(half));
+  const res = { rank: r, pos, neg, center: null, std: null };
+  if (r === 0) {
+    res.name = b.every((q) => q.isZero()) ? (c.isZero() ? 'the whole space' : 'no points') : 'a plane (the equation is linear)';
+    return res;
+  }
+  const diagonal = A.every((row, i) => row.every((v, j) => i === j || v.isZero()));
+  if (r === 3) {
+    const v0 = mMul(mInv(A), bq.map((q) => [q])).map((row) => row[0].neg());
+    const k = c.sub(dotQ(v0, mMul(A, v0.map((q) => [q])).map((row) => row[0])));
+    res.center = v0;
+    res.k = k;
+    const s = k.neg();
+    const eff = k.isZero() ? [pos, neg] : s.sign() > 0 ? [pos, neg] : [neg, pos];
+    if (k.isZero()) {
+      res.name = pos === 3 || neg === 3 ? 'a single point (the centre)' : 'elliptic cone';
+    } else if (eff[0] === 3) {
+      res.name = A.every((row, i) => row.every((v, j) => (i === j ? v.eq(A[0][0]) : v.isZero()))) ? 'sphere' : 'ellipsoid';
+    } else if (eff[0] === 2) res.name = 'hyperboloid of one sheet';
+    else if (eff[0] === 1) res.name = 'hyperboloid of two sheets';
+    else res.name = 'no real points (an imaginary ellipsoid)';
+    if (diagonal) {
+      const nm = ['x', 'y', 'z'];
+      const shifted = nm.map((v, i) => (v0[i].isZero() ? v : '(' + v + (v0[i].sign() < 0 ? ' + ' + v0[i].neg().toString() : ' - ' + v0[i].toString()) + ')'));
+      if (k.isZero()) {
+        res.std = A.map((row, i) => row[i]).map((lam, i) => (lam.sign() < 0 ? '- ' : '+ ') + (lam.abs().eq(Q1) ? '' : lam.abs().toString()) + shifted[i] + '\u00b2').join(' ').replace(/^\+ /, '') + ' = 0';
+      } else {
+        res.std = A.map((row, i) => {
+          const w = row[i].div(s);
+          const den = w.abs().inv();
+          return (w.sign() < 0 ? '- ' : '+ ') + shifted[i] + '\u00b2' + (den.eq(Q1) ? '' : '/' + den.toString());
+        }).join(' ').replace(/^\+ /, '') + ' = 1';
+      }
+    }
+    return res;
+  }
+  if (r === 2) {
+    const nullv = mNullspace(A)[0];
+    const bn = dotQ(bq, nullv);
+    if (!bn.isZero()) {
+      res.name = pos === 1 && neg === 1 ? 'hyperbolic paraboloid' : 'elliptic paraboloid';
+      return res;
+    }
+    // b lies in the range of A: shift to the centre line
+    const aug = A.map((row, i) => row.concat([bq[i].neg()]));
+    const { R, pivots } = mRref(aug);
+    const v0 = [Q0, Q0, Q0];
+    pivots.forEach((pc, i) => { v0[pc] = R[i][3]; });
+    const k = c.sub(dotQ(v0, mMul(A, v0.map((q) => [q])).map((row) => row[0])));
+    const s = k.neg();
+    res.k = k;
+    if (k.isZero()) res.name = pos === 1 && neg === 1 ? 'a pair of intersecting planes' : 'a line';
+    else {
+      const eff = s.sign() > 0 ? [pos, neg] : [neg, pos];
+      res.name = eff[0] === 2 ? 'elliptic cylinder' : eff[0] === 1 ? 'hyperbolic cylinder' : 'no real points (an imaginary cylinder)';
+    }
+    return res;
+  }
+  // rank 1
+  const nulls = mNullspace(A);
+  const i0 = A.findIndex((row, i) => !row[i].isZero());
+  const nu = A[i0];
+  const beta = nu[0].isZero() ? (nu[1].isZero() ? bq[2].div(nu[2]) : bq[1].div(nu[1])) : bq[0].div(nu[0]);
+  const inRange = bq.every((q, i) => q.eq(beta.mul(nu[i])));
+  void nulls;
+  if (!inRange) {
+    res.name = 'parabolic cylinder';
+    return res;
+  }
+  // f = (1/A_ii) u^2 + 2 beta u + c with u = nu.v
+  const lam = A[i0][i0].inv();
+  const disc = beta.mul(beta).sub(lam.mul(c));
+  res.name = disc.sign() > 0 ? 'a pair of parallel planes' : disc.isZero() ? 'a single plane (counted twice)' : 'no real points';
+  return res;
+}
+defMat('quadric surface sphereinfo', (args, n, out) => {
+  const A = needMat(args[0], 'quadric');
+  const b = flat(args[1]);
+  const c = args[2].t === 'num' ? args[2].q : (() => { throw new MathError('the constant term must be a number'); })();
+  if (A.length !== 3 || A[0].length !== 3 || b.length !== 3) throw new MathError('quadric needs a 3\u00d73 symmetric matrix, a vector of three linear coefficients and a constant: quadric([[1,0,0],[0,1,0],[0,0,1]], [-2,4,-6], -11)');
+  if (!la2IsSymmetric(A)) throw new MathError('the matrix of the quadratic terms must be symmetric');
+  const res = classifyQuadric(A, b, c);
+  out.answer.push('surface: ' + res.name);
+  if (res.center) out.work.push('centre ' + g3Show(res.center));
+  if (res.name === 'sphere') {
+    const r2 = res.k.neg().div(A[0][0]);
+    out.answer.push('centre ' + g3Show(res.center) + ', radius ' + g3Rad(r2));
+  }
+  if (res.std) out.work.push('standard form: ' + res.std);
+  const e = polyRoots(charPoly(A));
+  out.work.push('quadratic part: ' + res.pos + ' positive, ' + res.neg + ' negative and ' + (3 - res.rank) + ' zero eigenvalues' + (e.complex.length === 0 ? ' (\u03bb = ' + e.real.map((r) => r.text + (r.mult > 1 ? '\u00d7' + r.mult : '')).join(', ') + ')' : ''));
+  return g3Out(out);
+}, [3, 'the matrix of the quadratic terms, the linear coefficients and the constant']);
+/** Hook for solveProblem: a single equation in exactly x, y, z (a plane or a quadric surface). */
+function analyzeSurface(eq, out) {
+  const co = surfaceCoefficients(eq);
+  if (!co) return false;
+  const quad = co.A.some((row) => row.some((v) => !v.isZero()));
+  if (!quad) {
+    const p = co.b.concat([co.c.neg()]);
+    if (co.b.every((q) => q.isZero())) return false;
+    out.work.push('Type: linear equation in x, y, z: a plane in space');
+    const q = g3NormPlane(p);
+    out.answer.push('plane ' + g3PlaneText(q));
+    out.work.push('normal vector ' + g3Show(q.slice(0, 3)) + ', length ' + g3Len(q.slice(0, 3)) + ';  distance from the origin ' + g3Ratio(q[3].sign() < 0 ? q[3].neg() : q[3], dotQ(q.slice(0, 3), q.slice(0, 3))));
+    const ic = ['x', 'y', 'z'].map((nm, i) => (q[i].isZero() ? null : nm + '-intercept ' + q[3].div(q[i]).toString())).filter(Boolean);
+    out.work.push(ic.join(', '));
+    const k = q[2].isZero() ? (q[1].isZero() ? 0 : 1) : 2;
+    const nm = ['x', 'y', 'z'];
+    out.work.push('solved for ' + nm[k] + ': ' + nm[k] + ' = ' + linText(q[3].div(q[k]), [0, 1, 2].filter((i) => i !== k).map((i) => [q[i].neg().div(q[k]), nm[i]])));
+    return true;
+  }
+  const res = classifyQuadric(co.A, co.b, co.c);
+  out.work.push('Type: second-degree equation in x, y, z: a quadric surface');
+  out.answer.push('surface: ' + res.name);
+  if (res.name === 'sphere') out.answer.push('centre ' + g3Show(res.center) + ', radius ' + g3Rad(res.k.neg().div(co.A[0][0])));
+  else if (res.center) out.work.push('centre ' + g3Show(res.center));
+  if (res.std) out.work.push('standard form: ' + res.std);
+  out.work.push('quadratic part: ' + res.pos + ' positive, ' + res.neg + ' negative and ' + (3 - res.rank) + ' zero eigenvalues');
+  return true;
+}
+
+// ---- text pre-pass: equations of planes and surfaces written as arguments ----------------------------------------------------------
+function g3SplitArgs(inner) {
+  const parts = [];
+  let depth = 0;
+  let from = 0;
+  for (let i = 0; i < inner.length; i++) {
+    const ch = inner[i];
+    if (ch === '(' || ch === '[') depth++;
+    else if (ch === ')' || ch === ']') depth--;
+    else if (ch === ',' && depth === 0) {
+      parts.push(inner.slice(from, i));
+      from = i + 1;
+    }
+  }
+  parts.push(inner.slice(from));
+  return parts;
+}
+function convertGeometry3d(s) {
+  if (!/=/.test(s) || !/[xyz]/.test(s)) return s;
+  const planeCmds = ['plane', 'planeinfo', 'pointplane', 'planedist', 'lineplane', 'planeangle', 'planeintersect'];
+  const surfCmds = ['quadric', 'surface', 'sphereinfo', 'sphere'];
+  const asPlane = (arg) => {
+    if (!/=/.test(arg) || /\[/.test(arg)) return null;
+    let st;
+    try {
+      st = parseStatement(cleanStatement(arg));
+    } catch (e) {
+      return null;
+    }
+    if (st.kind !== 'eq') return null;
+    const form = affineForm(st, ['x', 'y', 'z']);
+    if (!form) return null;
+    return '[' + form.coef.map((q) => q.toString()).join(', ') + ', ' + form.c0.neg().toString() + ']';
+  };
+  s = replaceCalls(s, planeCmds, (name, inner) => {
+    const parts = g3SplitArgs(inner);
+    let changed = false;
+    const conv = parts.map((p) => {
+      const r = asPlane(p);
+      if (r) changed = true;
+      return r || p;
+    });
+    return changed ? name + '(' + conv.join(',') + ')' : null;
+  });
+  s = replaceCalls(s, surfCmds, (name, inner) => {
+    const parts = g3SplitArgs(inner);
+    if (parts.length !== 1 || !/=/.test(parts[0]) || /\[/.test(parts[0])) return null;
+    let st;
+    try {
+      st = parseStatement(cleanStatement(parts[0]));
+    } catch (e) {
+      return null;
+    }
+    if (st.kind !== 'eq') return null;
+    const co = surfaceCoefficients(st);
+    if (!co) throw new MathError('this is not an equation of degree at most 2 in x, y and z');
+    return 'quadric([' + co.A.map((row) => '[' + row.map((q) => q.toString()).join(', ') + ']').join(', ') + '], [' + co.b.map((q) => q.toString()).join(', ') + '], ' + co.c.toString() + ')';
+  });
+  return s;
+}
+// ======================================================================
+// 25. More graphs: slope fields, scatter plots with a fitted curve, histograms, box plots, shaded normal / t / chi-square curves,
+//     implicit curves, regions of inequalities and contour maps.  Every picture comes with the key numbers in text.
+// ======================================================================
+const PL2_REL = [];
+function pl2Window(args, k, what) {
+  if (args.length <= k) return { vx: 'x', vy: 'y', xr: [-5, 5], yr: [-5, 5] };
+  if (args.length !== k + 6 || args[k].t !== 'var' || args[k + 3].t !== 'var') throw new MathError(what + ': write the window as  x, -3, 3, y, -2, 2  (variable, from, to, variable, from, to)');
+  const xr = [numArg(args[k + 1]), numArg(args[k + 2])];
+  const yr = [numArg(args[k + 4]), numArg(args[k + 5])];
+  if (!(xr[1] > xr[0]) || !(yr[1] > yr[0])) throw new MathError(what + ': each "to" value must be larger than its "from" value');
+  return { vx: args[k].name, vy: args[k + 3].name, xr, yr };
+}
+function pl2Fn(node, vx, vy) {
+  const vars = collectVars(node, new Set());
+  vars.delete(vx);
+  vars.delete(vy);
+  if (vars.size) throw new MathError('unknown letter ' + Array.from(vars).join(', ') + ' (only ' + vx + ' and ' + vy + ' may appear)');
+  return (x, y) => evalNum(node, { [vx]: x, [vy]: y });
+}
+const pl2Draw = (out, spec) => finishPlot(out, spec);
+
+/** Marching squares: segments [x1, y1, x2, y2] of the level curve F = level, and the sampled values. */
+function pl2Contour(F, xr, yr, nx, ny, level) {
+  const dx = (xr[1] - xr[0]) / nx;
+  const dy = (yr[1] - yr[0]) / ny;
+  const V = [];
+  for (let j = 0; j <= ny; j++) {
+    const row = [];
+    for (let i = 0; i <= nx; i++) {
+      let v;
+      try {
+        v = F(xr[0] + i * dx, yr[0] + j * dy);
+      } catch (e) {
+        v = NaN;
+      }
+      row.push(isFinite(v) ? v : NaN);
+    }
+    V.push(row);
+  }
+  return { segs: pl2Segments(V, xr, yr, nx, ny, level), V };
+}
+function pl2Segments(V, xr, yr, nx, ny, level) {
+  const dx = (xr[1] - xr[0]) / nx;
+  const dy = (yr[1] - yr[0]) / ny;
+  const segs = [];
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const va = V[j][i];
+      const vb = V[j][i + 1];
+      const vc = V[j + 1][i + 1];
+      const vd = V[j + 1][i];
+      if (isNaN(va) || isNaN(vb) || isNaN(vc) || isNaN(vd)) continue;
+      if (Math.max(Math.abs(va), Math.abs(vb), Math.abs(vc), Math.abs(vd)) > 1e9) continue;
+      const mask = (va > level ? 1 : 0) | (vb > level ? 2 : 0) | (vc > level ? 4 : 0) | (vd > level ? 8 : 0);
+      if (mask === 0 || mask === 15) continue;
+      const x = xr[0] + i * dx;
+      const y = yr[0] + j * dy;
+      const edge = [
+        () => [x + ((level - va) / (vb - va)) * dx, y],
+        () => [x + dx, y + ((level - vb) / (vc - vb)) * dy],
+        () => [x + ((level - vd) / (vc - vd)) * dx, y + dy],
+        () => [x, y + ((level - va) / (vd - va)) * dy],
+      ];
+      const add = (p, q) => segs.push(edge[p]().concat(edge[q]()));
+      const centreHigh = (va + vb + vc + vd) / 4 > level;
+      switch (mask) {
+        case 1: case 14: add(3, 0); break;
+        case 2: case 13: add(0, 1); break;
+        case 3: case 12: add(3, 1); break;
+        case 4: case 11: add(1, 2); break;
+        case 6: case 9: add(0, 2); break;
+        case 7: case 8: add(3, 2); break;
+        case 5:
+          if (centreHigh) { add(0, 1); add(3, 2); } else { add(3, 0); add(1, 2); }
+          break;
+        case 10:
+          if (centreHigh) { add(3, 0); add(1, 2); } else { add(0, 1); add(3, 2); }
+          break;
+        default: break;
+      }
+    }
+  }
+  return segs;
+}
+const pl2DrawSegs = (g, px, py, segs, color, width, dash) => {
+  g.strokeStyle = color;
+  g.lineWidth = width;
+  if (dash && g.setLineDash) g.setLineDash(dash);
+  g.beginPath();
+  segs.forEach((s) => {
+    g.moveTo(px(s[0]), py(s[1]));
+    g.lineTo(px(s[2]), py(s[3]));
+  });
+  g.stroke();
+  if (dash && g.setLineDash) g.setLineDash([]);
+};
+/** Values of x in [a, b] where f changes sign (scan + bisection). */
+function pl2Roots(f, a, b, n) {
+  const roots = [];
+  let xp = a;
+  let fp;
+  try {
+    fp = f(a);
+  } catch (e) {
+    fp = NaN;
+  }
+  for (let i = 1; i <= n; i++) {
+    const x = a + ((b - a) * i) / n;
+    let fx;
+    try {
+      fx = f(x);
+    } catch (e) {
+      fx = NaN;
+    }
+    if (isFinite(fp) && isFinite(fx)) {
+      if (fp === 0) roots.push(xp);
+      else if (fp * fx < 0) {
+        let lo = xp;
+        let hi = x;
+        let flo = fp;
+        for (let k = 0; k < 80; k++) {
+          const mid = (lo + hi) / 2;
+          const fm = f(mid);
+          if (flo * fm <= 0) hi = mid;
+          else {
+            lo = mid;
+            flo = fm;
+          }
+        }
+        const r = (lo + hi) / 2;
+        if (Math.abs(f(r)) < 1e6) roots.push(r);
+      }
+    }
+    xp = x;
+    fp = fx;
+  }
+  if (isFinite(fp) && fp === 0) roots.push(xp);
+  return roots.filter((r, k) => k === 0 || Math.abs(r - roots[k - 1]) > (b - a) * 1e-9);
+}
+
+// ---- slope fields ---------------------------------------------------------------------------------------------------------------------------
+function pl2Rk4(f, x0, y0, xEnd, steps) {
+  const h = (xEnd - x0) / steps;
+  const pts = [{ x: x0, y: y0 }];
+  let y = y0;
+  for (let k = 0; k < steps; k++) {
+    const x = x0 + k * h;
+    const k1 = f(x, y);
+    const k2 = f(x + h / 2, y + (h / 2) * k1);
+    const k3 = f(x + h / 2, y + (h / 2) * k2);
+    const k4 = f(x + h, y + h * k3);
+    y += (h / 6) * (k1 + 2 * k2 + 2 * k3 + k4);
+    if (!isFinite(y) || Math.abs(y) > 1e8) break;
+    pts.push({ x: x0 + (k + 1) * h, y });
+  }
+  return pts;
+}
+defCmd('slopefield directionfield', (n) => {
+  const args = n.args;
+  if (!args.length) throw new MathError('slopefield needs the right-hand side of y\' = f(x, y), e.g. slopefield(x - y, x, -3, 3, y, -3, 3)');
+  const hasWin = args.length >= 7 && args[1].t === 'var' && args[4].t === 'var';
+  const win = hasWin ? pl2Window(args.slice(0, 7), 1, 'slopefield') : { vx: 'x', vy: 'y', xr: [-5, 5], yr: [-5, 5] };
+  const rest = args.slice(hasWin ? 7 : 1);
+  if (rest.length % 2) throw new MathError('give the starting points as pairs: slopefield(x - y, x, -3, 3, y, -3, 3, 0, 1)');
+  const f = pl2Fn(args[0], win.vx, win.vy);
+  const { xr, yr } = win;
+  const out = newOut();
+  const labels = ["y' = " + showRaw(args[0])];
+  out.answer.push('Slope field of ' + labels[0] + ' on x from ' + fmtNum(xr[0]) + ' to ' + fmtNum(xr[1]) + ', y from ' + fmtNum(yr[0]) + ' to ' + fmtNum(yr[1]) + ' (the picture is shown in the chat)');
+  const curves = [];
+  const labelList = [labels[0]];
+  for (let i = 0; i + 1 < rest.length; i += 2) {
+    const x0 = numArg(rest[i]);
+    const y0 = numArg(rest[i + 1]);
+    const right = pl2Rk4(f, x0, y0, xr[1], 800);
+    const left = pl2Rk4(f, x0, y0, xr[0], 800).reverse();
+    curves.push(left.concat(right.slice(1)));
+    labelList.push('through (' + fmtNum(x0) + ', ' + fmtNum(y0) + ')');
+    const endR = pl2Rk4(f, x0, y0, xr[1], 4000);
+    const endL = pl2Rk4(f, x0, y0, xr[0], 4000);
+    const atR = endR[endR.length - 1];
+    const atL = endL[endL.length - 1];
+    out.work.push('slope at (' + fmtNum(x0) + ', ' + fmtNum(y0) + ') = ' + fmtNum(f(x0, y0)));
+    out.work.push('solution through (' + fmtNum(x0) + ', ' + fmtNum(y0) + '): ' + (Math.abs(atR.x - xr[1]) < 1e-9 ? 'y(' + fmtNum(xr[1]) + ') \u2248 ' + fmtNum(atR.y) : 'it leaves the window near x = ' + fmtNum(atR.x)) + ';  ' + (Math.abs(atL.x - xr[0]) < 1e-9 ? 'y(' + fmtNum(xr[0]) + ') \u2248 ' + fmtNum(atL.y) : 'to the left it leaves the window near x = ' + fmtNum(atL.x)));
+  }
+  // equilibrium solutions of an autonomous equation y' = f(y)
+  const autonomous = !collectVars(args[0], new Set()).has(win.vx);
+  if (autonomous) {
+    const eq = pl2Roots((y) => f(xr[0], y), yr[0], yr[1], 800);
+    out.work.push(eq.length ? 'the equation does not depend on ' + win.vx + ': constant (equilibrium) solutions ' + win.vy + ' = ' + eq.map((r) => fmtNum(Math.abs(r) < 1e-9 ? 0 : r)).join(', ') : 'the equation does not depend on ' + win.vx + ' and has no constant solution in this window');
+  }
+  const nx = 21;
+  const ny = 15;
+  const under = (g, px, py) => {
+    g.strokeStyle = '#888888';
+    g.lineWidth = 1.4;
+    const sx = Math.abs(px(1) - px(0));
+    const sy = Math.abs(py(1) - py(0));
+    const len = Math.min(((PLOT_W - 68) / nx) * 0.42, ((PLOT_H - 48) / ny) * 0.42);
+    g.beginPath();
+    for (let i = 0; i <= nx; i++) {
+      for (let j = 0; j <= ny; j++) {
+        const x = xr[0] + ((xr[1] - xr[0]) * i) / nx;
+        const y = yr[0] + ((yr[1] - yr[0]) * j) / ny;
+        let m;
+        try {
+          m = f(x, y);
+        } catch (e) {
+          m = NaN;
+        }
+        if (!isFinite(m)) continue;
+        const vx = sx;
+        const vy = -m * sy;
+        const L = Math.hypot(vx, vy) || 1;
+        const ux = (vx / L) * len;
+        const uy = (vy / L) * len;
+        g.moveTo(px(x) - ux, py(y) - uy);
+        g.lineTo(px(x) + ux, py(y) + uy);
+      }
+    }
+    g.stroke();
+  };
+  return pl2Draw(out, { curves, xr, yr, labels: curves.length ? labelList : [], labelColors: ['#888888'].concat(curves.map((_, k) => PLOT_COLORS[k % PLOT_COLORS.length])), under });
+});
+
+// ---- scatter plots ------------------------------------------------------------------------------------------------------------------------
+defCmd('scatter scatterplot', (n) => {
+  needArgs(n, 2, 3, 'the x-values and the y-values (and optionally the degree of the fitted polynomial, 0 for none): scatter([1,2,3,4], [2,4,5,8], 1)');
+  const { xs, ys } = pointLists(n, 0);
+  const deg = n.args[2] ? Number(intArg(n.args[2])) : 1;
+  if (deg < 0 || deg > 6 || (deg > 0 && deg >= xs.length)) throw new MathError('the degree must be between 0 (no fit) and ' + Math.min(6, xs.length - 1));
+  const out = newOut();
+  const px = xs.map((q) => q.toNumber());
+  const py2 = ys.map((q) => q.toNumber());
+  out.answer.push('Scatter plot of ' + xs.length + ' points' + (deg ? ' with the least-squares ' + (deg === 1 ? 'line' : 'polynomial of degree ' + deg) : '') + ' (the picture is shown in the chat)');
+  const curves = [];
+  const labels = ['data'];
+  const labelColors = ['#d62728'];
+  const xmin = Math.min(...px);
+  const xmax = Math.max(...px);
+  let ymin = Math.min(...py2);
+  let ymax = Math.max(...py2);
+  if (deg) {
+    const size = deg + 1;
+    const A = [];
+    const b = [];
+    for (let i = 0; i < size; i++) {
+      A.push([]);
+      for (let j = 0; j < size; j++) A[i].push(xs.reduce((s, x) => s.add(x.pow(i + j)), Q0));
+      b.push(xs.reduce((s, x, k) => s.add(ys[k].mul(x.pow(i))), Q0));
+    }
+    const c = solveSquare(A, b);
+    if (!c) throw new MathError('there are not enough different x-values for a polynomial of degree ' + deg);
+    const mean = ys.reduce((s, y) => s.add(y), Q0).div(qInt(ys.length));
+    const sst = ys.reduce((s, y) => s.add(y.sub(mean).mul(y.sub(mean))), Q0);
+    const sse = ys.reduce((s, y, k) => s.add(y.sub(peval(c, xs[k])).mul(y.sub(peval(c, xs[k])))), Q0);
+    out.answer.push('fit: y = ' + polyText(c, 'x'));
+    out.work.push('coefficients (constant term first): ' + c.map((q, i) => 'c' + i + ' = ' + fmtNum(q.toNumber())).join(', '));
+    if (!sst.isZero()) {
+      const r2 = Q1.sub(sse.div(sst));
+      out.work.push('R\u00b2 = ' + fmtNum(r2.toNumber()) + (deg === 1 ? ';  correlation r = ' + (c[1].sign() < 0 ? '-' : '') + fmtNum(Math.sqrt(Math.max(0, r2.toNumber()))) : ''));
+    }
+    const span = xmax - xmin || 1;
+    const lo = xmin - span * 0.08;
+    const hi = xmax + span * 0.08;
+    const cn = c.map((q) => q.toNumber());
+    const curve = sampleCurve((t) => t, (t) => cn.reduceRight((s, co) => s * t + co, 0), lo, hi, 300);
+    curves.push(curve);
+    curve.forEach((p) => { if (p) { ymin = Math.min(ymin, p.y); ymax = Math.max(ymax, p.y); } });
+    labels.push('fit: y = ' + polyText(c, 'x'));
+    labelColors.push(PLOT_COLORS[0]);
+  }
+  const padx = (xmax - xmin || 1) * 0.1;
+  const pady = (ymax - ymin || 1) * 0.1;
+  const marks = px.map((x, i) => ({ x, y: py2[i], color: '#d62728' }));
+  return pl2Draw(out, { curves, xr: [xmin - padx, xmax + padx], yr: [ymin - pady, ymax + pady], labels, labelColors, marks });
+});
+
+// ---- histograms and box plots ----------------------------------------------------------------------------------------------------------------
+function pl2Histogram(n, mode) {
+  if (!n.args.length || n.args[0].t !== 'list') throw new MathError(n.fn + ' needs a list of data' + (mode === 'bins' ? ' and the number of bins: histbins([2,3,3,4,5,7,8,9], 4)' : ' and optionally the class width (and the first class start): histogram([2,3,3,4,5,7,8,9], 2)'));
+  const vs = sortQ(dataOf([n.args[0]], 'histogram'));
+  const N = vs.length;
+  const lo0 = vs[0];
+  const hi0 = vs[N - 1];
+  let lo;
+  let w;
+  let k;
+  let lastClosed = false;
+  let how;
+  if (mode === 'width' && n.args[1]) {
+    w = constQ(n.args[1]);
+    if (w.sign() <= 0) throw new MathError('the class width must be positive');
+    lo = n.args[2] ? constQ(n.args[2]) : floorQ(lo0.div(w)).mul(w);
+    if (lo.sub(lo0).sign() > 0) throw new MathError('the first class must start at or below the smallest value');
+    k = Number(floorQ(hi0.sub(lo).div(w)).n) + 1;
+    how = 'classes of width ' + fmtNum(w.toNumber()) + ' starting at ' + fmtNum(lo.toNumber()) + ', each including its lower limit and excluding its upper limit';
+  } else {
+    k = mode === 'bins' ? Number(intArg(n.args[1])) : Math.ceil(Math.log2(N)) + 1;
+    lo = lo0;
+    w = hi0.sub(lo0).div(qInt(Math.max(1, k)));
+    if (w.isZero()) {
+      w = Q1;
+      k = 1;
+    }
+    lastClosed = true;
+    how = mode === 'bins' ? k + ' equal bins from the smallest to the largest value; the last bin includes its upper end' : k + ' equal bins from the smallest to the largest value (Sturges\' rule \u2308log\u2082 n\u2309 + 1); the last bin includes its upper end';
+  }
+  if (k < 1 || k > 60) throw new MathError('the number of classes must be between 1 and 60');
+  const counts = new Array(k).fill(0);
+  vs.forEach((v) => {
+    let i = Number(floorQ(v.sub(lo).div(w)).n);
+    if (i >= k) i = lastClosed ? k - 1 : k - 1;
+    counts[i]++;
+  });
+  const edges = [];
+  for (let i = 0; i <= k; i++) edges.push(lo.add(w.mul(qInt(i))));
+  const out = newOut();
+  out.answer.push('Histogram of ' + N + ' values in ' + k + ' classes of width ' + fmtNum(w.toNumber()) + ': counts ' + counts.join(', ') + ' (the picture is shown in the chat)');
+  counts.forEach((c, i) => out.work.push('class ' + (i + 1) + ': [' + fmtNum(edges[i].toNumber()) + ', ' + fmtNum(edges[i + 1].toNumber()) + (lastClosed && i === k - 1 ? ']' : ')') + ' \u2192 ' + c + '  (' + fmtNum((c / N) * 100) + ' %)'));
+  const best = Math.max(...counts);
+  out.work.push('tallest class' + (counts.filter((c) => c === best).length > 1 ? 'es' : '') + ': ' + counts.map((c, i) => (c === best ? i + 1 : 0)).filter(Boolean).join(', ') + ' (' + best + ' values);  ' + how);
+  const e = edges.map((q) => q.toNumber());
+  const under = (g, px, py) => {
+    counts.forEach((c, i) => {
+      g.fillStyle = 'rgba(31,119,180,0.75)';
+      g.fillRect(px(e[i]), py(c), px(e[i + 1]) - px(e[i]), py(0) - py(c));
+      g.strokeStyle = '#ffffff';
+      g.lineWidth = 1.5;
+      g.strokeRect(px(e[i]), py(c), px(e[i + 1]) - px(e[i]), py(0) - py(c));
+    });
+  };
+  const wn = w.toNumber();
+  return pl2Draw(out, { curves: [], xr: [e[0] - wn * 0.3, e[k] + wn * 0.3], yr: [0, best * 1.15 + 0.5], labels: [], under });
+}
+defCmd('histogram hist', (n) => pl2Histogram(n, 'width'));
+defCmd('histbins', (n) => pl2Histogram(n, 'bins'));
+defCmd('boxplot boxwhisker', (n) => {
+  if (!n.args.length || n.args.some((a) => a.t !== 'list')) throw new MathError('boxplot needs one or more lists of data: boxplot([2,3,3,4,5,7,40]) or boxplot([1,2,3,4], [2,4,6,8])');
+  if (n.args.length > 6) throw new MathError('at most 6 data sets');
+  const sets = n.args.map((a) => sortQ(dataOf([a], 'boxplot')));
+  const out = newOut();
+  const info = sets.map((vs, k) => {
+    const { q1, q2, q3 } = quartiles(vs);
+    const iqr = q3.sub(q1);
+    const lof = q1.sub(iqr.mul(new Q(3n, 2n)));
+    const hif = q3.add(iqr.mul(new Q(3n, 2n)));
+    const inside = vs.filter((v) => v.sub(lof).sign() >= 0 && v.sub(hif).sign() <= 0);
+    const outl = vs.filter((v) => v.sub(lof).sign() < 0 || v.sub(hif).sign() > 0);
+    const r = { q1, q2, q3, iqr, lof, hif, wlo: inside[0], whi: inside[inside.length - 1], outl, min: vs[0], max: vs[vs.length - 1] };
+    out.work.push((sets.length > 1 ? 'data set ' + (k + 1) + ': ' : '') + 'min ' + qText(r.min) + ', Q1 ' + qText(q1) + ', median ' + qText(q2) + ', Q3 ' + qText(q3) + ', max ' + qText(r.max) + ';  IQR ' + qText(iqr) + ';  fences ' + qText(lof) + ' and ' + qText(hif) + ';  whiskers ' + qText(r.wlo) + ' to ' + qText(r.whi) + ';  ' + (outl.length ? 'outliers: ' + outl.map((v) => v.toString()).join(', ') : 'no outliers'));
+    return r;
+  });
+  out.answer.push('Box plot of ' + sets.length + ' data set' + (sets.length > 1 ? 's' : '') + (info.some((r) => r.outl.length) ? ' (outliers marked with dots)' : '') + ' (the picture is shown in the chat)');
+  const allV = [];
+  info.forEach((r) => { allV.push(r.min.toNumber(), r.max.toNumber()); });
+  const lo = Math.min(...allV);
+  const hi = Math.max(...allV);
+  const pad = (hi - lo || 1) * 0.08;
+  const under = (g, px, py) => {
+    info.forEach((r, k) => {
+      const yc = k + 1;
+      const col = PLOT_COLORS[k % PLOT_COLORS.length];
+      const q1 = r.q1.toNumber();
+      const q3 = r.q3.toNumber();
+      g.fillStyle = 'rgba(31,119,180,0.25)';
+      g.fillRect(px(q1), py(yc + 0.28), px(q3) - px(q1), py(yc - 0.28) - py(yc + 0.28));
+      g.strokeStyle = col;
+      g.lineWidth = 2;
+      g.strokeRect(px(q1), py(yc + 0.28), px(q3) - px(q1), py(yc - 0.28) - py(yc + 0.28));
+      g.beginPath();
+      g.moveTo(px(r.q2.toNumber()), py(yc + 0.28));
+      g.lineTo(px(r.q2.toNumber()), py(yc - 0.28));
+      g.moveTo(px(r.wlo.toNumber()), py(yc));
+      g.lineTo(px(q1), py(yc));
+      g.moveTo(px(q3), py(yc));
+      g.lineTo(px(r.whi.toNumber()), py(yc));
+      g.moveTo(px(r.wlo.toNumber()), py(yc + 0.14));
+      g.lineTo(px(r.wlo.toNumber()), py(yc - 0.14));
+      g.moveTo(px(r.whi.toNumber()), py(yc + 0.14));
+      g.lineTo(px(r.whi.toNumber()), py(yc - 0.14));
+      g.stroke();
+      g.fillStyle = col;
+      r.outl.forEach((v) => {
+        g.beginPath();
+        g.arc(px(v.toNumber()), py(yc), 3.5, 0, 2 * Math.PI);
+        g.fill();
+      });
+    });
+  };
+  return pl2Draw(out, { curves: [], xr: [lo - pad, hi + pad], yr: [0.4, sets.length + 0.6], labels: sets.length > 1 ? sets.map((_, k) => 'data set ' + (k + 1)) : [], under, hideY: true });
+});
+
+// ---- shaded distributions -----------------------------------------------------------------------------------------------------------------
+function shadeDistribution(n, name, pdf, cdf, support, label, lo, hi) {
+  const a = numArg(n.args[n.args.length - 2]);
+  const b = numArg(n.args[n.args.length - 1]);
+  if (a > b) throw new MathError('the left end must not exceed the right end');
+  const p = cdf(b) - cdf(a);
+  const out = newOut();
+  const rangeText = a === -Infinity ? 'X < ' + fmtNum(b) : b === Infinity ? 'X > ' + fmtNum(a) : fmtNum(a) + ' < X < ' + fmtNum(b);
+  out.answer.push('P(' + rangeText + ') = ' + fmtNum(p) + ' (' + fmtNum(p * 100) + ' %) - the shaded area (the picture is shown in the chat)');
+  const lo2 = Math.max(a, lo);
+  const hi2 = Math.min(b, hi);
+  const curve = sampleCurve((t) => t, pdf, lo, hi, 400);
+  const top = Math.max(...curve.filter(Boolean).map((q) => q.y).filter((v) => isFinite(v) && v < 1e6)) * 1.12;
+  const under = (g, px, py) => {
+    if (!(hi2 > lo2)) return;
+    g.fillStyle = 'rgba(214,39,40,0.30)';
+    g.beginPath();
+    g.moveTo(px(lo2), py(0));
+    for (let i = 0; i <= 200; i++) {
+      const x = lo2 + ((hi2 - lo2) * i) / 200;
+      g.lineTo(px(x), py(Math.min(pdf(x), top * 2)));
+    }
+    g.lineTo(px(hi2), py(0));
+    g.closePath();
+    g.fill();
+  };
+  void support;
+  return { out, curve, top, under, labels: [label] };
+}
+defCmd('normalshade shadenormal', (n) => {
+  needArgs(n, 4, 4, 'the mean, the standard deviation and the two ends: normalshade(0, 1, -1.96, 1.96)  (oo for infinity)');
+  const mu = numArg(n.args[0]);
+  const sd = numArg(n.args[1]);
+  if (!(sd > 0)) throw new MathError('the standard deviation must be positive');
+  const r = shadeDistribution(n, 'normal', (x) => normPdf((x - mu) / sd) / sd, (x) => normCdf((x - mu) / sd), null, 'Normal(' + fmtNum(mu) + ', ' + fmtNum(sd) + ')', mu - 4.2 * sd, mu + 4.2 * sd);
+  const a = numArg(n.args[2]);
+  const b = numArg(n.args[3]);
+  r.out.work.push('z-scores: ' + (isFinite(a) ? 'z(' + fmtNum(a) + ') = ' + fmtNum((a - mu) / sd) : '\u2212\u221e') + ' and ' + (isFinite(b) ? 'z(' + fmtNum(b) + ') = ' + fmtNum((b - mu) / sd) : '+\u221e') + ';  area = \u03a6(z\u2082) \u2212 \u03a6(z\u2081)');
+  return pl2Draw(r.out, { curves: [r.curve], xr: [mu - 4.2 * sd, mu + 4.2 * sd], yr: [0, r.top], labels: r.labels, under: r.under });
+});
+defCmd('tshade shadet', (n) => {
+  needArgs(n, 3, 3, 'the degrees of freedom and the two ends: tshade(10, -2.228, 2.228)');
+  const df = numArg(n.args[0]);
+  if (!(df > 0)) throw new MathError('the degrees of freedom must be positive');
+  const r = shadeDistribution(n, 't', (x) => tPdf(x, df), (x) => (x === -Infinity ? 0 : x === Infinity ? 1 : tCdf(x, df)), null, 't(' + fmtNum(df) + ')', -5, 5);
+  r.out.work.push('Student t distribution with ' + fmtNum(df) + ' degrees of freedom');
+  return pl2Draw(r.out, { curves: [r.curve], xr: [-5, 5], yr: [0, r.top], labels: r.labels, under: r.under });
+});
+defCmd('chisqshade shadechisq', (n) => {
+  needArgs(n, 3, 3, 'the degrees of freedom and the two ends: chisqshade(4, 9.488, oo)');
+  const df = numArg(n.args[0]);
+  if (!(df > 0)) throw new MathError('the degrees of freedom must be positive');
+  const hi = df + 5 * Math.sqrt(2 * df) + 5;
+  const r = shadeDistribution(n, 'chisq', (x) => chi2Pdf(x, df), (x) => (x <= 0 ? 0 : x === Infinity ? 1 : chi2Cdf(x, df)), null, '\u03c7\u00b2(' + fmtNum(df) + ')', 0, hi);
+  r.out.work.push('chi-square distribution with ' + fmtNum(df) + ' degrees of freedom (only x \u2265 0 has density)');
+  return pl2Draw(r.out, { curves: [r.curve], xr: [0, hi], yr: [0, r.top], labels: r.labels, under: r.under });
+});
+
+// ---- implicit curves, contour maps and regions --------------------------------------------------------------------------------------
+defCmd('plotimplicit implicitplot', (n) => {
+  if (!n.args.length) throw new MathError('plotimplicit needs F(x, y) (the curve F = 0) and optionally the window: plotimplicit(x^2 + y^2 - 4, x, -3, 3, y, -3, 3)  or plotimplicit(x^2 + y^2 = 4)');
+  const win = pl2Window(n.args, 1, 'plotimplicit');
+  const F = pl2Fn(n.args[0], win.vx, win.vy);
+  const { xr, yr } = win;
+  const { segs } = pl2Contour(F, xr, yr, 200, 150, 0);
+  const out = newOut();
+  const label = showRaw(n.args[0]) + ' = 0';
+  out.answer.push('Curve ' + label + ' on x from ' + fmtNum(xr[0]) + ' to ' + fmtNum(xr[1]) + ', y from ' + fmtNum(yr[0]) + ' to ' + fmtNum(yr[1]) + (segs.length ? '' : '  (no points of the curve in this window)') + ' (the picture is shown in the chat)');
+  const xi = pl2Roots((x) => F(x, 0), xr[0], xr[1], 1200).filter((r) => yr[0] <= 0 && yr[1] >= 0);
+  const yi = pl2Roots((y) => F(0, y), yr[0], yr[1], 1200).filter((r) => xr[0] <= 0 && xr[1] >= 0);
+  const clean = (v) => fmtNum(Math.abs(v) < 1e-9 ? 0 : v);
+  const interceptLine = (list, v, other) => (list.length > 200 ? 'the whole ' + v + '-axis is part of the curve (' + other + ' = 0 satisfies the equation for every ' + v + ')' : list.length ? v + '-intercepts: ' + v + ' \u2248 ' + list.map(clean).join(', ') : 'no ' + v + '-intercepts in the window');
+  out.work.push(interceptLine(xi, win.vx, win.vy));
+  out.work.push(interceptLine(yi, win.vy, win.vx));
+  const under = (g, px, py) => pl2DrawSegs(g, px, py, segs, PLOT_COLORS[0], 2.6);
+  return pl2Draw(out, { curves: [], xr, yr, labels: [label], under, equal: true });
+});
+defCmd('contour contourplot levelcurves', (n) => {
+  if (!n.args.length) throw new MathError('contour needs f(x, y) and optionally the window and the number of levels: contour(x^2 + y^2, x, -3, 3, y, -3, 3)');
+  const hasWin = n.args.length >= 7;
+  const win = pl2Window(n.args.slice(0, hasWin ? 7 : 1), 1, 'contour');
+  const want = n.args[hasWin ? 7 : 1] ? Math.min(14, Math.max(2, Number(intArg(n.args[hasWin ? 7 : 1])))) : 8;
+  const F = pl2Fn(n.args[0], win.vx, win.vy);
+  const { xr, yr } = win;
+  const nx = 120;
+  const ny = 90;
+  const { V } = pl2Contour(F, xr, yr, nx, ny, 0);
+  let mn = Infinity;
+  let mx = -Infinity;
+  V.forEach((row) => row.forEach((v) => { if (!isNaN(v)) { mn = Math.min(mn, v); mx = Math.max(mx, v); } }));
+  if (!(mx > mn)) throw new MathError('the function is constant (or undefined) on this window, so there are no level curves');
+  const step = niceStep(mx - mn, want);
+  const levels = [];
+  for (let v = Math.ceil(mn / step) * step; v <= mx + step * 1e-9; v += step) if (v > mn + step * 1e-9 && v < mx - step * 1e-9) levels.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  const out = newOut();
+  out.answer.push('Contour map of ' + showRaw(n.args[0]) + ': ' + levels.length + ' level curves (the picture is shown in the chat)');
+  out.work.push('on this window the function ranges from ' + fmtNum(mn) + ' to ' + fmtNum(mx) + ' (sampled on a ' + nx + '\u00d7' + ny + ' grid)');
+  out.work.push('level curves at ' + levels.map((v) => fmtNum(Number(v.toPrecision(10)))).join(', '));
+  const all = levels.map((lv) => ({ lv, segs: pl2Segments(V, xr, yr, nx, ny, lv) }));
+  const under = (g, px, py) => {
+    all.forEach(({ lv, segs }) => {
+      const t = (lv - mn) / (mx - mn);
+      pl2DrawSegs(g, px, py, segs, 'rgb(' + Math.round(40 + 190 * t) + ',' + Math.round(80 + 40 * (1 - Math.abs(2 * t - 1))) + ',' + Math.round(220 - 190 * t) + ')', 1.8);
+    });
+  };
+  return pl2Draw(out, { curves: [], xr, yr, labels: [], under });
+});
+const PL2_OPS = { '<': (v) => v < 0, '<=': (v) => v <= 1e-12, '>': (v) => v > 0, '>=': (v) => v >= -1e-12, '=': (v) => Math.abs(v) < 1e-9, '!=': (v) => Math.abs(v) > 1e-9 };
+/** Clip a polygon (exact rational vertices) by a x + b y + c >= 0 (sign = 1) or <= 0 (sign = -1). */
+function pl2Clip(poly, a, b, c, sign) {
+  const val = (p) => a.mul(p[0]).add(b.mul(p[1])).add(c).mul(qInt(sign));
+  const res = [];
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i];
+    const q = poly[(i + 1) % poly.length];
+    const vp = val(p);
+    const vq = val(q);
+    if (vp.sign() >= 0) res.push(p);
+    if ((vp.sign() > 0 && vq.sign() < 0) || (vp.sign() < 0 && vq.sign() > 0)) {
+      const t = vp.div(vp.sub(vq));
+      res.push([p[0].add(q[0].sub(p[0]).mul(t)), p[1].add(q[1].sub(p[1]).mul(t))]);
+    }
+  }
+  return res.filter((p, k) => k === 0 || !(p[0].eq(res[k - 1][0]) && p[1].eq(res[k - 1][1]))).filter((p, k, arr) => !(k === arr.length - 1 && arr.length > 1 && p[0].eq(arr[0][0]) && p[1].eq(arr[0][1])));
+}
+const pl2Area = (poly) => {
+  let s = Q0;
+  poly.forEach((p, i) => {
+    const q = poly[(i + 1) % poly.length];
+    s = s.add(p[0].mul(q[1]).sub(q[0].mul(p[1])));
+  });
+  return s.abs().div(qInt(2));
+};
+function pl2Region(rels, win) {
+  let { xr, yr } = win;
+  const { vx, vy } = win;
+  const fns = rels.map((r) => {
+    const F1 = pl2Fn(r.lhs, vx, vy);
+    const F2 = pl2Fn(r.rhs, vx, vy);
+    return (x, y) => F1(x, y) - F2(x, y);
+  });
+  const holds = (x, y) => rels.every((r, i) => {
+    const v = fns[i](x, y);
+    return isFinite(v) && PL2_OPS[r.op](v);
+  });
+  const out = newOut();
+  const shown = rels.map((r) => showRaw(r.lhs) + ' ' + (r.op === '<=' ? '\u2264' : r.op === '>=' ? '\u2265' : r.op === '!=' ? '\u2260' : r.op) + ' ' + showRaw(r.rhs));
+  out.answer.push('Region ' + shown.join(' and ') + ' (the picture is shown in the chat)');
+  // exact corners when every condition is linear
+  const forms = rels.map((r) => affineForm({ lhs: r.lhs, rhs: r.rhs }, [vx, vy]));
+  if (forms.every(Boolean)) {
+    const rect = (s) => {
+      const cx = (xr[0] + xr[1]) / 2;
+      const cy = (yr[0] + yr[1]) / 2;
+      const hx = ((xr[1] - xr[0]) / 2) * s;
+      const hy = ((yr[1] - yr[0]) / 2) * s;
+      const q = (v) => new Q(BigInt(Math.round(v * 1e6)), 1000000n);
+      return [[q(cx - hx), q(cy - hy)], [q(cx + hx), q(cy - hy)], [q(cx + hx), q(cy + hy)], [q(cx - hx), q(cy + hy)]];
+    };
+    const clipAll = (s) => {
+      let poly = rect(s);
+      rels.forEach((r, i) => {
+        if (!poly.length || r.op === '!=') return;
+        const f = forms[i];
+        if (r.op === '=') {
+          poly = pl2Clip(pl2Clip(poly, f.coef[0], f.coef[1], f.c0, 1), f.coef[0], f.coef[1], f.c0, -1);
+          return;
+        }
+        poly = pl2Clip(poly, f.coef[0], f.coef[1], f.c0, r.op[0] === '>' ? 1 : -1);
+      });
+      return poly;
+    };
+    const small = clipAll(1);
+    const big = clipAll(1000);
+    if (big.length < 3 || pl2Area(big).isZero()) {
+      out.work.push(big.length ? 'the conditions describe a line or a point, not an area' : 'no point satisfies all the conditions: the region is empty');
+    } else {
+      const onBoundary = (p) => p.some((c) => c.abs().toNumber() > 400 * Math.max(Math.abs(xr[0]), Math.abs(xr[1]), Math.abs(yr[0]), Math.abs(yr[1]), 1));
+      const corners = big.filter((p) => !onBoundary(p));
+      const bounded = !big.some(onBoundary);
+      const cxm = corners.reduce((s, p) => s + p[0].toNumber(), 0) / (corners.length || 1);
+      const cym = corners.reduce((s, p) => s + p[1].toNumber(), 0) / (corners.length || 1);
+      corners.sort((p, q) => Math.atan2(p[1].toNumber() - cym, p[0].toNumber() - cxm) - Math.atan2(q[1].toNumber() - cym, q[0].toNumber() - cxm));
+      out.work.push('corner points: ' + (corners.length ? corners.map((p) => '(' + qText(p[0]) + ', ' + qText(p[1]) + ')').join(', ') : 'none'));
+      out.work.push(bounded ? 'the region is bounded, area = ' + qText(pl2Area(big)) : 'the region is unbounded (it continues beyond the window)');
+      if (win.auto && bounded && corners.length >= 3) {
+        // no window was given: fit it around the region (and the origin, so that the axes show)
+        const cx = corners.map((p) => p[0].toNumber()).concat([0]);
+        const cy = corners.map((p) => p[1].toNumber()).concat([0]);
+        const padX = (Math.max(...cx) - Math.min(...cx)) * 0.15 || 1;
+        const padY = (Math.max(...cy) - Math.min(...cy)) * 0.15 || 1;
+        xr = [Math.min(...cx) - padX, Math.max(...cx) + padX];
+        yr = [Math.min(...cy) - padY, Math.max(...cy) + padY];
+      }
+      void small;
+    }
+  } else out.work.push('some boundaries are curves: the picture shows the region; exact corner points are listed only when every boundary is a straight line');
+  const nx = 160;
+  const ny = 120;
+  const dx = (xr[1] - xr[0]) / nx;
+  const dy = (yr[1] - yr[0]) / ny;
+  const bounds = fns.map((F) => pl2Contour(F, xr, yr, nx, ny, 0).segs);
+  const under = (g, px, py) => {
+    // the cells are painted opaque on a separate canvas and blended once, so that neighbouring cells leave no seams
+    const off = document.createElement('canvas');
+    off.width = PLOT_W;
+    off.height = PLOT_H;
+    const og = off.getContext('2d');
+    og.fillStyle = '#1f77b4';
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < ny; j++) {
+        if (holds(xr[0] + (i + 0.5) * dx, yr[0] + (j + 0.5) * dy)) og.fillRect(px(xr[0] + i * dx) - 0.5, py(yr[0] + (j + 1) * dy) - 0.5, px(xr[0] + (i + 1) * dx) - px(xr[0] + i * dx) + 1, py(yr[0] + j * dy) - py(yr[0] + (j + 1) * dy) + 1);
+      }
+    }
+    g.save();
+    g.globalAlpha = 0.28;
+    g.drawImage(off, 0, 0);
+    g.restore();
+    bounds.forEach((segs, i) => pl2DrawSegs(g, px, py, segs, '#1f4e79', 2.2, rels[i].op === '<' || rels[i].op === '>' ? [7, 5] : null));
+  };
+  return pl2Draw(out, { curves: [], xr, yr, labels: [], under });
+}
+defCmd('plotregion region shaderegion feasibleregion', (n) => {
+  const args = n.args;
+  const hasWin = args.length >= 7 && args[args.length - 6].t === 'var' && args[args.length - 3].t === 'var';
+  const nrel = hasWin ? args.length - 6 : args.length;
+  if (nrel < 1) throw new MathError('plotregion needs inequalities, e.g. plotregion(y > x^2, x + y < 3, x, -3, 3, y, -3, 5)');
+  const win = hasWin ? pl2Window(args, args.length - 6, 'plotregion') : { vx: 'x', vy: 'y', xr: [-6, 6], yr: [-6, 6], auto: true };
+  const rels = [];
+  for (let i = 0; i < nrel; i++) {
+    const idx = Number(intArg(args[i]));
+    const text = PL2_REL[idx];
+    if (text === undefined) throw new MathError('write each condition as an inequality, e.g. plotregion(y > x^2, x + y < 3)');
+    const st = parseStatement(cleanStatement(text));
+    if (st.kind === 'rel') st.conds.forEach((c) => rels.push({ lhs: c.lhs, op: c.op, rhs: c.rhs }));
+    else if (st.kind === 'eq') rels.push({ lhs: st.lhs, op: '=', rhs: st.rhs });
+    else throw new MathError('"' + text + '" is not an inequality');
+  }
+  return pl2Region(rels, win);
+});
+
+const pl2RegionShow = (n) => {
+  const hasWin = n.args.length >= 7 && n.args[n.args.length - 6].t === 'var' && n.args[n.args.length - 3].t === 'var';
+  const rels = (hasWin ? n.args.slice(0, -6) : n.args).map((a) => PL2_REL[Number(intArg(a))]);
+  return 'region ' + rels.join(' and ').replace(/<=/g, '\u2264').replace(/>=/g, '\u2265') + (hasWin ? '  (window ' + n.args.slice(-6).map(showRaw).join(', ') + ')' : '');
+};
+['plotregion', 'region', 'shaderegion', 'feasibleregion'].forEach((nm) => { COMMANDS[nm].show = pl2RegionShow; });
+// ---- text pre-pass: equations as implicit curves, inequalities as regions ------------------------------------------------------------
+function convertPlot2(s) {
+  // "graph the inequality y > 2x + 1", "shade the region x >= 0, y >= 0, x + y <= 4"
+  const w = /^\s*(?:please\s+)?(?:graph|plot|sketch|shade|draw)\s+(?:the\s+)?(?:inequalit(?:y|ies)|region|solution\s+set|system\s+of\s+inequalities)?\s*:?\s*([^()]*?(?:<=|>=|\u2264|\u2265|<|>)[^()]*?)\s*$/i.exec(s);
+  if (w && !/[A-Za-z]{3,}\s*\(/.test(w[1])) {
+    const rels = w[1].split(/\s*(?:,|;|\band\b)\s*/).filter(Boolean);
+    if (rels.length && rels.every((r) => /(?:<=|>=|\u2264|\u2265|<|>)/.test(r))) {
+      s = 'plotregion(' + rels.join(', ') + ')';
+    }
+  }
+  if (!/(plotimplicit|implicitplot|plotregion|shaderegion|feasibleregion|region)\s*\(/i.test(s)) return s;
+  s = replaceCalls(s, ['plotimplicit', 'implicitplot'], (name, inner) => {
+    const parts = g3SplitArgs(inner);
+    const m = /^([^=<>]*[^=<>!])=([^=<>].*|)$/.exec(parts[0]);
+    if (!m || /[<>]/.test(parts[0])) return null;
+    parts[0] = '(' + m[1] + ') - (' + m[2] + ')';
+    return name + '(' + parts.join(',') + ')';
+  });
+  s = replaceCalls(s, ['plotregion', 'shaderegion', 'feasibleregion', 'region'], (name, inner) => {
+    const parts = g3SplitArgs(inner);
+    let changed = false;
+    const conv = parts.map((p) => {
+      if (!/(<=|>=|\u2264|\u2265|!=|\u2260|<|>|=)/.test(p) || /^\s*[A-Za-z]\s*$/.test(p)) return p;
+      const text = p.trim().replace(/\u2264/g, '<=').replace(/\u2265/g, '>=').replace(/\u2260/g, '!=');
+      PL2_REL.push(text);
+      changed = true;
+      return String(PL2_REL.length - 1);
+    });
+    return changed ? name + '(' + conv.join(',') + ')' : null;
+  });
   return s;
 }
 

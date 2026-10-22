@@ -61,6 +61,41 @@ const path = require('path');
     if (!png || !out.result) bad++;
     console.log((png && out.result ? '✓ ' : '✗ ') + eq + '  ->  image ' + (out.image ? (out.image.base64.length / 1024).toFixed(1) + ' KB base64' : 'MISSING') + (png ? ' (PNG)' : ''));
   }
+  // the other pictures: a real PNG that actually contains the drawing (counted from the decoded pixels)
+  const pictures = [
+    ['histogram([2,3,3,4,5,7,8,9,12], 3)', 'colored', 4000], ['histbins([2,3,3,4,5,7,8,9,12], 4)', 'colored', 4000],
+    ['boxplot([2,3,3,4,5,7,40])', 'colored', 800], ['scatter([1,2,3,4,5],[2,4,5,4,6])', 'colored', 400], ['scatter([1,2,3,4,5],[1,4,9,16,25], 2)', 'colored', 400],
+    ['normalshade(0, 1, -1.96, 1.96)', 'colored', 3000], ['tshade(10, -2.228, 2.228)', 'colored', 3000], ['chisqshade(4, 9.488, oo)', 'colored', 1500],
+    ['plotimplicit(x^2 + y^2 = 4)', 'colored', 800], ['plotimplicit(x*y - 1, x, -4, 4, y, -4, 4)', 'colored', 500], ['contour(x^2 - y^2, x, -3, 3, y, -3, 3)', 'colored', 800],
+    ['plotregion(x >= 0, y >= 0, x + 2y <= 6, 3x + y <= 9)', 'colored', 8000], ['y <= x^2 - 1', 'colored', 8000], ['graph the inequality y > 2x + 1', 'colored', 8000],
+    ['slopefield(x - y, x, -3, 3, y, -3, 3, 0, 1)', 'dark', 3000],
+  ];
+  for (const [eq, what, min] of pictures) {
+    const out = JSON.parse(await page.evaluate(appCall(JSON.stringify({ equation: eq }))));
+    const png = out.image && out.image.base64 && out.image.base64.startsWith('iVBORw0KGgo');
+    let count = 0;
+    if (png) {
+      count = await page.evaluate(async ([b64, key]) => {
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + b64;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const g = c.getContext('2d');
+        g.drawImage(img, 0, 0);
+        const d = g.getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 0; i < d.length; i += 4) {
+          if (key === 'colored' ? Math.abs(d[i] - d[i + 2]) > 40 || Math.abs(d[i] - d[i + 1]) > 40 : d[i] < 200 && d[i + 1] < 200 && d[i + 2] < 200) n++;
+        }
+        return n;
+      }, [out.image.base64, what]);
+    }
+    const ok = png && out.result && count >= min;
+    if (!ok) bad++;
+    console.log((ok ? '✓ ' : '✗ ') + eq.slice(0, 60).padEnd(60) + '  ->  ' + (png ? count + ' ' + what + ' pixels (need ' + min + ')' : 'NO IMAGE: ' + (out.result || out.error || '').split('\n').slice(0, 2).join(' | ').slice(0, 120)));
+  }
   // plain-text / odd payloads a weak model might send
   for (const raw of ['3x+5=20', '"3x+5=20"', '{"equation":"3x+5=20","solve_for":"x"}', '{"equations":["x+y=3","x-y=1"]}', '{}', '']) {
     const out = JSON.parse(await page.evaluate(appCall(raw)));

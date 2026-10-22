@@ -463,7 +463,7 @@ defCmd('percentrank', (n) => {
   out.work.push('(number below + ½·number equal)/n × 100');
   return out;
 });
-defCmd('freqtable frequencytable histogram', (n) => {
+defCmd('freqtable frequencytable', (n) => {
   needArgs(n, 2, 3, 'the data list and the class width (and optionally the first class start): freqtable([..], 5)');
   const vs = sortQ(listArg(n.args[0], 'freqtable'));
   const w = constQ(n.args[1]);

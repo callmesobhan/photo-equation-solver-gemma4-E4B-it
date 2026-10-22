@@ -17,9 +17,9 @@ HELP.index = [
   '  number      primes, divisors, modular arithmetic, counting, sequences, sets, number bases',
   '  stats       mean, standard deviation, regression, binomial/normal/t/chi-square, tests',
   '  multivar    partial derivatives, gradient, Hessian, double integrals, critical points of f(x, y), Lagrange multipliers\n  optimize    linear programming (maximize ... subject to ...), maxima and minima, Newton\'s method',
-  '  geometry    shapes, triangles, coordinates, conic sections',
+  '  geometry    shapes, triangles, coordinates, conic sections; planes, lines, spheres and quadric surfaces in space',
   '  units       unit conversion;  physics formulas\n  chemistry   molar mass, balancing, stoichiometry, limiting reagent, empirical formulas, pH, buffers, gases, elements, electron configurations\n  finance     interest, loans and amortization, bonds, depreciation, NPV / IRR / MIRR, growth rates',
-  '  plot        graphs of functions, parametric and polar curves',
+  '  plot        graphs of functions, parametric and polar curves, implicit curves, inequality regions, contour maps, slope fields, scatter plots, histograms, box plots, shaded distributions',
   'Write every command as name(arguments). The answer always starts with "Read as:" - check it matches the picture.',
 ].join('\n');
 HELP.syntax = [
@@ -174,6 +174,13 @@ HELP.geometry = [
   '  distance([1,2],[4,6])  midpoint(P, Q)  slope(P, Q)  line(P, Q)  pointlinedistance(x0, y0, a, b, c)  polygonarea([0,0],[4,0],[4,3])  centroid(P, Q, R)',
   '  conic sections: just write the equation:  x^2 + y^2 - 6x + 4y - 12 = 0,  x^2/9 + y^2/4 = 1,  y = x^2 - 4x + 3',
   '                  (circle, ellipse, parabola, hyperbola: center, radius, foci, vertices, directrix, asymptotes)',
+  'SPACE (3-D)   points and vectors [x, y, z];  a plane is [a, b, c, d] for ax + by + cz = d, or just the equation 2x + 3y - z = 5;  a line is a point and a direction',
+  '  plane(P, Q, R) [planeinfo]  through three points   plane(P, normal)   plane(2x + 3y - z = 5)  normal, intercepts, distance from the origin   line3d(P, Q) [line3]  vector, parametric and symmetric form',
+  '  pointplane(P, plane) [planedist]  distance and foot   pointline3d(P, A, d)  distance from P to the line through A with direction d   skewlines(A, d1, B, d2) [linedistance]  distance, intersection or parallel',
+  '  lineplane(A, d, plane)  intersection point and angle   planeangle(p1, p2)   planeintersect(p1, p2)  line of intersection   (planes may be written as equations: planeangle(x + y + z = 3, x - y = 0))',
+  '  triplescalar(u, v, w) [tripleproduct, parallelepiped]   tetrahedron(A, B, C, D) volume   trianglearea3d(A, B, C)   dircos(v) [directioncosines]   angle(u, v)   distance(P, Q)   midpoint   centroid',
+  '  sphere([1,2,3], 5)  equation of a sphere from centre and radius   sphere(A, B)  from a diameter   sphere(A, B, C, D)  through four points   sphere(3)  volume and area',
+  '  surfaces: write the equation  x^2/4 + y^2/9 + z^2 = 1,  z = x^2 + y^2,  x^2 + y^2 - z^2 = 1  [quadric(...), surface(...), sphereinfo(...)]  ellipsoid / sphere, hyperboloid, cone, paraboloid, cylinder, planes, with centre and standard form',
 ].join('\n');
 HELP.units = [
   'UNITS AND PHYSICS',
@@ -208,6 +215,13 @@ HELP.plot = [
   'PLOTS (the picture is returned to the chat; zeros, extrema and the y-intercept are listed)',
   '  plot(sin(x), x, -2*pi, 2*pi)     plot(x^2, 2x+3, x, -3, 4)  (up to 6 functions)     plot y = x^2 - 4',
   '  plotparam(cos(t), sin(2t), t, 0, 2*pi)       plotpolar(1 + cos(t), t, 0, 2*pi)',
+  '  plotimplicit(x^2 + y^2 = 4)  [implicitplot]  any curve F(x, y) = 0, window optional: plotimplicit(x*y - 1, x, -4, 4, y, -4, 4)   contour(x^2 - y^2, x, -3, 3, y, -3, 3)  [contourplot, levelcurves]  level curves',
+  '  plotregion(y > x^2, x + y < 3, x, -3, 3, y, -3, 5)  [region, shaderegion, feasibleregion]  shaded solution set of inequalities (exact corner points and area when the boundaries are lines);  or just write the inequalities:  x >= 0, y >= 0, x + y <= 4',
+  '  slopefield(x - y, x, -3, 3, y, -3, 3, 0, 1)  [directionfield]  slope field of y\' = f(x, y) with solution curves through the given points (x0, y0, ...)',
+  '  scatter([1,2,3,4],[2,4,5,8])  [scatterplot]  points with the least-squares line;  scatter(xs, ys, 2)  with a parabola (degree 0 = no fit)',
+  '  histogram([2,3,3,4,5,7,8,9], 2)  [hist]  class width 2 (an optional 3rd number is the first class start);  histogram(data)  automatic number of bins;  histbins(data, 4)  4 equal bins',
+  '  boxplot([2,3,3,4,5,7,40])  [boxwhisker]  five-number summary, fences, whiskers and outliers;  boxplot(list1, list2)  side by side',
+  '  normalshade(0, 1, -1.96, 1.96)  [shadenormal]  shaded normal curve and its area (oo = infinity)   tshade(10, -2.228, 2.228)  [shadet]   chisqshade(4, 9.488, oo)  [shadechisq]',
 ].join('\n');
 const HELP_ALIAS = {
   '': 'index', help: 'index', commands: 'index', all: 'index', topics: 'index', input: 'syntax', notation: 'syntax', solve: 'equations', inequalities: 'equations', systems: 'equations', formulas: 'equations',

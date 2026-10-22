@@ -43,12 +43,13 @@ Everything runs on the phone. `scripts/index.html` is a single self-contained fi
 | **Number theory and counting** | `isprime`, `factor(n)`, `divisors`, `totient`, `mod`, `modinv`, `modpow`, `crt`, `x ≡ 2 (mod 3), x ≡ 3 (mod 5)`, `diophantine`, `ncr`, `npr`, `multiset`, `catalan`, `fibonacci`, `partitions`, `sequence(2,6,12,20)` (next terms and formula), base conversion, sets, `dice(3,6,10)`, distinct arrangements of the letters of a word (MISSISSIPPI), `birthday(23)`, `pascal`, `circular` |
 | **Logic, graphs, recurrences** | `truth table of p and (q or not r)`, tautology / equivalence checks, normal forms; `graphinfo`, `shortestpath`, `mst`, `maxflow`, `coloring`, `topsort`, `bfs`; linear recurrences from the written form (`a_n = 5a_(n-1) - 6a_(n-2), a_0 = 1, a_1 = 0` gives a closed form); `euclid` (Bézout), `cfrac`, `pell`, `collatz`, `egyptian`, `sum2sq`, `farey`, `hanoi`, `josephus`, `polygonal` |
 | **Statistics and probability** | mean/median/mode/variance/stdev/quartiles/`summary`, `correlation`, `linreg`, `multireg`, binomial, Poisson, geometric, hypergeometric, negative binomial, normal, t, chi-square, F, uniform, exponential, gamma, beta, Weibull, lognormal distributions and their inverses, confidence intervals, z/t/proportion/chi-square tests, two-sample and paired t tests, `anova`, `corrtest`, variance tests, sample sizes, `outliers`, `skewness`, `spearman`, `markov`, `bayes`, `expect` |
+| **Space geometry** | planes from three points / point and normal / equation, lines (vector, parametric, symmetric form), point-plane and point-line distances, skew lines, line-plane and plane-plane intersections and angles, triple products, tetrahedron volume, spheres (centre and radius, diameter, four points) and **quadric surfaces written as equations** (ellipsoid, hyperboloids, cones, paraboloids, cylinders, plane pairs) |
 | **Geometry** | areas, volumes, surface areas of the usual shapes, triangles from any 3 parts (SSS, SAS, ASA, AAS, SSA incl. the ambiguous case), right triangles, distance/midpoint/slope/line, polygon area, **conic sections** (circle, ellipse, parabola, hyperbola: center, radius, foci, vertices, directrix, asymptotes from the equation) |
 | **Units** | `convert 5 km to miles`, `72 °F to °C`, `60 mph to km/h`, `2.5 GB to MB` (length, mass, time, area, volume, speed, force, pressure, energy, power, data, angle, temperature) |
 | **Finance** | `compound`, `continuous`, `loan` (payment, total interest), `amortization` (schedule), `loanbalance`, `payoff`, `bond` (price, yield, duration), `straightline` / `decliningbalance` / `sumofyears` depreciation, `annuityfv`/`annuitypv`, `npv`, `irr`, `mirr`, `payback`, `cagr`, `rule72`, `realrate`, `breakeven`, `effrate`, `doubletime`, `pctchange` |
 | **Chemistry** | `molarmass(Ca(OH)2)`, `percentcomp`, `moles`, `grams`, **`balance H2 + O2 -> H2O`** (a bare reaction is recognised too), `limiting`, `stoich`, `percentyield`, `empirical` (from percentages) and `molecular` formulas, `ph`, `weakacid`, `weakbase`, `buffer`, `dilution`, `molarity`, `idealgas`, `combinedgas`, `halflife`, `decaytime`, `element` (name, mass, period, group, block), `electronconfig` (also ions: Fe3+, O2-) |
 | **Physics** | `suvat(u=0, a=9.8, t=3)` (any 3 of s,u,v,a,t), `projectile`, `freefall`; any other formula by solving it for a letter |
-| **Graphs** | `plot(sin(x), x, -2*pi, 2*pi)`, up to six curves, `plotparam`, `plotpolar`; the picture is returned to the chat with the zeros, extrema and y-intercept listed |
+| **Graphs** | `plot(sin(x), cos(x), x, -6.28, 6.28)` (up to six curves; zeros, extrema and intercept listed), `plotparam`, `plotpolar`, `plotimplicit(x^2 + y^2 = 4)`, `contour`, `plotregion(y > x^2, x + y < 3)` or simply the inequalities (exact corner points and area), `slopefield` with solution curves, `scatter` with a fitted line or polynomial, `histogram`, `boxplot`, `normalshade` / `tshade` / `chisqshade`; the picture is returned to the chat |
 
 Not supported: word problems (the model has to turn them into an equation or command
 first), differential equations beyond the types above (partial differential equations,
@@ -146,7 +147,7 @@ photo-equation-solver/
 
 Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
 
-- 618 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
+- 640 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
   geometry, units, chemistry, finance, graphs, differential equations, messy transcriptions, errors)
 - calculus against **sympy** and **scipy**: 146 antiderivatives (each also verified by differentiating),
   42 definite/improper integrals, 43 limits, 22 sums, 593 random symbolic expressions
@@ -164,7 +165,10 @@ Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
 - linear algebra against sympy: about 880 checks per run; QR / Cholesky / pinv / least squares / SVD / matrix exponential / Jordan form against numpy and scipy: about 150 more
 - geometry, triangles, units, chemistry, finance and complex numbers against **pint**,
   **periodictable**, **numpy-financial** and Python `complex`: about 1,250 checks per run; elements, electron configurations,
-  stoichiometry, acids and bases, gas laws, amortization schedules, bonds and depreciation: about 350 more
+  stoichiometry, acids and bases, gas laws, amortization schedules, bonds and depreciation: about 350 more;
+  planes, lines, spheres and quadric surfaces in space against sympy.geometry and numpy: about 160 per seed;
+  the numbers behind the new pictures (slope fields, fits, histograms, box plots, shaded areas, regions) against numpy / scipy: about 130 per seed;
+  every new picture type decoded in real Chromium and checked to contain its drawing
 - property tests against Python `Fraction` and `numpy.roots`; fuzzing with random garbage and with
   every command called with random arguments (tens of thousands of calls): no crash, no hang, no `NaN`
 - the page loaded in real Chromium with the network disabled, called exactly like the app

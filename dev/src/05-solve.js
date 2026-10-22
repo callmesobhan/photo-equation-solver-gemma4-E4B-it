@@ -880,6 +880,8 @@ function solveProblem(text, solveFor) {
       out.work.push('Left side = ' + fmtNum(res[0].l) + ', right side = ' + fmtNum(res[0].r));
     } else if (vars.size === 1) {
       out = solveInequalities(conds, sortedVars(vars)[0]);
+    } else if (sortedVars(vars).join('') === 'xy' && !solveFor) {
+      out = pl2Region(conds.map((c) => ({ lhs: c.lhs, op: c.op, rhs: c.rhs })), { vx: 'x', vy: 'y', xr: [-6, 6], yr: [-6, 6], auto: true });
     } else {
       throw new MathError('inequalities with several unknowns (' + sortedVars(vars).join(', ') + ') are not supported');
     }
@@ -900,6 +902,8 @@ function solveProblem(text, solveFor) {
       out = newOut();
       out.work.push('Type: conic section (second-degree equation in x and y)');
       analyzeConic(conicCoefficients(eqs[0].lhs, eqs[0].rhs), out);
+    } else if (names.length === 3 && eqs.length === 1 && !solveFor && names.join('') === 'xyz' && (out = newOut()) && analyzeSurface(eqs[0], out)) {
+      // a plane or a quadric surface: the analysis is already in out
     } else if (names.length >= 2 && eqs.length === 1 && !affineForm(eqs[0], names)) {
       out = solveLiteralEquation(eqs[0], names, solveFor);
     } else {
