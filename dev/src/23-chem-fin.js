@@ -566,6 +566,7 @@ defCmd('payoff', (n) => {
   const m = n.args[3] ? numArg(n.args[3]) : 12;
   const r = rate / m;
   if (!(P > 0) || !(pay > 0)) throw new MathError('the amount and the payment must be positive');
+  if (!(m >= 1) || !isFinite(r) || r <= -1) throw new MathError('the rate and the number of payments per year must be sensible (at least 1 payment a year)');
   const out = newOut();
   if (r * P >= pay) {
     out.answer.push('the payment ' + fmtMoney(pay) + ' does not even cover the interest ' + fmtMoney(r * P) + ' per period, so the loan is never paid off');

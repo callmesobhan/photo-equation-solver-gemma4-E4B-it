@@ -125,6 +125,7 @@ function convertLogBase(s) {
 
 /** Character-level clean-up: unicode math, LaTeX, printed notation, abs bars. Keeps ; and newlines. */
 function normalizeText(raw) {
+  SERIES_FLAG.v = null;
   let s = convertApplied(convertLogic(String(raw)));
   s = s.replace(/[∑Σ]/g, '\u0001S').replace(/[∏Π]/g, '\u0001P');
   s = s.replace(/[⁰¹²³⁴-⁻]+/g, (m) =>
@@ -169,7 +170,7 @@ function normalizeText(raw) {
     let open = true;
     s = s.replace(/\|/g, () => ((open = !open) ? ')' : 'abs('));
   }
-  return s;
+  return convertConvergenceWords(s);
 }
 
 /** A single capital letter (E, F, V, R ...) is a variable of its own, distinct from the small letter: \u0002 + letter. */
@@ -177,7 +178,7 @@ function markUppercaseLetters(s) {
   return s.replace(/[A-Z]/g, (L, off) => {
     const before = s[off - 1] || '';
     const after = s[off + 1] || '';
-    if (/[A-Za-z\u0002]/.test(before) || /[A-Za-z]/.test(after)) return L;
+    if (/[A-Za-z\u0001\u0002]/.test(before) || /[A-Za-z]/.test(after)) return L; // \u0001 marks a sum / product sign (Σ, Π)
     if (L === 'E' && /[\d.]/.test(before) && /[\d+-]/.test(after)) return L; // 1.5E3
     return '\u0002' + L.toLowerCase();
   });
@@ -288,8 +289,8 @@ function cleanStatement(p) {
 // ---- tokenizer ---------------------------------------------------------------
 const FN_NAMES = ['arcsin', 'arccos', 'arctan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'sqrt',
   'cbrt', 'root', 'sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'log10', 'log2', 'log', 'ln', 'lg', 'exp',
-  'abs', 'floor', 'ceil', 'erf'].sort((a, b) => b.length - a.length);
-const FN_ALIAS = { arcsin: 'asin', arccos: 'acos', arctan: 'atan', lg: 'log10' };
+  'abs', 'floor', 'ceil', 'erf', 'heaviside', 'unitstep', 'dirac'].sort((a, b) => b.length - a.length);
+const FN_ALIAS = { arcsin: 'asin', arccos: 'acos', arctan: 'atan', lg: 'log10', unitstep: 'heaviside' };
 
 /** Command names are only recognised when directly followed by "(" (so "sum" is never s*u*m). */
 function commandAt(rest) {

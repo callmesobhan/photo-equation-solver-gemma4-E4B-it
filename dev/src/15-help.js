@@ -57,6 +57,8 @@ HELP.calculus = [
   '  domain(f, x)   inversefunction(f, x)   compose(f, g, x)   implicit(x^2 + y^2 - 25)  (dy/dx and d2y/dx2)   newton(f, x, x0)',
   '  areabetween(f, g, x)  or  areabetween(f, g, x, a, b)   volumerev(f, x, a, b)  volumerev(f, g, x, a, b)  (about the x-axis)',
   '  shells(f, x, a, b)  (about the y-axis)   arclength(f, x, a, b)   surfacearea of revolution: surfacearearev(f, x, a, b)   avgvalue(f, x, a, b)',
+  '  convergence(n^2/2^n, n)  [converge, seriestest]  does the series converge? (term, geometric, ratio, root, p-series comparison, integral and alternating tests; absolute or conditional)   convergence(1/(n*ln(n)^2), n, 2)  starts at n = 2',
+  '  radius(x^n/n, n, x, 1)  [radiusofconvergence, intervalofconvergence]  radius and interval of convergence of a power series (end points tested);  sentences work too:  "Does the series sum of n^2/2^n converge?"   "Find the interval of convergence of Σ_(n=1)^∞ (x-2)^n/(n 3^n)"',
   '  differential equations and Laplace transforms:  help ode',
 ].join('\n');
 HELP.logic = [
@@ -92,6 +94,8 @@ HELP.ode = [
   '  linear, constant coefficients, any order:  y\'\' - 3y\' + 2y = 0   y\'\' + y = sin(x)   y\'\'\' - y = e^(2x)   y\'\' + 4y = tan(2x)   (forcing: polynomials, exponentials, sin, cos, sinh, cosh, products; order 2 also tan, sec, ln, 1/x ... by variation of parameters)',
   '  Euler-Cauchy:  x^2*y\'\' + x*y\' + y = ln(x)         systems:  x\' = 3x + y; y\' = x + 3y; x(0) = 1, y(0) = 0   (2 or 3 equations, constant coefficients)',
   '  laplace(f, t)   laplace(f, t, s)   ilaplace(F, s)   ilaplace(F, s, t)       e.g. laplace(t^2*e^(-3t) + sin(2t), t),  ilaplace((s+1)/(s^2+2s+5), s)',
+  '  unit steps and impulses (u(t - a) = heaviside(t - a), delta(t - a) = dirac(t - a)):  laplace(t*u(t-2), t)   laplace(sin(t)*heaviside(t-pi), t)   ilaplace(e^(-2s)/(s^2+1), s)   ilaplace(e^(-3s), s)',
+  '                the equation itself may have such a forcing:  y\'\' + y = u(t-pi), y(0) = 0, y\'(0) = 0    y\'\' + 4y = delta(t-pi), y(0) = 0, y\'(0) = 0    y\' + 2y = u(t-1) - u(t-2)  (solved with the Laplace transform; without initial values C1 = y(0), C2 = y\'(0))',
   '  every solution is checked by substituting it back into the equation',
 ].join('\n');
 HELP.multivar = [

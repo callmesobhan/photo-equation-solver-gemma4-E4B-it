@@ -131,8 +131,20 @@ defCmd('integrate integral', (n) => {
   }
   const a = boundNum(lo);
   const b = boundNum(hi);
-  const num = integrateNumeric(S, v, a, b);
+  let num = integrateNumeric(S, v, a, b);
   out.work.push('Definite integral of ' + fmtS(S) + ' from ' + intLimitsText(lo, hi));
+  if (num.diverges && (lo.inf || hi.inf)) {
+    // a slowly decaying integrand (x^(-11/10), 1/(x ln(x)^2) ...) looks divergent to the numerical method: the antiderivative decides first
+    try {
+      const F0 = antiderivative(S, v);
+      const top0 = F0 && endValue(F0, v, hi, -1);
+      const bot0 = F0 && endValue(F0, v, lo, 1);
+      const ex0 = top0 && bot0 ? sSub(top0, bot0) : null;
+      if (ex0 && isFinite(numS(ex0, {}))) num = { ok: false, value: numS(ex0, {}), diverges: false };
+    } catch (e) {
+      if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+    }
+  }
   if (num.diverges) {
     out.answer.push('diverges' + (num.note ? ' (' + num.note + ')' : ''));
     return out;
@@ -163,6 +175,20 @@ defCmd('integrate integral', (n) => {
     return withValue(out, exact);
   }
   if (!num.ok) {
+    // the antiderivative may grow without bound (ln ln x, ...) even when the numerical method could not tell
+    try {
+      if (F && (hi.inf || lo.inf)) {
+        const Fl = hi.inf && hi.inf > 0 ? stripLnAbs(F) : F; // at +∞ the argument of ln|u| is positive
+        const rTop = limitOf(Fl, v, hi.inf ? hi : { S: hi.S }, hi.inf ? 0 : -1);
+        const rBot = limitOf(F, v, lo.inf ? lo : { S: lo.S }, lo.inf ? 0 : 1);
+        if (rTop.kind === 'inf' || rBot.kind === 'inf') {
+          out.answer.push('diverges (the antiderivative grows without bound)');
+          return out;
+        }
+      }
+    } catch (e) {
+      if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+    }
     out.answer.push('could not be determined (no closed form was found and the numerical method did not converge)');
     return out;
   }

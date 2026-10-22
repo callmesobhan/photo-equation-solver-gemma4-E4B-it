@@ -51,6 +51,8 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `23-chem-fin.js` | Elements and electron configurations, empirical / molecular formulas, stoichiometry and limiting reagent, weak acids / bases, buffers, dilution, gas laws, half-life; amortization, loan balance, bonds, depreciation, CAGR, MIRR, payback, break-even |
 | `24-geometry3d.js` | Planes, lines, distances, angles, skew lines, triple products, spheres and classification of quadric surfaces (exact, from the inertia of the quadratic form) |
 | `25-plot2.js` | Slope fields, scatter plots with a fitted polynomial, histograms, box plots, shaded normal / t / chi-square curves, implicit curves, contour maps, regions of inequalities (marching squares, exact corner points for linear boundaries) |
+| `26-series.js` | Convergence of series (term, geometric, ratio, root, p-series, integral, bounded-factor and alternating tests, evaluated in log scale at very large n) and the radius / interval of convergence of power series; the sentence forms ("does the series ... converge?") |
+| `27-laplace2.js` | Laplace transforms with unit steps `u(t - a)` and impulses `delta(t - a)`: second shifting theorem both ways, linear ODEs with such forcing solved by the Laplace transform |
 | `90-dispatch.js` | Routing of command statements |
 | `99-main.js` | `window.ai_edge_gallery_get_result` entry point and request parsing |
 
@@ -58,7 +60,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 
 | File | What it checks |
 |------|----------------|
-| `cases.mjs` + `run-cases.mjs` | 640 hand-written input → expected output cases |
+| `cases.mjs` + `run-cases.mjs` | 668 hand-written input → expected output cases |
 | `doc-test.mjs` | every example in `SKILL.md` runs; every command appears in the built-in help |
 | `props.mjs`, `gen_expr.py`, `gen_poly.py` | random expressions / polynomials / systems against Fraction and numpy |
 | `cas-props.mjs`, `gen_cas.py` | the symbolic core against sympy |
@@ -80,6 +82,8 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `chemfin-battery.mjs`, `gen_chemfin.py`, `elements-oracle.json` | elements (name, mass, period, group, block), ground-state electron configurations and unpaired electrons, empirical formulas from rounded percentages, limiting reagents, acids, gases, decay, amortization, bonds, depreciation against periodictable / mendeleev (cached) / numpy-financial |
 | `geom3d-battery.mjs`, `gen_geom3d.py` | space geometry against sympy.geometry / numpy; quadric surfaces are built from canonical forms by an invertible affine change of variables, so the surface type is known by construction |
 | `plot2-battery.mjs`, `gen_plot2.py` | the numbers printed next to the new pictures (RK4 solutions and equilibria against scipy `solve_ivp`, fits against `numpy.polyfit`, exact histogram counts, box-plot fences, shaded areas against scipy.stats, intercepts, contour ranges, exact region corners and areas against `scipy.optimize.linprog` / `ConvexHull`), and the geometry of the marching-squares curves against the equation (needs the `--expose` build) |
+| `series-battery.mjs`, `gen_series.py` | about 190 series per seed whose behaviour is known from theory (p-series, geometric, ratio / root families, alternating, logarithmic, rational and radical terms, radius and end points of power series); a wrong verdict fails, "cannot decide" is allowed |
+| `laplace2-battery.mjs`, `gen_laplace2.py` | 117 checks per seed: transforms with steps / impulses against quadrature, inverses against mpmath's inverse Laplace transform, initial value problems against `scipy.solve_ivp` applied piece by piece (impulses as jumps of the derivative) |
 | `linalg-battery.mjs`, `gen_linalg.py` | linear algebra against sympy |
 | `linalg2-battery.mjs`, `gen_linalg2.py` | QR, Cholesky, definiteness, pinv, least squares, SVD, expm, Jordan form against numpy / scipy.linalg / sympy (printed matrices are parsed back and compared) |
 | `applied-battery.mjs`, `gen_applied.py` | geometry, triangles, units, chemistry, finance, complex numbers against pint / periodictable / numpy-financial / Python `complex` |

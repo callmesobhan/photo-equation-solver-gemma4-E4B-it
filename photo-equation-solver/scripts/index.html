@@ -362,6 +362,7 @@ function convertLogBase(s) {
 
 /** Character-level clean-up: unicode math, LaTeX, printed notation, abs bars. Keeps ; and newlines. */
 function normalizeText(raw) {
+  SERIES_FLAG.v = null;
   let s = convertApplied(convertLogic(String(raw)));
   s = s.replace(/[\u2211\u03a3]/g, '\u0001S').replace(/[\u220f\u03a0]/g, '\u0001P');
   s = s.replace(/[\u2070\u00b9\u00b2\u00b3\u2074-\u207b]+/g, (m) =>
@@ -406,7 +407,7 @@ function normalizeText(raw) {
     let open = true;
     s = s.replace(/\|/g, () => ((open = !open) ? ')' : 'abs('));
   }
-  return s;
+  return convertConvergenceWords(s);
 }
 
 /** A single capital letter (E, F, V, R ...) is a variable of its own, distinct from the small letter: \u0002 + letter. */
@@ -414,7 +415,7 @@ function markUppercaseLetters(s) {
   return s.replace(/[A-Z]/g, (L, off) => {
     const before = s[off - 1] || '';
     const after = s[off + 1] || '';
-    if (/[A-Za-z\u0002]/.test(before) || /[A-Za-z]/.test(after)) return L;
+    if (/[A-Za-z\u0001\u0002]/.test(before) || /[A-Za-z]/.test(after)) return L; // \u0001 marks a sum / product sign (\u03a3, \u03a0)
     if (L === 'E' && /[\d.]/.test(before) && /[\d+-]/.test(after)) return L; // 1.5E3
     return '\u0002' + L.toLowerCase();
   });
@@ -525,8 +526,8 @@ function cleanStatement(p) {
 // ---- tokenizer ---------------------------------------------------------------
 const FN_NAMES = ['arcsin', 'arccos', 'arctan', 'asin', 'acos', 'atan', 'sinh', 'cosh', 'tanh', 'sqrt',
   'cbrt', 'root', 'sin', 'cos', 'tan', 'cot', 'sec', 'csc', 'log10', 'log2', 'log', 'ln', 'lg', 'exp',
-  'abs', 'floor', 'ceil', 'erf'].sort((a, b) => b.length - a.length);
-const FN_ALIAS = { arcsin: 'asin', arccos: 'acos', arctan: 'atan', lg: 'log10' };
+  'abs', 'floor', 'ceil', 'erf', 'heaviside', 'unitstep', 'dirac'].sort((a, b) => b.length - a.length);
+const FN_ALIAS = { arcsin: 'asin', arccos: 'acos', arctan: 'atan', lg: 'log10', unitstep: 'heaviside' };
 
 /** Command names are only recognised when directly followed by "(" (so "sum" is never s*u*m). */
 function commandAt(rest) {
@@ -1243,6 +1244,9 @@ function callNum(fn, a) {
     case 'abs': return Math.abs(x);
     case 'floor': return Math.floor(x);
     case 'ceil': return Math.ceil(x);
+    case 'heaviside': return x > 0 ? 1 : x < 0 ? 0 : 0.5;
+    case 'dirac': return x === 0 ? Infinity : 0;
+    case 'dirac1': case 'dirac2': case 'dirac3': return x === 0 ? Infinity : 0;
     default: throw new MathError('unknown function ' + fn);
   }
 }
@@ -2993,6 +2997,14 @@ function signInfo(e) {
 function sFn(fn, args) {
   const a = args[0];
   const num = a.k === 'n' ? a.q : null;
+  if (fn === 'heaviside' || fn === 'dirac' || /^dirac\d+$/.test(fn)) {
+    // an argument without letters (2 - 5, \u03c0 - 3 ...) has a definite sign
+    let v = null;
+    if (num) v = num.toNumber();
+    else if (a.k !== 'v' && !varsOfS(a).size) v = numS(a, {});
+    if (v !== null && isFinite(v) && Math.abs(v) > 1e-12) return fn === 'heaviside' ? (v > 0 ? S1 : S0) : S0;
+    if (v !== null && num && num.isZero() && fn === 'heaviside') return sN(new Q(1n, 2n));
+  }
   switch (fn) {
     case 'sin': case 'tan': case 'cot':
     case 'sinh': case 'tanh': case 'asin': case 'atan': {
@@ -3212,8 +3224,11 @@ function dfn(fn, u) {
     case 'tanh': return sPow(sFn('cosh', [u]), sI(-2));
     case 'ln': return sPow(u, SM1);
     case 'abs': return sDiv(u, sFn('abs', [u]));
+    case 'heaviside': return sFn('dirac', [u]);
     case 'erf': return sMul([sDiv(sI(2), sSqrt(S_PI)), sExp(sNeg(sPow(u, sI(2))))]);
-    default: throw new MathError('cannot differentiate ' + fn);
+    default:
+      if (fn === 'dirac' || /^dirac\d+$/.test(fn)) return sFn('dirac' + ((Number(fn.slice(5)) || 0) + 1), [u]);
+      throw new MathError('cannot differentiate ' + fn);
   }
 }
 function diffS(e, x) {
@@ -3260,7 +3275,7 @@ function nthDiff(e, x, n) {
 // ---- conversion from the parser's AST ----------------------------------------------------------
 const AST_FN = {
   sin: 'sin', cos: 'cos', tan: 'tan', cot: 'cot', sec: 'sec', csc: 'csc', asin: 'asin', acos: 'acos',
-  atan: 'atan', sinh: 'sinh', cosh: 'cosh', tanh: 'tanh', ln: 'ln', abs: 'abs', erf: 'erf',
+  atan: 'atan', sinh: 'sinh', cosh: 'cosh', tanh: 'tanh', ln: 'ln', abs: 'abs', erf: 'erf', heaviside: 'heaviside', dirac: 'dirac',
 };
 function fromAst(n) {
   switch (n.t) {
@@ -3361,7 +3376,7 @@ function rfToS(r, x) {
 }
 
 // ---- printing ------------------------------------------------------------------------------------------
-const FN_LABEL = { asin: 'arcsin', acos: 'arccos', atan: 'arctan', zeta: '\u03b6' };
+const FN_LABEL = { asin: 'arcsin', acos: 'arccos', atan: 'arctan', zeta: '\u03b6', heaviside: 'u', dirac: '\u03b4' };
 /** True when the whole string is a single parenthesised group "( ... )". */
 function isWrapped(s) {
   if (s[0] !== '(' || s[s.length - 1] !== ')') return false;
@@ -3383,7 +3398,7 @@ function fmtS(e, ascii) {
       if (!out) out = p;
       else if (ascii) out += '*' + p;
       else if (/[0-9]$/.test(out) && /^[0-9]/.test(p)) out += '\u00b7' + p;
-      else if ((/^[A-Za-z]{2,}/.test(p) || /^e(\^|$)/.test(p)) && /[A-Za-z\u03c0)\u00b2\u00b3\u00b9\u2070-\u2079\u207b|]$/.test(out)) out += ' ' + p;
+      else if ((/^[A-Za-z]{2,}/.test(p) || /^e(\^|$)/.test(p) || /^[u\u03b4]\(/.test(p)) && /[A-Za-z\u03c0)\u00b2\u00b3\u00b9\u2070-\u2079\u207b|]$/.test(out)) out += ' ' + p;
       else if (/[A-Za-z]\d+$/.test(out) && /^[A-Za-z(]/.test(p)) out += ' ' + p;
       else if (/^[A-Za-z]{2,}/.test(p) && /[0-9]$/.test(out)) out += ' ' + p;
       else out += (/[0-9A-Za-z\u03c0)\u00b2\u00b3\u00b9\u2070-\u2079\u207b|]$/.test(out) && /^[A-Za-z\u03c0\u03bb\u03b8\u03bc\u03c3\u03c6\u03c9\u03b1\u03b2\u03b3\u03b4\u221a(|]/.test(p) ? '' : '\u00b7') + p;
@@ -3456,7 +3471,8 @@ function fmtS(e, ascii) {
       }
       default: {
         if (t.fn === 'abs') return ascii ? 'abs(' + go(t.a[0]) + ')' : '|' + go(t.a[0]) + '|';
-        const name = ascii ? t.fn : FN_LABEL[t.fn] || t.fn;
+        if (t.fn === 'fact') return (t.a[0].k === 'v' || (t.a[0].k === 'n' && t.a[0].q.isInt() && t.a[0].q.sign() >= 0) ? go(t.a[0]) : '(' + go(t.a[0]) + ')') + '!';
+        const name = ascii ? t.fn : FN_LABEL[t.fn] || (/^dirac\d+$/.test(t.fn) ? '\u03b4' + '\u2032'.repeat(Number(t.fn.slice(5))) : t.fn);
         return name + '(' + t.a.map(go).join(', ') + ')';
       }
     }
@@ -4897,10 +4913,25 @@ function integrateNumeric(S, x, a, b) {
     const r = tanhSinh(g, lo, hi);
     if (r.ok && isFinite(r.value)) return { value: r.value, ok: true };
     // not converged: is it growing (divergent) or just slowly convergent?
-    const trunc = (R) => (isFinite(a) ? tanhSinh(f, a, R) : isFinite(b) ? tanhSinh(f, -R, b) : tanhSinh(f, -R, R)).value;
-    const i4 = trunc(1e4);
-    const i6 = trunc(1e6);
-    const grows = !isFinite(i6) || Math.abs(i6 - i4) > 0.05 * (1 + Math.abs(i4));
+    // A numerical "diverges" is only claimed when the integrand clearly decays more slowly than 1/x (x^(-1/2), constant, growing); slowly
+    // convergent tails such as x^(-11/10) or ln(x)^3 x^(-11/10) cannot be told from divergent ones numerically, and the exact
+    // antiderivative decides those.
+    let grows = false;
+    const slope = (sgn, x0) => {
+      const f1 = f(sgn * x0);
+      const f2 = f(sgn * x0 * 10);
+      if ((f1 === Infinity && f2 === Infinity) || (isFinite(f1) && f1 > 0 && f2 === Infinity)) return -1e9; // overflow: grows exponentially
+      if (!isFinite(f1) || !isFinite(f2) || f1 === 0 || f2 === 0 || f1 * f2 < 0) return NaN;
+      return -(Math.log(Math.abs(f2)) - Math.log(Math.abs(f1))) / Math.LN10;
+    };
+    const tails = [];
+    if (isFinite(a)) tails.push([1, Math.max(1, Math.abs(a))]);
+    else if (isFinite(b)) tails.push([-1, Math.max(1, Math.abs(b))]);
+    else tails.push([1, 1], [-1, 1]);
+    tails.forEach(([sgn, base]) => {
+      const sl = [1e5, 1e6, 1e7].map((m) => slope(sgn, base * m));
+      if (sl.every((v) => isFinite(v) && v <= 0.7)) grows = true;
+    });
     return { value: r.value, ok: false, diverges: grows, inconclusive: !grows, note: grows ? 'the integral grows without bound' : 'the numerical method converged too slowly' };
   }
   if (endpointDiverges(f, a, b)) return { value: Infinity, ok: false, diverges: true, note: 'the integrand is not integrable at an endpoint' };
@@ -6250,8 +6281,20 @@ defCmd('integrate integral', (n) => {
   }
   const a = boundNum(lo);
   const b = boundNum(hi);
-  const num = integrateNumeric(S, v, a, b);
+  let num = integrateNumeric(S, v, a, b);
   out.work.push('Definite integral of ' + fmtS(S) + ' from ' + intLimitsText(lo, hi));
+  if (num.diverges && (lo.inf || hi.inf)) {
+    // a slowly decaying integrand (x^(-11/10), 1/(x ln(x)^2) ...) looks divergent to the numerical method: the antiderivative decides first
+    try {
+      const F0 = antiderivative(S, v);
+      const top0 = F0 && endValue(F0, v, hi, -1);
+      const bot0 = F0 && endValue(F0, v, lo, 1);
+      const ex0 = top0 && bot0 ? sSub(top0, bot0) : null;
+      if (ex0 && isFinite(numS(ex0, {}))) num = { ok: false, value: numS(ex0, {}), diverges: false };
+    } catch (e) {
+      if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+    }
+  }
   if (num.diverges) {
     out.answer.push('diverges' + (num.note ? ' (' + num.note + ')' : ''));
     return out;
@@ -6282,6 +6325,20 @@ defCmd('integrate integral', (n) => {
     return withValue(out, exact);
   }
   if (!num.ok) {
+    // the antiderivative may grow without bound (ln ln x, ...) even when the numerical method could not tell
+    try {
+      if (F && (hi.inf || lo.inf)) {
+        const Fl = hi.inf && hi.inf > 0 ? stripLnAbs(F) : F; // at +\u221e the argument of ln|u| is positive
+        const rTop = limitOf(Fl, v, hi.inf ? hi : { S: hi.S }, hi.inf ? 0 : -1);
+        const rBot = limitOf(F, v, lo.inf ? lo : { S: lo.S }, lo.inf ? 0 : 1);
+        if (rTop.kind === 'inf' || rBot.kind === 'inf') {
+          out.answer.push('diverges (the antiderivative grows without bound)');
+          return out;
+        }
+      }
+    } catch (e) {
+      if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+    }
     out.answer.push('could not be determined (no closed form was found and the numerical method did not converge)');
     return out;
   }
@@ -7034,7 +7091,13 @@ function solveODEStatements(sts) {
   out.work.push('Type: ' + (linear ? 'linear' : 'non-linear') + ' differential equation of order ' + n);
   if (linear) {
     const isConstCoef = cks.every((c) => freeOf(c, x) && c.k === 'n');
-    if (n === 1) {
+    if (isConstCoef && hasStepOrDelta(g)) {
+      // a unit step u(t - a) or an impulse delta(t - a) in the forcing: Laplace transform with the initial values as constants
+      const lv = odeViaLaplace(cks.map((c) => c.q), simp(sNeg(g)), x, consts);
+      sol = lv.y;
+      out.work.push('Forcing with steps / impulses: Laplace transform, Y(' + lv.sName + ') = ' + fmtS(simp(lv.Y)).slice(0, 300) + ';  then the inverse transform with the shifts e^(\u2212a\u00b7' + lv.sName + ') \u2192 u(' + x + ' \u2212 a)');
+      if (!ics.length) out.notes.push('C1 = y(0)' + (n > 1 ? ', C2 = y\'(0)' + (n > 2 ? ', ...' : '') : '') + ' (the initial values at ' + x + ' = 0).');
+    } else if (n === 1) {
       const a1 = cks[1];
       const p = simp(sDiv(cks[0], a1));
       const q = simp(sDiv(sNeg(g), a1));
@@ -8161,6 +8224,7 @@ function linearIn_(g, t) {
 }
 /** One product term c\u00b7t^n\u00b7e^(a t)\u00b7(trig or nothing) -> its Laplace transform in s. */
 function laplaceTerm(term, t, s) {
+  if (l2HasImpulse(term, t)) return laplaceImpulseTerm(term, t, s);
   const fs = term.k === '*' ? term.a : [term];
   const consts = [];
   let n = 0;
@@ -8177,7 +8241,16 @@ function laplaceTerm(term, t, s) {
       consts.push(sExp(lin.a0));
     } else if (f.k === 'f' && (f.fn === 'sin' || f.fn === 'cos') && !trig) {
       const lin = linearIn_(f.a[0], t);
-      if (!lin || !zeroS(simp(lin.a0)) || zeroS(simp(lin.a1))) throw new MathError('only sin(bt) and cos(bt) are supported (no phase shift); write sin(t + c) as an expanded sum');
+      if (lin && !zeroS(simp(lin.a0)) && !zeroS(simp(lin.a1))) {
+        // a constant phase: sin(bt + c) = sin(bt) cos(c) + cos(bt) sin(c),  cos(bt + c) = cos(bt) cos(c) - sin(bt) sin(c)
+        const u = sMul([lin.a1, sV(t)]);
+        const others = fs.filter((q) => q !== f);
+        const mk = (fn) => sMul(others.concat([sFn(fn, [u])]));
+        const c = lin.a0;
+        const parts = f.fn === 'sin' ? [[sFn('cos', [c]), mk('sin')], [sFn('sin', [c]), mk('cos')]] : [[sFn('cos', [c]), mk('cos')], [sNeg(sFn('sin', [c])), mk('sin')]];
+        return sAdd(parts.map(([k, tm]) => sMul([k, laplaceTerm(tm, t, s)])));
+      }
+      if (!lin || zeroS(simp(lin.a1))) throw new MathError('only sin(bt) and cos(bt) are supported, where b does not depend on t');
       trig = { fn: f.fn, b: lin.a1 };
     } else throw new MathError('I cannot transform the factor ' + fmtS(f) + ' (supported: powers of t, e^(at), sin(bt), cos(bt), sums and constants)');
   }
@@ -8348,7 +8421,7 @@ defCmd('ilaplace inverselaplace', (n) => {
   const s = n.args[1] ? varOfArg(n.args[1]) : singleVarOf(F, 's');
   const t = n.args[2] ? varOfArg(n.args[2]) : s === 't' ? 'x' : 't';
   const out = newOut();
-  const f = simp(expandS(inverseLaplaceS(F, s, t)));
+  const f = simp(expandS(needsFullInverse(F, s) ? inverseLaplaceFull(F, s, t) : inverseLaplaceS(F, s, t)));
   out.answer.push('L\u207b\u00b9{' + fmtS(F) + '} = ' + fmtS(f));
   out.work.push('Partial fractions of F(s), then the table entries 1/(s\u2212a)\u207f, (s\u2212a)/((s\u2212a)\u00b2+b\u00b2), b/((s\u2212a)\u00b2+b\u00b2)');
   try {
@@ -12431,6 +12504,8 @@ function convertApplied(s) {
   s = convertChem2(s);
   s = convertGeometry3d(s);
   s = convertPlot2(s);
+  s = convertSeriesSentence(s);
+  s = convertStepNotation(s);
   s = s.replace(/\bbalance\s*(?:the\s+)?(?:equation|reaction)?\s*[:(]?\s*([A-Za-z0-9()\[\]\u00b7+ ]+?(?:->|=>|\u2192|\u27f6|\u21cc|=)[A-Za-z0-9()\[\]\u00b7+ ]+?)\s*(?:\)\s*)?(?=$|[;\n])/gi, (m, rxn) => 'balance(' + chemIndex(rxn.trim().replace(/\)$/, '')) + ')');
   // a bare reaction such as "H2 + O2 -> H2O": every term a real formula and the same elements on both sides
   s = s.replace(/^\s*([A-Za-z0-9()\[\]\u00b7+ ]+?)\s*(?:->|=>|\u2192|\u27f6|\u21cc)\s*([A-Za-z0-9()\[\]\u00b7+ ]+?)\s*$/, (m, lhs, rhs) => {
@@ -12912,6 +12987,8 @@ HELP.calculus = [
   '  domain(f, x)   inversefunction(f, x)   compose(f, g, x)   implicit(x^2 + y^2 - 25)  (dy/dx and d2y/dx2)   newton(f, x, x0)',
   '  areabetween(f, g, x)  or  areabetween(f, g, x, a, b)   volumerev(f, x, a, b)  volumerev(f, g, x, a, b)  (about the x-axis)',
   '  shells(f, x, a, b)  (about the y-axis)   arclength(f, x, a, b)   surfacearea of revolution: surfacearearev(f, x, a, b)   avgvalue(f, x, a, b)',
+  '  convergence(n^2/2^n, n)  [converge, seriestest]  does the series converge? (term, geometric, ratio, root, p-series comparison, integral and alternating tests; absolute or conditional)   convergence(1/(n*ln(n)^2), n, 2)  starts at n = 2',
+  '  radius(x^n/n, n, x, 1)  [radiusofconvergence, intervalofconvergence]  radius and interval of convergence of a power series (end points tested);  sentences work too:  "Does the series sum of n^2/2^n converge?"   "Find the interval of convergence of \u03a3_(n=1)^\u221e (x-2)^n/(n 3^n)"',
   '  differential equations and Laplace transforms:  help ode',
 ].join('\n');
 HELP.logic = [
@@ -12947,6 +13024,8 @@ HELP.ode = [
   '  linear, constant coefficients, any order:  y\'\' - 3y\' + 2y = 0   y\'\' + y = sin(x)   y\'\'\' - y = e^(2x)   y\'\' + 4y = tan(2x)   (forcing: polynomials, exponentials, sin, cos, sinh, cosh, products; order 2 also tan, sec, ln, 1/x ... by variation of parameters)',
   '  Euler-Cauchy:  x^2*y\'\' + x*y\' + y = ln(x)         systems:  x\' = 3x + y; y\' = x + 3y; x(0) = 1, y(0) = 0   (2 or 3 equations, constant coefficients)',
   '  laplace(f, t)   laplace(f, t, s)   ilaplace(F, s)   ilaplace(F, s, t)       e.g. laplace(t^2*e^(-3t) + sin(2t), t),  ilaplace((s+1)/(s^2+2s+5), s)',
+  '  unit steps and impulses (u(t - a) = heaviside(t - a), delta(t - a) = dirac(t - a)):  laplace(t*u(t-2), t)   laplace(sin(t)*heaviside(t-pi), t)   ilaplace(e^(-2s)/(s^2+1), s)   ilaplace(e^(-3s), s)',
+  '                the equation itself may have such a forcing:  y\'\' + y = u(t-pi), y(0) = 0, y\'(0) = 0    y\'\' + 4y = delta(t-pi), y(0) = 0, y\'(0) = 0    y\' + 2y = u(t-1) - u(t-2)  (solved with the Laplace transform; without initial values C1 = y(0), C2 = y\'(0))',
   '  every solution is checked by substituting it back into the equation',
 ].join('\n');
 HELP.multivar = [
@@ -14762,6 +14841,8 @@ defCmd('vartest chisqvartest', (n) => {
 defCmd('ftest2 variancetest', (n) => {
   needArgs(n, 4, 4, 'the sample standard deviations and sizes: ftest2(s1, n1, s2, n2)');
   const [s1, n1, s2, n2] = n.args.map(numArg);
+  if (!(s1 > 0) || !(s2 > 0)) throw new MathError('the standard deviations must be positive');
+  if (!(n1 >= 2) || !(n2 >= 2)) throw new MathError('each sample needs at least 2 values');
   const F = (s1 * s1) / (s2 * s2);
   const cdf = fCdf(F, n1 - 1, n2 - 1);
   const out = newOut();
@@ -17512,6 +17593,7 @@ defCmd('payoff', (n) => {
   const m = n.args[3] ? numArg(n.args[3]) : 12;
   const r = rate / m;
   if (!(P > 0) || !(pay > 0)) throw new MathError('the amount and the payment must be positive');
+  if (!(m >= 1) || !isFinite(r) || r <= -1) throw new MathError('the rate and the number of payments per year must be sensible (at least 1 payment a year)');
   const out = newOut();
   if (r * P >= pay) {
     out.answer.push('the payment ' + fmtMoney(pay) + ' does not even cover the interest ' + fmtMoney(r * P) + ' per period, so the loan is never paid off');
@@ -18970,6 +19052,707 @@ function convertPlot2(s) {
     return changed ? name + '(' + conv.join(',') + ')' : null;
   });
   return s;
+}
+// ======================================================================
+// 26. Convergence of series (term test, geometric, ratio, root, comparison with p-series, integral test, bounded factors, alternating
+//     series) and the radius / interval of convergence of power series.  The tests are evaluated in log scale (so n!, n^n and 2^n
+//     cause no overflow) at very large n; a verdict is only given when the numbers are stable and clearly on one side.
+// ======================================================================
+const SER_NS = [100, 1000, 10000, 100000];
+/** { l: log|e|, s: sign } of an expression at env, or null when it is undefined. */
+function serLog(e, env) {
+  switch (e.k) {
+    case 'n': {
+      const v = e.q.toNumber();
+      return v === 0 ? { l: -Infinity, s: 0 } : { l: Math.log(Math.abs(v)), s: v < 0 ? -1 : 1 };
+    }
+    case 'v': {
+      const v = env[e.name];
+      if (v === undefined) return null;
+      return v === 0 ? { l: -Infinity, s: 0 } : { l: Math.log(Math.abs(v)), s: v < 0 ? -1 : 1 };
+    }
+    case 'c': {
+      const v = e.name === 'pi' ? Math.PI : e.name === 'e' ? Math.E : NaN;
+      return isNaN(v) ? null : { l: Math.log(v), s: 1 };
+    }
+    case '*': {
+      let l = 0;
+      let s = 1;
+      for (const t of e.a) {
+        const r = serLog(t, env);
+        if (!r) return null;
+        if (r.s === 0) return { l: -Infinity, s: 0 };
+        l += r.l;
+        s *= r.s;
+      }
+      return { l, s };
+    }
+    case '+': {
+      const parts = [];
+      for (const t of e.a) {
+        const r = serLog(t, env);
+        if (!r) return null;
+        parts.push(r);
+      }
+      const live = parts.filter((p) => p.s !== 0);
+      if (!live.length) return { l: -Infinity, s: 0 };
+      const m = Math.max(...live.map((p) => p.l));
+      if (!isFinite(m)) return null;
+      const sum = live.reduce((acc, p) => acc + p.s * Math.exp(p.l - m), 0);
+      if (sum === 0) return { l: -Infinity, s: 0 };
+      return { l: m + Math.log(Math.abs(sum)), s: sum < 0 ? -1 : 1 };
+    }
+    case '^': {
+      const b = serLog(e.b, env);
+      const x = serLog(e.e, env);
+      if (!b || !x) return null;
+      const ex = x.s === 0 ? 0 : x.s * Math.exp(x.l);
+      if (!isFinite(ex)) return null;
+      if (b.s === 0) return ex > 0 ? { l: -Infinity, s: 0 } : null;
+      let s = 1;
+      if (b.s < 0) {
+        if (Math.abs(ex - Math.round(ex)) > 1e-9 * Math.max(1, Math.abs(ex))) return null;
+        s = Math.round(ex) % 2 === 0 ? 1 : -1;
+      }
+      return { l: ex * b.l, s };
+    }
+    default: {
+      if (e.fn === 'fact') {
+        const r = serLog(e.a[0], env);
+        if (!r || r.s < 0) return null;
+        return { l: r.s === 0 ? 0 : lgamma(Math.exp(r.l) + 1), s: 1 };
+      }
+      const args = [];
+      for (const t of e.a) {
+        const r = serLog(t, env);
+        if (!r) return null;
+        args.push(r.s === 0 ? 0 : r.s * Math.exp(r.l));
+      }
+      let v;
+      try {
+        v = callNum(e.fn, args);
+      } catch (err) {
+        return null;
+      }
+      if (!isFinite(v)) return null;
+      return v === 0 ? { l: -Infinity, s: 0 } : { l: Math.log(Math.abs(v)), s: v < 0 ? -1 : 1 };
+    }
+  }
+}
+const serTerm = (S, k) => (n) => serLog(S, { [k]: n });
+const serFmt = (x) => fmtNum(Number(x.toPrecision(6)));
+/** Simplest fraction p/q (q <= maxDen) within a relative tolerance of x, or null. */
+function serFraction(x, maxDen, tol) {
+  if (!isFinite(x)) return null;
+  const sgn = x < 0 ? -1 : 1;
+  const v = Math.abs(x);
+  let h1 = 1;
+  let h0 = 0;
+  let k1 = 0;
+  let k0 = 1;
+  let b = v;
+  for (let it = 0; it < 40; it++) {
+    const a = Math.floor(b);
+    const h2 = a * h1 + h0;
+    const k2 = a * k1 + k0;
+    if (k2 > maxDen || !isFinite(h2)) break;
+    h0 = h1; h1 = h2; k0 = k1; k1 = k2;
+    if (Math.abs(v - h1 / k1) <= tol * Math.max(1, v)) return { p: sgn * h1, q: k1 };
+    const f = b - a;
+    if (f < 1e-14) break;
+    b = 1 / f;
+  }
+  return null;
+}
+/** Text for a limit value: exact when it is a simple rational or a rational multiple of e, \u03c0, ... (from the decimal expansion). */
+function serNice(v) {
+  if (Math.abs(v - Math.round(v)) < 2e-4 * Math.max(1, Math.abs(v))) return String(Math.round(v));
+  const tryRec = (x, wrap) => {
+    const r = recognizeLoose(x);
+    return r && r.text && Math.abs(r.value === undefined ? x : x - (r.value || x)) < 1 ? wrap(r.text) : null;
+  };
+  void tryRec;
+  const cands = [[v, (s) => s], [v * Math.E, (s) => (s === '1' ? '1/e' : s + '/e')], [v / Math.E, (s) => (s === '1' ? 'e' : s + 'e')], [v * Math.E * Math.E, (s) => (s === '1' ? '1/e\u00b2' : s + '/e\u00b2')], [v * Math.PI, (s) => (s === '1' ? '1/\u03c0' : s + '/\u03c0')], [v / Math.PI, (s) => (s === '1' ? '\u03c0' : s + '\u03c0')]];
+  for (const [x, wrap] of cands) {
+    const fr = serFraction(x, 40, 5e-5);
+    if (fr && fr.p !== 0) {
+      const frText = fr.q === 1 ? String(fr.p) : fr.p + '/' + fr.q;
+      return wrap(frText) + (wrap(frText) === frText ? '' : ' (\u2248 ' + serFmt(v) + ')');
+    }
+  }
+  const r = recognizeLoose(v);
+  if (r && r.text) return r.text + ' (\u2248 ' + serFmt(v) + ')';
+  return serFmt(v);
+}
+/** lim |a(n+1)/a(n)|: { kind: 'value' | 'zero' | 'inf' | 'unstable', rho }; windows of consecutive indices reject oscillating terms. */
+function serRatio(S, k) {
+  const at = (n) => {
+    const x = serLog(S, { [k]: n });
+    const y = serLog(S, { [k]: n + 1 });
+    return x && y && x.s !== 0 && y.s !== 0 ? Math.exp(y.l - x.l) : NaN;
+  };
+  const win = (n0) => Array.from({ length: 12 }, (_, i) => at(n0 + i));
+  const w = [1000, 10000, 100000].map(win);
+  if (w.some((a) => a.some((v) => !isFinite(v)))) return { kind: 'unstable' };
+  const mn = (a) => Math.min(...a);
+  const mx = (a) => Math.max(...a);
+  if (mx(w[2]) < 1e-3 && mx(w[2]) < mn(w[1])) return { kind: 'zero' };
+  if (mn(w[2]) > 50 && mn(w[2]) > mx(w[1])) return { kind: 'inf' };
+  const tight = (a) => mx(a) - mn(a) <= 2e-3 * Math.max(1, mx(a));
+  if (!tight(w[0]) || !tight(w[1]) || !tight(w[2])) return { kind: 'unstable' };
+  const e1 = 2 * at(2000) - at(1000);
+  const e2 = 2 * at(20000) - at(10000);
+  if (Math.abs(e2 - e1) <= 2e-3 * Math.max(1, Math.abs(e2))) return { kind: 'value', rho: e2 };
+  return { kind: 'unstable' };
+}
+/** lim |a(n)|^(1/n) */
+function serRoot(S, k) {
+  const at = (n) => {
+    const x = serLog(S, { [k]: n });
+    return x && x.s !== 0 ? Math.exp(x.l / n) : NaN;
+  };
+  const win = (n0) => Array.from({ length: 10 }, (_, i) => at(n0 + i));
+  const w = [100000, 1000000].map(win);
+  if (w.some((a) => a.some((v) => !isFinite(v)))) return { kind: 'unstable' };
+  const spread = (a) => Math.max(...a) - Math.min(...a);
+  const r = w[1][0];
+  if (spread(w[0]) > 2e-3 * Math.max(1, r) || spread(w[1]) > 2e-3 * Math.max(1, r)) return { kind: 'unstable' };
+  if (r < 1e-3) return { kind: 'zero' };
+  if (r > 50) return { kind: 'inf' };
+  if (Math.abs(r - w[0][0]) <= 2e-3 * Math.max(1, r)) return { kind: 'value', rho: r };
+  return { kind: 'unstable' };
+}
+/** Direction of sign changes of the terms: 'pos', 'neg', 'alt' (regularly alternating) or 'mixed'. */
+function serSigns(S, k, a) {
+  const f = serTerm(S, k);
+  const ss = [];
+  for (let n = a; n < a + 60; n++) {
+    const r = f(n);
+    if (!r) return { kind: 'undefined', at: n };
+    ss.push(r.s);
+  }
+  for (let n = 1000; n < 1060; n++) {
+    const r = f(n);
+    if (!r) return { kind: 'undefined', at: n };
+    ss.push(r.s);
+  }
+  const tail = ss.slice(60);
+  if (tail.every((s) => s > 0)) return { kind: 'pos' };
+  if (tail.every((s) => s < 0)) return { kind: 'neg' };
+  if (tail.every((s, i) => i === 0 || s * tail[i - 1] < 0)) return { kind: 'alt' };
+  return { kind: 'mixed' };
+}
+/** The tests on |a_n|; returns { v: 'conv' | 'div' | 'unknown', lines } (absolute convergence). */
+function serAbsTests(S, k, a, depth) {
+  const f = serTerm(S, k);
+  const lines = [];
+  const L = (n) => {
+    const r = f(n);
+    return r ? r.l : NaN;
+  };
+  // 1. terms must tend to 0
+  const top = (n0) => Math.max(...Array.from({ length: 50 }, (_, i) => L(n0 + i)).filter((v) => !isNaN(v)));
+  const m5 = top(100000);
+  const m6 = top(1000000);
+  if (isFinite(m5) && isFinite(m6) && m6 > Math.log(1e-3) && m6 - m5 > -0.015) {
+    lines.push('Term test: |a(n)| does not tend to 0 (|a(n)| reaches \u2248 ' + serFmt(Math.exp(m6)) + ' for n near 10\u2076)');
+    return { v: 'div', lines, test: 'term test' };
+  }
+  lines.push('Term test: a(n) \u2192 0 (passes, but this alone proves nothing)');
+  // 2. geometric: constant ratio
+  try {
+    const ratio = simp(sDiv(subsS(S, k, sAdd([sV(k), S1])), S));
+    if (!varsOfS(ratio).has(k)) {
+      const rv = Math.abs(numS(ratio, {}));
+      lines.push('Geometric series with ratio r = ' + fmtS(ratio) + ': ' + (rv < 1 ? '|r| < 1, converges' : '|r| \u2265 1, diverges'));
+      return { v: rv < 1 ? 'conv' : 'div', lines, test: 'geometric series', ratio };
+    }
+  } catch (e) {
+    if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+  }
+  // 3. ratio test
+  const rr = serRatio(S, k);
+  if (rr.kind === 'value') {
+    if (rr.rho < 0.995) {
+      lines.push('Ratio test: lim |a(n+1)/a(n)| = ' + serNice(rr.rho) + ' < 1, so the series converges absolutely');
+      return { v: 'conv', lines, test: 'ratio test' };
+    }
+    if (rr.rho > 1.005) {
+      lines.push('Ratio test: lim |a(n+1)/a(n)| = ' + serNice(rr.rho) + ' > 1, so the series diverges');
+      return { v: 'div', lines, test: 'ratio test' };
+    }
+    lines.push('Ratio test: lim |a(n+1)/a(n)| = 1 (inconclusive)');
+  } else if (rr.kind === 'inf') {
+    lines.push('Ratio test: |a(n+1)/a(n)| grows without bound (> 1), so the series diverges');
+    return { v: 'div', lines, test: 'ratio test' };
+  } else if (rr.kind === 'zero') {
+    lines.push('Ratio test: |a(n+1)/a(n)| \u2192 0 < 1, so the series converges absolutely');
+    return { v: 'conv', lines, test: 'ratio test' };
+  } else lines.push('Ratio test: the ratios do not settle down (inconclusive)');
+  // 4. root test
+  const rt = serRoot(S, k);
+  if (rt.kind === 'value') {
+    if (rt.rho < 0.995 || rt.rho > 1.005) {
+      lines.push('Root test: lim |a(n)|^(1/n) = ' + serNice(rt.rho) + (rt.rho < 1 ? ' < 1, so the series converges absolutely' : ' > 1, so the series diverges'));
+      return { v: rt.rho < 1 ? 'conv' : 'div', lines, test: 'root test' };
+    }
+    lines.push('Root test: lim |a(n)|^(1/n) = 1 (inconclusive)');
+  } else if (rt.kind === 'zero') {
+    lines.push('Root test: |a(n)|^(1/n) \u2192 0 < 1, so the series converges absolutely');
+    return { v: 'conv', lines, test: 'root test' };
+  } else if (rt.kind === 'inf') {
+    lines.push('Root test: |a(n)|^(1/n) grows without bound (> 1), so the series diverges');
+    return { v: 'div', lines, test: 'root test' };
+  }
+  // 5. limit comparison with a p-series: |a(n)| ~ c / n^p
+  const pAt = (n) => -(L(2 * n) - L(n)) / Math.LN2;
+  const pHat = [1000, 10000, 100000, 1000000].map(pAt);
+  const pWin = [pAt(1000000), pAt(1000001), pAt(1000002), pAt(1000003)];
+  if (Math.max(...pWin) - Math.min(...pWin) > 1e-3) pHat.push(NaN);
+  if (pHat.every(isFinite) && Math.max(...pHat) - Math.min(...pHat.slice(1)) < 6e-3 && Math.abs(pHat[3] - pHat[2]) < 2e-3) {
+    const p = pHat[3];
+    const near = Math.round(p * 12) / 12;
+    if (Math.abs(p - near) < 4e-3) {
+      const c = Math.exp(L(1000000) + near * Math.log(1000000));
+      const cOld = Math.exp(L(100000) + near * Math.log(100000));
+      if (Math.abs(c - cOld) <= 5e-3 * c) {
+        const pText = Number.isInteger(near) ? String(near) : serNice(near);
+        lines.push('Limit comparison with the p-series \u03a3 1/n^p, p = ' + pText + ': |a(n)|\u00b7n^p \u2192 ' + serNice(c) + ' (a positive finite number), and ' + (near > 1 ? 'p > 1, so the series converges absolutely' : 'p \u2264 1, so the series diverges'));
+        return { v: near > 1 ? 'conv' : 'div', lines, test: 'comparison with a p-series', p: near };
+      }
+    }
+  }
+  // 6. comparison with bounded factors:  |sin n|, |cos n|, arctan n, ... times something simpler
+  if (depth < 2 && S.k === '*') {
+    const bounded = (t) => (t.k === 'f' && ['sin', 'cos', 'atan'].includes(t.fn)) || (t.k === '^' && t.e.k === 'n' && t.e.q.isInt() && t.e.q.sign() > 0 && t.b.k === 'f' && ['sin', 'cos', 'atan'].includes(t.b.fn));
+    const keep = S.a.filter((t) => !bounded(t));
+    if (keep.length && keep.length < S.a.length) {
+      const sub = serAbsTests(simp(sMul(keep)), k, a, depth + 1);
+      if (sub.v === 'conv') {
+        lines.push('The factor ' + fmtS(sMul(S.a.filter(bounded))) + ' is bounded, and \u03a3 ' + fmtS(simp(sMul(keep))) + ' converges absolutely (' + sub.test + '), so by direct comparison this series converges absolutely');
+        return { v: 'conv', lines, test: 'direct comparison', };
+      }
+      lines.push('The factor ' + fmtS(sMul(S.a.filter(bounded))) + ' is bounded, but the comparison series \u03a3 ' + fmtS(simp(sMul(keep))) + ' does not converge, so this gives no conclusion');
+    }
+  }
+  // 7. integral test (positive, eventually decreasing terms)
+  const positive = serSigns(S, k, a).kind === 'pos';
+  const dec = (() => {
+    for (let n = 1000; n < 1050; n++) if (!(L(n + 1) <= L(n) + 1e-12)) return false;
+    return true;
+  })();
+  if (positive && dec && depth < 3) {
+    try {
+      const res = ser2Integral(S, k, Math.max(a, 2));
+      if (res) {
+        lines.push('Integral test: \u222b from ' + Math.max(a, 2) + ' to \u221e of ' + fmtS(S).replace(new RegExp('\\b' + k + '\\b', 'g'), 'x') + ' dx ' + (res.conv ? 'converges' : 'diverges') + ', so the series ' + (res.conv ? 'converges absolutely' : 'diverges'));
+        return { v: res.conv ? 'conv' : 'div', lines, test: 'integral test' };
+      }
+    } catch (e) {
+      if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+    }
+    // a(n) >= c/n with c > 0: compare with the harmonic series
+    if ([1000, 10000, 100000, 1000000].every((n) => isFinite(L(n)) && L(n) + Math.log(n) >= -0.01) && L(1000000) + Math.log(1000000) >= L(1000) + Math.log(1000) - 0.01) {
+      lines.push('n\u00b7a(n) stays above 1 (a(n) \u2265 1/n), so by comparison with the harmonic series \u03a3 1/n the series diverges');
+      return { v: 'div', lines, test: 'comparison with the harmonic series' };
+    }
+  }
+  return { v: 'unknown', lines, test: null };
+}
+/** Improper integral of the term (as a function of x) from lo to infinity: { conv } or null when the integrator cannot decide. */
+function ser2Integral(S, k, lo) {
+  const g = subsS(S, k, sV('$x'));
+  const text = 'integrate(' + fmtS(g, true).replace(/\$x/g, 'x') + ', x, ' + lo + ', oo)';
+  let out;
+  try {
+    out = evalCommandNode(parseExpression(text));
+  } catch (e) {
+    if (e instanceof MathError) return null;
+    throw e;
+  }
+  const ans = out.answer.join(' ');
+  if (/diverges/.test(ans)) return { conv: false };
+  if (/does not exist|could not/.test(ans)) return null;
+  return { conv: true };
+}
+/** Full analysis of sum_{k >= a} S: { verdict, absolute, lines } */
+function serAnalyze(S, k, a) {
+  const sg = serSigns(S, k, a);
+  if (sg.kind === 'undefined') throw new MathError('the term is undefined at ' + k + ' = ' + sg.at + ' (check where the series starts)');
+  const absRes = serAbsTests(S, k, a, 0);
+  const lines = absRes.lines.slice();
+  if (absRes.v === 'conv') return { verdict: 'converges', absolute: true, lines, test: absRes.test, ratio: absRes.ratio };
+  if (absRes.v === 'div' && /Term test/.test(absRes.lines[absRes.lines.length - 1])) return { verdict: 'diverges', absolute: null, lines, test: absRes.test };
+  if (sg.kind === 'alt') {
+    // alternating series test: |a(n)| decreasing to 0
+    const f = serTerm(S, k);
+    let dec = true;
+    for (const n0 of [50, 500, 5000]) for (let n = n0; n < n0 + 50; n++) if (!(f(n + 1).l < f(n).l)) dec = false;
+    if (dec) {
+      lines.push('Alternating series test: the terms alternate in sign, |a(n)| decreases and tends to 0, so the series converges' + (absRes.v === 'div' ? ', but \u03a3|a(n)| diverges, so only conditionally' : ''));
+      return { verdict: 'converges', absolute: false, lines, test: 'alternating series test' };
+    }
+    lines.push('Alternating series test: |a(n)| is not decreasing, so the test does not apply');
+  }
+  if (absRes.v === 'div') {
+    if (sg.kind === 'pos' || sg.kind === 'neg') return { verdict: 'diverges', absolute: null, lines, test: absRes.test };
+    lines.push('(the terms change sign, so \u03a3|a(n)| diverging does not prove that the series diverges)');
+    return { verdict: 'unknown', absolute: null, lines, test: null };
+  }
+  return { verdict: 'unknown', absolute: null, lines, test: null };
+}
+function serBodyAndIndex(n, what) {
+  const S = fromAst(n.args[0]);
+  const k = n.args[1] && n.args[1].t === 'var' ? n.args[1].name : singleVarOf(S, 'n');
+  const rest = n.args.slice(n.args[1] && n.args[1].t === 'var' ? 2 : 1);
+  const aQ = rest[0] ? constQ(rest[0]) : Q1;
+  if (!aQ.isInt()) throw new MathError('the series must start at a whole number');
+  void what;
+  return { S, k, a: Number(aQ.n) };
+}
+defCmd('convergence converge seriestest', (n) => {
+  needArgs(n, 1, 3, 'the general term, the index and optionally the first index, e.g. convergence(n^2/2^n, n, 1)');
+  const { S, k, a } = serBodyAndIndex(n, 'convergence');
+  const extra = Array.from(varsOfS(S)).filter((v) => v !== k);
+  if (extra.length) throw new MathError('the term contains other letters (' + extra.join(', ') + '); for a power series use radius(term, n, x)');
+  const res = serAnalyze(S, k, a);
+  const out = newOut();
+  out.work.push('Series \u03a3 ' + fmtS(S) + ' for ' + k + ' \u2265 ' + a);
+  res.lines.forEach((l) => out.work.push(l));
+  if (res.verdict === 'converges') out.answer.push(res.absolute ? 'converges absolutely' : 'converges conditionally (the series of absolute values diverges)');
+  else if (res.verdict === 'diverges') out.answer.push('diverges');
+  else out.answer.push('the standard tests (term, geometric, ratio, root, comparison, integral, alternating) do not decide this series');
+  if (res.verdict === 'converges') {
+    // an exact sum when the sum engine knows one, else a numeric value
+    try {
+      const o2 = evalCommandNode(parseExpression('sum(' + fmtS(S, true) + ', ' + k + ', ' + a + ', oo)'));
+      if (o2.answer.length && !/diverges|could not|error/.test(o2.answer[0])) out.work.push('sum = ' + o2.answer[0]);
+    } catch (e) {
+      if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+    }
+  }
+  out.value = { text: out.answer[0] };
+  return out;
+});
+COMMANDS.convergence.show = (n) => 'does \u03a3 ' + showRaw(n.args[0]) + ' converge?';
+
+// ---- power series: radius and interval of convergence -----------------------------------------------------------------------------------
+/** Factors of the term that are powers with a base containing x and an exponent that is linear in k: [{ base, m }] and the rest. */
+function serSplitPower(S, k, x) {
+  const factors = S.k === '*' ? S.a : [S];
+  const pw = [];
+  const rest = [];
+  factors.forEach((t) => {
+    if (t.k === '^' && varsOfS(t.b).has(x) && !varsOfS(t.b).has(k) && varsOfS(t.e).has(k) && !varsOfS(t.e).has(x)) pw.push(t);
+    else if (varsOfS(t).has(x)) pw.push(null);
+    else rest.push(t);
+  });
+  if (pw.includes(null)) return null;
+  return { pw, rest };
+}
+defCmd('radius radiusofconvergence intervalofconvergence', (n) => {
+  needArgs(n, 3, 4, 'the general term of the power series, the index and the variable, e.g. radius((x-2)^n/(n*3^n), n, x)');
+  const S = fromAst(n.args[0]);
+  const k = varOfArg(n.args[1]);
+  const x = varOfArg(n.args[2]);
+  const a = n.args[3] ? Number(intArg(n.args[3])) : 0;
+  const parts = serSplitPower(S, k, x);
+  if (!parts || !parts.pw.length) throw new MathError('write the term as (coefficient) \u00d7 (linear in ' + x + ')^' + k + ', e.g. (x-2)^n/(n*3^n) or n!*x^n');
+  // all the x-dependent factors must have the same base up to the exponent: base^(m k + s)
+  const base = parts.pw[0].b;
+  let m = 0;
+  for (const t of parts.pw) {
+    if (!sameFunction(t.b, base, [x], 3)) {
+      // the same base up to a power: treat each as base_i ^ (m_i k) with the first base as reference through the ratio of logs
+      throw new MathError('the power series has several different bases in ' + x + '; only one base (x \u2212 c) or (a\u00b7x + b) is supported');
+    }
+    const slope = simp(sSub(subsS(t.e, k, sI(1)), subsS(t.e, k, sI(0))));
+    if (slope.k !== 'n') throw new MathError('the exponent of the power of ' + x + ' must be linear in ' + k);
+    m += slope.q.toNumber();
+  }
+  if (m === 0) throw new MathError('the power of ' + x + ' does not grow with ' + k);
+  // base = alpha x + beta
+  const b0 = simp(subsS(base, x, S0));
+  const b1 = simp(sSub(subsS(base, x, S1), b0));
+  const b2 = simp(subsS(base, x, sI(2)));
+  if (b0.k !== 'n' || b1.k !== 'n' || !simp(sSub(b2, sAdd([b0, sMul([b1, sI(2)])]))).k === 'n' || !simp(sSub(b2, sAdd([b0, sMul([b1, sI(2)])]))).q.isZero()) throw new MathError('the base of the power must be linear in ' + x + ', like (2x - 1)');
+  const alpha = b1.q;
+  const beta = b0.q;
+  if (alpha.isZero()) throw new MathError('the base does not depend on ' + x);
+  const centre = beta.neg().div(alpha);
+  // coefficient part: everything without x, with the base powers removed
+  const c = simp(sMul(parts.rest));
+  const out = newOut();
+  out.work.push('Power series \u03a3 ' + fmtS(S) + ' (n \u2265 ' + a + '):  ratio test on the coefficients ' + fmtS(c) + ' and the factor |' + fmtS(base) + '|' + (Math.abs(m) === 1 ? '' : '^' + fmtNum(Math.abs(m))));
+  // rho0 = lim |c(n+1)/c(n)|; fall back to the root test
+  let rho;
+  const rr = serRatio(c, k);
+  if (rr.kind === 'value') rho = rr.rho;
+  else if (rr.kind === 'zero') rho = 0;
+  else if (rr.kind === 'inf') rho = Infinity;
+  else {
+    const rt = serRoot(c, k);
+    if (rt.kind === 'value') rho = rt.rho;
+    else if (rt.kind === 'zero') rho = 0;
+    else if (rt.kind === 'inf') rho = Infinity;
+    else throw new MathError('I could not determine the limit of the coefficient ratios for this power series');
+  }
+  if (rho === 0) {
+    out.answer.push('radius of convergence R = \u221e: converges for every ' + x);
+    out.work.push('the ratio |c(n+1)/c(n)| tends to 0');
+    out.value = { text: 'R = infinity' };
+    return out;
+  }
+  if (rho === Infinity) {
+    out.answer.push('radius of convergence R = 0: converges only at ' + x + ' = ' + centre.toString());
+    out.work.push('the ratio |c(n+1)/c(n)| grows without bound');
+    out.value = { text: 'R = 0' };
+    return out;
+  }
+  const Rb = Math.pow(1 / rho, 1 / Math.abs(m));
+  const alphaAbs = Math.abs(alpha.toNumber());
+  const R = Rb / alphaAbs;
+  out.work.push('lim |c(n+1)/c(n)| = ' + serNice(rho) + (Math.abs(m) === 1 ? '' : '; the base is raised to the power ' + fmtNum(Math.abs(m)) + ' per step') + ', so the series converges where |' + fmtS(base) + '| < ' + serNice(Rb));
+  // exact radius from an exact limit: R = (1/rho)^(1/|m|) / |alpha|
+  const frho = serFraction(rho, 40, 1e-4);
+  let Rs = null;
+  let Rtext;
+  if (frho && frho.p > 0 && Number.isInteger(m)) {
+    Rs = simp(sDiv(sPow(sN(new Q(BigInt(frho.q), BigInt(frho.p))), sN(new Q(1n, BigInt(Math.abs(m))))), sN(alpha.abs())));
+    Rtext = fmtS(Rs) + (/^-?\d+(\/\d+)?$/.test(fmtS(Rs)) ? '' : ' (\u2248 ' + serFmt(R) + ')');
+  } else Rtext = serFmt(R);
+  out.answer.push('radius of convergence R = ' + Rtext + ', centre ' + x + ' = ' + centre.toString());
+  const ends = [centre.toNumber() - R, centre.toNumber() + R];
+  const endS = Rs ? [simp(sSub(sN(centre), Rs)), simp(sAdd([sN(centre), Rs]))] : null;
+  const endText = (i) => (endS ? fmtS(endS[i]) : serFmt(ends[i]));
+  if (!endS) {
+    out.work.push('the radius is not a simple number here, so the end points were not tested');
+    out.answer.push('interval of convergence: between ' + endText(0) + ' and ' + endText(1) + ' (end points not tested)');
+    out.value = { num: R };
+    return out;
+  }
+  const verdicts = endS.map((e) => {
+    const sub = simp(subsS(S, x, e));
+    try {
+      return serAnalyze(sub, k, Math.max(a, 1));
+    } catch (err) {
+      if (err instanceof MathError || err instanceof NotAlgebraic) return { verdict: 'unknown', lines: [] };
+      throw err;
+    }
+  });
+  const word = (v) => (v.verdict === 'converges' ? (v.absolute ? 'converges (absolutely)' : 'converges (conditionally)') : v.verdict === 'diverges' ? 'diverges' : 'could not be decided');
+  verdicts.forEach((v, i) => out.work.push('at ' + x + ' = ' + endText(i) + ' (' + (i ? 'right' : 'left') + ' end): ' + word(v) + (v.test ? ' by the ' + v.test : '')));
+  const lo = verdicts[0].verdict;
+  const hi = verdicts[1].verdict;
+  if (lo === 'unknown' || hi === 'unknown') out.answer.push('interval of convergence: from ' + endText(0) + ' to ' + endText(1) + ' (an end point could not be decided)');
+  else out.answer.push('interval of convergence: ' + (lo === 'converges' ? '[' : '(') + endText(0) + ', ' + endText(1) + (hi === 'converges' ? ']' : ')'));
+  out.value = { num: R };
+  return out;
+});
+
+// ---- text pre-pass: "does the series ... converge?", "interval of convergence of ..." ---------------------------------------------------
+/** Set by convertSeriesSentence when a sentence asks about a series written with a sum sign; read at the end of normalizeText. */
+const SERIES_FLAG = { v: null };
+const SERIES_LEAD = /^\s*(?:please\s+)?(?:for\s+(?:what|which)\s+(?:values\s+of\s+)?x\s+(?:does|do|is|are|will)\s+(?:the\s+)?(?:series\s*)?)?(?:(?:determine|decide|find|test|check|state|say|show|tell\s+me)\s+)?(?:(?:whether|if|out)\s+)?(?:the\s+)?(?:(?:radius|interval)\s+of\s+convergence\s+(?:of|for)\s+|(?:absolute\s+|conditional\s+)?convergence\s+of\s+|(?:does|do|is|are|will)\s+(?:the\s+)?)?(?:infinite\s+)?(?:power\s+)?(?:series\s*)?:?\s*/i;
+const SERIES_TAIL = /\s*,?\s*(?:(?:and\s+)?(?:does\s+it\s+|is\s+it\s+|do\s+they\s+)?(?:absolutely\s+|conditionally\s+)?(?:converges?|diverges?|convergent|divergent|converging)(?:\s+(?:or|and)\s+(?:diverges?|converges?|not|divergent|convergent|absolutely|conditionally))*(?:\s+(?:absolutely|conditionally))?|for\s+(?:what|which)\s+(?:values\s+of\s+)?x(?:\s+does\s+it\s+converge)?)\s*[?.!]*\s*$/i;
+/** Called at the end of normalizeText (the text is lower case, sums are written sum(term, k, a, oo)). */
+function convertConvergenceWords(s) {
+  const kind = SERIES_FLAG.v;
+  SERIES_FLAG.v = null;
+  if (!kind) return s;
+  const m = /\bsum\s*\(/.exec(s);
+  if (!m) return s;
+  const open = m.index + m[0].length - 1;
+  const close = matchBracket(s, open, '(', ')');
+  if (close < 0) return s;
+  const parts = g3SplitArgs(s.slice(open + 1, close)).map((p) => p.trim());
+  if (parts.length !== 4 || !/^\+?\s*oo$/.test(parts[3])) return s;
+  const letters = (parts[0].match(/\b[a-z]\b/g) || []).filter((c) => c !== parts[1] && c !== 'e');
+  if (letters.length === 1 && (kind === 'radius' || letters[0] === 'x')) return 'radius(' + parts[0] + ', ' + parts[1] + ', ' + letters[0] + ', ' + parts[2] + ')';
+  if (letters.length) return s;
+  return 'convergence(' + parts[0] + ', ' + parts[1] + ', ' + parts[2] + ')';
+}
+/** "does the series 1/n^2 converge?", "\u03a3_(n=1)^\u221e n/(n^2+1) converges or diverges", "interval of convergence of \u03a3 ...": sentences about series. */
+function convertSeriesSentence(s) {
+  if (!/converg|diverg|for\s+(?:what|which)\s+(?:values\s+of\s+)?x\b/i.test(s)) return s;
+  const kind = /(?:radius|interval)\s+of\s+converg|for\s+what\s+values|for\s+which\s+x|values\s+of\s+x/i.test(s) ? 'radius' : 'conv';
+  if (/[\u2211\u03a3]|\\sum|\bsum\s*\(/.test(s)) {
+    // keep the sum itself, drop the words around it; the sum is turned into convergence(...) / radius(...) at the end of normalizeText
+    const stripped = s.replace(SERIES_TAIL, '').replace(SERIES_LEAD, '').trim();
+    if (!stripped) return s;
+    SERIES_FLAG.v = kind;
+    return stripped;
+  }
+  const rm = /(?:radius|interval)\s+of\s+converg\w*\s+(?:of|for)\s+(?:the\s+)?(?:power\s+)?(?:series\s+)?(?:sum\s+(?:of\s+)?)?(.+?)\s*[?.]*$/i.exec(s);
+  const m = rm || /series\s*:?\s*(?:of\s+|with\s+(?:general\s+)?term\s+|whose\s+general\s+term\s+is\s+|a_?n\s*=\s*)?(.+?)\s*,?\s*(?:converges?|diverges?|is\s+(?:absolutely\s+|conditionally\s+)?(?:convergent|divergent)|(?:absolutely\s+|conditionally\s+)?convergent|divergent)\b.*$/i.exec(s);
+  if (!m) return s;
+  const term = m[1].replace(/^(?:the\s+)?(?:infinite\s+)?(?:series\s+)?(?:sum\s+)?(?:of\s+)?/i, '').replace(/[?.]+$/, '').trim();
+  const letters0 = (term.match(/\b[a-z]\b/gi) || []).map((c) => c.toLowerCase());
+  const idx = ['n', 'k', 'i', 'j', 'm'].find((c) => letters0.includes(c));
+  if (!term || !idx) return s;
+  const lo = rm ? '0' : '1';
+  const letters = letters0.filter((c) => c !== idx && c !== 'e');
+  if (letters.length === 1 && letters[0] === 'x') return 'radius(' + term + ', ' + idx + ', x, ' + lo + ')';
+  if (letters.length) return s;
+  return 'convergence(' + term + ', ' + idx + ', ' + lo + ')';
+}
+// ======================================================================
+// 27. Laplace transforms with unit steps u(t - a) = heaviside(t - a) and impulses delta(t - a) = dirac(t - a): the second shifting
+//     theorem in both directions, and initial value problems whose forcing contains such terms (solved with the Laplace transform).
+// ======================================================================
+const l2IsStep = (f) => f.k === 'f' && f.fn === 'heaviside';
+const l2IsImp = (f) => f.k === 'f' && f.fn === 'dirac';
+function hasStepOrDelta(e) {
+  if (e.k === 'f' && (e.fn === 'heaviside' || e.fn === 'dirac')) return true;
+  if (e.k === '+' || e.k === '*') return e.a.some(hasStepOrDelta);
+  if (e.k === '^') return hasStepOrDelta(e.b) || hasStepOrDelta(e.e);
+  if (e.k === 'f') return e.a.some(hasStepOrDelta);
+  return false;
+}
+const l2HasImpulse = (term, t) => (term.k === '*' ? term.a : [term]).some((f) => (l2IsStep(f) || l2IsImp(f)) && !freeOf(f, t));
+/** The argument w t + c of a step or an impulse as { a: the zero, w: the slope }. */
+function l2Shift(arg, t, what) {
+  const lin = linearIn_(arg, t);
+  if (!lin || lin.a1.k !== 'n' || lin.a1.q.isZero()) throw new MathError('the argument of ' + what + ' must be linear in ' + t + ', like ' + t + ' - 2');
+  return { a: simp(sDiv(sNeg(lin.a0), lin.a1)), w: lin.a1.q };
+}
+/** One product term that contains u(t - a) or delta(t - a): c \u00b7 e^(-a s) ... */
+function laplaceImpulseTerm(term, t, s) {
+  const fs = term.k === '*' ? term.a : [term];
+  const steps = fs.filter((f) => l2IsStep(f) && !freeOf(f, t));
+  const dirs = fs.filter((f) => l2IsImp(f) && !freeOf(f, t));
+  const rest = fs.filter((f) => !steps.includes(f) && !dirs.includes(f));
+  const delay = (a) => sExp(sNeg(sMul([a, sV(s)])));
+  if (dirs.length > 1) throw new MathError('a product of two delta functions has no transform');
+  if (dirs.length === 1) {
+    const { a, w } = l2Shift(dirs[0].a[0], t, 'delta');
+    const aNum = a.k === 'n' ? a.q : null;
+    if (aNum && aNum.sign() < 0) return S0;
+    const val = simp(subsS(sMul(rest.concat(steps)), t, a));
+    return sMul([val, sN(w.abs().inv()), delay(a)]);
+  }
+  const shifts = steps.map((f) => {
+    const sh = l2Shift(f.a[0], t, 'u');
+    if (sh.w.sign() < 0) throw new MathError('write the step as u(t - a), with t having a positive coefficient');
+    return sh.a;
+  });
+  const live = shifts.filter((a) => !(a.k === 'n' && a.q.sign() <= 0));
+  if (live.length > 1 && live.some((a) => a.k !== 'n')) throw new MathError('products of several steps with symbolic positions are not supported');
+  const a = live.length ? live.reduce((m, q) => (q.k === 'n' && m.k === 'n' && q.q.sub(m.q).sign() > 0 ? q : m)) : null;
+  const base = rest.length ? sMul(rest) : S1;
+  if (!a) return laplaceTransformS(base, t, s);
+  const shifted = simp(expandS(subsS(base, t, sAdd([sV(t), a]))));
+  return sMul([laplaceTransformS(shifted, t, s), delay(a)]);
+}
+
+/** Inverse Laplace transform of F(s) that may contain delays e^(-a s) and improper parts (impulses). */
+function inverseLaplaceFull(F, s, t) {
+  const g = expandS(F);
+  const T = sV(t);
+  let total = S0;
+  const inv = (rat) => {
+    const rf = toRFS(rat, s);
+    const ap = apartRF(rf);
+    let f = S0;
+    ap.terms.forEach((tm) => { f = sAdd([f, ilaplaceTerm(tm, s, t)]); });
+    let delta = S0;
+    ap.poly.forEach((c, i) => {
+      if (c.isZero()) return;
+      if (i > 0) throw new MathError('a polynomial in s of degree \u2265 1 would give derivatives of the delta function; this is not supported');
+      delta = sN(c);
+    });
+    return { f, delta };
+  };
+  for (const tm of termsOf(g)) {
+    const fs = tm.k === '*' ? tm.a : [tm];
+    let delay = S0;
+    const cst = [];
+    const rat = [];
+    for (const f of fs) {
+      if (f.k === '^' && isConstE(f.b) && !freeOf(f.e, s)) {
+        const lin = linearIn_(f.e, s);
+        if (!lin || !zeroS(simp(lin.a0))) throw new MathError('only delays e^(-a s) can be inverted (no e^(s) or other exponents of s)');
+        delay = sSub(delay, lin.a1);
+      } else if (freeOf(f, s)) cst.push(f);
+      else rat.push(f);
+    }
+    const a = simp(delay);
+    const av = varsOfS(a).size ? NaN : numS(a, {});
+    if (isNaN(av) || av < 0) throw new MathError('only delays e^(-a s) with a \u2265 0 (a number such as 2 or \u03c0) can be inverted');
+    const c = cst.length ? sMul(cst) : S1;
+    const zeroDelay = Math.abs(av) < 1e-14;
+    if (!rat.length) {
+      total = sAdd([total, sMul([c, sFn('dirac', [sSub(T, a)])])]);
+      continue;
+    }
+    const { f, delta } = inv(simp(expandS(sMul(rat))));
+    let piece = f;
+    if (!zeroDelay) piece = sMul([simp(subsS(f, t, sSub(T, a))), sFn('heaviside', [sSub(T, a)])]);
+    total = sAdd([total, sMul([c, piece])]);
+    if (!isNumVal(delta, 0)) total = sAdd([total, sMul([c, delta, sFn('dirac', [sSub(T, a)])])]);
+  }
+  return total;
+}
+/** Does F(s) contain a delay, or is it an improper rational function? Then the plain inverse cannot be used. */
+function needsFullInverse(F, s) {
+  const has = (e) => {
+    if (e.k === '^' && isConstE(e.b) && !freeOf(e.e, s)) return true;
+    if (e.k === '+' || e.k === '*') return e.a.some(has);
+    if (e.k === '^') return has(e.b) || has(e.e);
+    if (e.k === 'f') return e.a.some(has);
+    return false;
+  };
+  if (has(F)) return true;
+  try {
+    const rf = toRFS(expandS(F), s);
+    return rf.n.length >= rf.d.length;
+  } catch (e) {
+    return false;
+  }
+}
+
+/** Constant-coefficient linear ODE  sum c_k y^(k) = rhs(x)  with a step / impulse forcing: general solution with C1 = y(0), C2 = y'(0), ... */
+function odeViaLaplace(cs, rhs, x, consts) {
+  const n = cs.length - 1;
+  const sName = x === 's' ? 'p' : 's';
+  const Ps = polyToS(cs, sName);
+  let ic = S0;
+  for (let k = 1; k <= n; k++) {
+    for (let j = 0; j < k; j++) ic = sAdd([ic, sMul([sN(cs[k]), sPow(sV(sName), sI(k - 1 - j)), sV('C' + (j + 1))])]);
+  }
+  for (let j = 0; j < n; j++) consts.push('C' + (j + 1));
+  const G = laplaceTransformS(rhs, x, sName);
+  const Y = sDiv(sAdd([G, ic]), Ps);
+  return { y: simp(expandS(inverseLaplaceFull(Y, sName, x))), Y, sName };
+}
+
+// ---- text pre-pass: u(t - 2), H(t - 2), step(t - 2), delta(t - 2) ------------------------------------------------------------------
+/** In a Laplace / differential-equation problem u(...), H(...), \u03b8(...) and step(...) are unit steps and \u03b4(...) / delta(...) are impulses. */
+function convertStepNotation(s) {
+  if (!/[uH\u03b8]\s*\(|step\s*\(|delta\s*\(|\u03b4\s*\(|heaviside|dirac|unitstep/i.test(s)) return s;
+  const context = /laplace|['\u2032]|\bd[a-z]\s*\/\s*d[a-z]|\bode\b|differential/i.test(s);
+  s = s.replace(/\u03b4\s*\(/g, 'dirac(').replace(/\bdelta\s*\(/gi, context ? 'dirac(' : 'delta(');
+  if (context) s = s.replace(/(^|[^A-Za-z])[uH\u03b8]\s*\(/g, '$1heaviside(').replace(/\b(?:step|unitstep)\s*\(/gi, 'heaviside(');
+  return s;
+}
+
+/** sin(b t + c) and cos(b t + c) with a constant phase c are rewritten with the angle-sum formulas (so that the table applies). */
+function expandPhase(e, t) {
+  const walk = (x) => {
+    if (x.k === 'f' && (x.fn === 'sin' || x.fn === 'cos') && x.a.length === 1 && !freeOf(x.a[0], t)) {
+      const lin = linearIn_(x.a[0], t);
+      if (lin && !zeroS(simp(lin.a0)) && !zeroS(simp(lin.a1))) {
+        const u = simp(sMul([lin.a1, sV(t)]));
+        const c = lin.a0;
+        return x.fn === 'sin'
+          ? sAdd([sMul([sFn('sin', [u]), sFn('cos', [c])]), sMul([sFn('cos', [u]), sFn('sin', [c])])])
+          : sSub(sMul([sFn('cos', [u]), sFn('cos', [c])]), sMul([sFn('sin', [u]), sFn('sin', [c])]));
+      }
+    }
+    if (x.k === '+' || x.k === '*' || x.k === '^' || x.k === 'f') return mapS(x, walk);
+    return x;
+  };
+  return walk(e);
 }
 
 // ======================================================================

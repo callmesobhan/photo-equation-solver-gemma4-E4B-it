@@ -769,6 +769,8 @@ function convertApplied(s) {
   s = convertChem2(s);
   s = convertGeometry3d(s);
   s = convertPlot2(s);
+  s = convertSeriesSentence(s);
+  s = convertStepNotation(s);
   s = s.replace(/\bbalance\s*(?:the\s+)?(?:equation|reaction)?\s*[:(]?\s*([A-Za-z0-9()\[\]·+ ]+?(?:->|=>|→|⟶|⇌|=)[A-Za-z0-9()\[\]·+ ]+?)\s*(?:\)\s*)?(?=$|[;\n])/gi, (m, rxn) => 'balance(' + chemIndex(rxn.trim().replace(/\)$/, '')) + ')');
   // a bare reaction such as "H2 + O2 -> H2O": every term a real formula and the same elements on both sides
   s = s.replace(/^\s*([A-Za-z0-9()\[\]·+ ]+?)\s*(?:->|=>|→|⟶|⇌)\s*([A-Za-z0-9()\[\]·+ ]+?)\s*$/, (m, lhs, rhs) => {

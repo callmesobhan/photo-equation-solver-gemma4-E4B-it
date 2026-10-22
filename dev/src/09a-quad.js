@@ -132,10 +132,25 @@ function integrateNumeric(S, x, a, b) {
     const r = tanhSinh(g, lo, hi);
     if (r.ok && isFinite(r.value)) return { value: r.value, ok: true };
     // not converged: is it growing (divergent) or just slowly convergent?
-    const trunc = (R) => (isFinite(a) ? tanhSinh(f, a, R) : isFinite(b) ? tanhSinh(f, -R, b) : tanhSinh(f, -R, R)).value;
-    const i4 = trunc(1e4);
-    const i6 = trunc(1e6);
-    const grows = !isFinite(i6) || Math.abs(i6 - i4) > 0.05 * (1 + Math.abs(i4));
+    // A numerical "diverges" is only claimed when the integrand clearly decays more slowly than 1/x (x^(-1/2), constant, growing); slowly
+    // convergent tails such as x^(-11/10) or ln(x)^3 x^(-11/10) cannot be told from divergent ones numerically, and the exact
+    // antiderivative decides those.
+    let grows = false;
+    const slope = (sgn, x0) => {
+      const f1 = f(sgn * x0);
+      const f2 = f(sgn * x0 * 10);
+      if ((f1 === Infinity && f2 === Infinity) || (isFinite(f1) && f1 > 0 && f2 === Infinity)) return -1e9; // overflow: grows exponentially
+      if (!isFinite(f1) || !isFinite(f2) || f1 === 0 || f2 === 0 || f1 * f2 < 0) return NaN;
+      return -(Math.log(Math.abs(f2)) - Math.log(Math.abs(f1))) / Math.LN10;
+    };
+    const tails = [];
+    if (isFinite(a)) tails.push([1, Math.max(1, Math.abs(a))]);
+    else if (isFinite(b)) tails.push([-1, Math.max(1, Math.abs(b))]);
+    else tails.push([1, 1], [-1, 1]);
+    tails.forEach(([sgn, base]) => {
+      const sl = [1e5, 1e6, 1e7].map((m) => slope(sgn, base * m));
+      if (sl.every((v) => isFinite(v) && v <= 0.7)) grows = true;
+    });
     return { value: r.value, ok: false, diverges: grows, inconclusive: !grows, note: grows ? 'the integral grows without bound' : 'the numerical method converged too slowly' };
   }
   if (endpointDiverges(f, a, b)) return { value: Infinity, ok: false, diverges: true, note: 'the integrand is not integrable at an endpoint' };

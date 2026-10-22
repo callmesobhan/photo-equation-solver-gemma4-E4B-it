@@ -24,6 +24,7 @@ function linearIn_(g, t) {
 }
 /** One product term c·t^n·e^(a t)·(trig or nothing) -> its Laplace transform in s. */
 function laplaceTerm(term, t, s) {
+  if (l2HasImpulse(term, t)) return laplaceImpulseTerm(term, t, s);
   const fs = term.k === '*' ? term.a : [term];
   const consts = [];
   let n = 0;
@@ -40,7 +41,16 @@ function laplaceTerm(term, t, s) {
       consts.push(sExp(lin.a0));
     } else if (f.k === 'f' && (f.fn === 'sin' || f.fn === 'cos') && !trig) {
       const lin = linearIn_(f.a[0], t);
-      if (!lin || !zeroS(simp(lin.a0)) || zeroS(simp(lin.a1))) throw new MathError('only sin(bt) and cos(bt) are supported (no phase shift); write sin(t + c) as an expanded sum');
+      if (lin && !zeroS(simp(lin.a0)) && !zeroS(simp(lin.a1))) {
+        // a constant phase: sin(bt + c) = sin(bt) cos(c) + cos(bt) sin(c),  cos(bt + c) = cos(bt) cos(c) - sin(bt) sin(c)
+        const u = sMul([lin.a1, sV(t)]);
+        const others = fs.filter((q) => q !== f);
+        const mk = (fn) => sMul(others.concat([sFn(fn, [u])]));
+        const c = lin.a0;
+        const parts = f.fn === 'sin' ? [[sFn('cos', [c]), mk('sin')], [sFn('sin', [c]), mk('cos')]] : [[sFn('cos', [c]), mk('cos')], [sNeg(sFn('sin', [c])), mk('sin')]];
+        return sAdd(parts.map(([k, tm]) => sMul([k, laplaceTerm(tm, t, s)])));
+      }
+      if (!lin || zeroS(simp(lin.a1))) throw new MathError('only sin(bt) and cos(bt) are supported, where b does not depend on t');
       trig = { fn: f.fn, b: lin.a1 };
     } else throw new MathError('I cannot transform the factor ' + fmtS(f) + ' (supported: powers of t, e^(at), sin(bt), cos(bt), sums and constants)');
   }
@@ -211,7 +221,7 @@ defCmd('ilaplace inverselaplace', (n) => {
   const s = n.args[1] ? varOfArg(n.args[1]) : singleVarOf(F, 's');
   const t = n.args[2] ? varOfArg(n.args[2]) : s === 't' ? 'x' : 't';
   const out = newOut();
-  const f = simp(expandS(inverseLaplaceS(F, s, t)));
+  const f = simp(expandS(needsFullInverse(F, s) ? inverseLaplaceFull(F, s, t) : inverseLaplaceS(F, s, t)));
   out.answer.push('L⁻¹{' + fmtS(F) + '} = ' + fmtS(f));
   out.work.push('Partial fractions of F(s), then the table entries 1/(s−a)ⁿ, (s−a)/((s−a)²+b²), b/((s−a)²+b²)');
   try {

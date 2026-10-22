@@ -283,6 +283,8 @@ defCmd('vartest chisqvartest', (n) => {
 defCmd('ftest2 variancetest', (n) => {
   needArgs(n, 4, 4, 'the sample standard deviations and sizes: ftest2(s1, n1, s2, n2)');
   const [s1, n1, s2, n2] = n.args.map(numArg);
+  if (!(s1 > 0) || !(s2 > 0)) throw new MathError('the standard deviations must be positive');
+  if (!(n1 >= 2) || !(n2 >= 2)) throw new MathError('each sample needs at least 2 values');
   const F = (s1 * s1) / (s2 * s2);
   const cdf = fCdf(F, n1 - 1, n2 - 1);
   const out = newOut();

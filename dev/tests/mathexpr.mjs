@@ -4,6 +4,7 @@ const SUP = '⁰¹²³⁴⁵⁶⁷⁸⁹';
 const FUNCS = {
   sin: Math.sin, cos: Math.cos, tan: Math.tan, sec: (v) => 1 / Math.cos(v), csc: (v) => 1 / Math.sin(v), cot: (v) => 1 / Math.tan(v),
   asin: Math.asin, acos: Math.acos, atan: Math.atan, arcsin: Math.asin, arccos: Math.acos, arctan: Math.atan,
+  heaviside: (v) => (v > 0 ? 1 : v < 0 ? 0 : 0.5), u: (v) => (v > 0 ? 1 : v < 0 ? 0 : 0.5), dirac: () => 0, // delta terms are checked separately
   erf, sinh: Math.sinh, cosh: Math.cosh, tanh: Math.tanh, ln: Math.log, log: Math.log10, log2: Math.log2, log10: Math.log10, exp: Math.exp, sqrt: Math.sqrt, abs: Math.abs, cbrt: Math.cbrt,
 };
 function erf(x) {
@@ -24,7 +25,7 @@ function erf(x) {
 function tokenize(s) {
   const toks = [];
   let i = 0;
-  s = s.replace(/−/g, '-').replace(/·/g, '*').replace(/×/g, '*').replace(/÷/g, '/').replace(/π/g, 'pi');
+  s = s.replace(/δ′*/g, 'dirac').replace(/−/g, '-').replace(/·/g, '*').replace(/×/g, '*').replace(/÷/g, '/').replace(/π/g, 'pi');
   while (i < s.length) {
     const c = s[i];
     if (/\s/.test(c)) { i++; continue; }

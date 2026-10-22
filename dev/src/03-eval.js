@@ -153,6 +153,9 @@ function callNum(fn, a) {
     case 'abs': return Math.abs(x);
     case 'floor': return Math.floor(x);
     case 'ceil': return Math.ceil(x);
+    case 'heaviside': return x > 0 ? 1 : x < 0 ? 0 : 0.5;
+    case 'dirac': return x === 0 ? Infinity : 0;
+    case 'dirac1': case 'dirac2': case 'dirac3': return x === 0 ? Infinity : 0;
     default: throw new MathError('unknown function ' + fn);
   }
 }

@@ -32,9 +32,10 @@ Everything runs on the phone. `scripts/index.html` is a single self-contained fi
 | **Equations** | linear, quadratic, any polynomial, rational, radical, exponential, logarithmic, trigonometric, absolute value; systems (exact when linear); inequalities; `2x^2 - 5x + 3 = 0`, `x + y = 7; x^2 + y^2 = 25`, `x^2 - 5x + 6 >= 0` |
 | **Formulas** | solve for any letter: `v = u + a*t` (t), `d = v*t + a*t^2/2` (t), `1/f = 1/u + 1/v` (v), `A = P*e^(r*t)` (t) |
 | **Calculus** | `integrate(f, x)` (checked by differentiating), definite and improper integrals, `diff(f, x, n)`, `limit(f, x, a)` (one-sided, at infinity), `taylor`, `sum` / `product` (finite and infinite, convergence reported); **applications**: `tangent`, `critical` (extrema, absolute max/min on an interval), `analyze` (domain, intercepts, asymptotes, increasing/decreasing, inflection, concavity), `areabetween`, `volumerev`, `shells`, `arclength`, `avgvalue`, `newton`, `implicit`, `inversefunction` |
-| **Differential equations** | first order: linear, separable (explicit when possible, e.g. logistic), Bernoulli, homogeneous, exact / integrating factor, `M dx + N dy = 0`; linear with constant coefficients of any order with forcing (undetermined coefficients, or variation of parameters for `tan`, `sec`, `ln`, `1/x`...); Euler–Cauchy `x²y'' + xy' + y = 0`; systems of 2-3 equations (repeated eigenvalues too); initial conditions; **Laplace** `laplace(f, t)`, `ilaplace(F, s)`. Every solution is substituted back into the equation |
+| **Differential equations** | first order: linear, separable (explicit when possible, e.g. logistic), Bernoulli, homogeneous, exact / integrating factor, `M dx + N dy = 0`; linear with constant coefficients of any order with forcing (undetermined coefficients, or variation of parameters for `tan`, `sec`, `ln`, `1/x`...); Euler–Cauchy `x²y'' + xy' + y = 0`; systems of 2-3 equations (repeated eigenvalues too); initial conditions; **Laplace** `laplace(f, t)`, `ilaplace(F, s)` (also with unit steps `u(t-a)` and impulses `delta(t-a)`, and equations such as `y'' + y = u(t-pi)` with such forcing). Every solution is substituted back into the equation |
 | **Curves and vectors** | `paramdiff`, `paramlength`, `paramarea`, `polararea`, `polarlength`, `polarslope`, coordinate conversions (`topolar`, `tospherical`, ...), `velocity`, `curvature`, `tnb` (T, N, B, curvature, torsion), `lineintegral`, `potential` |
 | **Numerical methods** | `euler` / `heun` / `rk4` for y' = f(x, y) (exact fractions, compared with the exact solution), `trapezoid` / `simpson` / `midpointrule` / `riemann` with error bounds, `bisection`, `secant`, `falseposition`, `fixedpoint`, `interpolate`, `spline`, `polyfit`, `difftable`, `numdiff` |
+| **Series** | `convergence(n^2/2^n, n)`: converges absolutely / conditionally or diverges, with the test that decides (term, geometric, ratio, root, p-series comparison, integral, alternating); `radius((x-2)^n/(n*3^n), n, x, 1)`: radius and interval of convergence with both end points tested; written as sentences too ("Does the series Σ 1/n^2 converge?") |
 | **Several variables** | `grad`, `hessian`, `jacobian`, `divergence`, `curl`, `directional`, `tangentplane`, critical points of `f(x, y)` with the second-derivative test, `lagrange` multipliers, double and triple integrals as nested `integrate(...)` |
 | **Linear programming** | `maximize 3x + 2y subject to x + y <= 4, x, y >= 0` (up to 4 variables; exact corner points, unbounded/infeasible detection, integer programs) |
 | **Algebra** | `factor`, `expand`, `simplify`, `apart` (partial fractions), `gcd`/`lcm`, polynomial division, exact radicals |
@@ -54,7 +55,7 @@ Everything runs on the phone. `scripts/index.html` is a single self-contained fi
 Not supported: word problems (the model has to turn them into an equation or command
 first), differential equations beyond the types above (partial differential equations,
 non-linear equations of order 2 and up, non-constant coefficients other than the Euler form,
-forced or non-constant systems), step and delta functions in Laplace transforms, symbolic
+forced or non-constant systems), symbolic
 integration of functions with no closed form (the answer says so and gives a numeric value
 for definite integrals), 3-D graphs.
 
@@ -147,7 +148,7 @@ photo-equation-solver/
 
 Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
 
-- 640 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
+- 668 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
   geometry, units, chemistry, finance, graphs, differential equations, messy transcriptions, errors)
 - calculus against **sympy** and **scipy**: 146 antiderivatives (each also verified by differentiating),
   42 definite/improper integrals, 43 limits, 22 sums, 593 random symbolic expressions
@@ -168,7 +169,9 @@ Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
   stoichiometry, acids and bases, gas laws, amortization schedules, bonds and depreciation: about 350 more;
   planes, lines, spheres and quadric surfaces in space against sympy.geometry and numpy: about 160 per seed;
   the numbers behind the new pictures (slope fields, fits, histograms, box plots, shaded areas, regions) against numpy / scipy: about 130 per seed;
-  every new picture type decoded in real Chromium and checked to contain its drawing
+  every new picture type decoded in real Chromium and checked to contain its drawing;
+  series verdicts and power-series intervals for ~190 families per seed whose behaviour is known from theory;
+  Laplace transforms and differential equations with unit steps and impulses against quadrature, mpmath and scipy: 117 checks per seed
 - property tests against Python `Fraction` and `numpy.roots`; fuzzing with random garbage and with
   every command called with random arguments (tens of thousands of calls): no crash, no hang, no `NaN`
 - the page loaded in real Chromium with the network disabled, called exactly like the app

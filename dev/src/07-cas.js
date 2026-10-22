@@ -440,6 +440,14 @@ function signInfo(e) {
 function sFn(fn, args) {
   const a = args[0];
   const num = a.k === 'n' ? a.q : null;
+  if (fn === 'heaviside' || fn === 'dirac' || /^dirac\d+$/.test(fn)) {
+    // an argument without letters (2 - 5, π - 3 ...) has a definite sign
+    let v = null;
+    if (num) v = num.toNumber();
+    else if (a.k !== 'v' && !varsOfS(a).size) v = numS(a, {});
+    if (v !== null && isFinite(v) && Math.abs(v) > 1e-12) return fn === 'heaviside' ? (v > 0 ? S1 : S0) : S0;
+    if (v !== null && num && num.isZero() && fn === 'heaviside') return sN(new Q(1n, 2n));
+  }
   switch (fn) {
     case 'sin': case 'tan': case 'cot':
     case 'sinh': case 'tanh': case 'asin': case 'atan': {
@@ -659,8 +667,11 @@ function dfn(fn, u) {
     case 'tanh': return sPow(sFn('cosh', [u]), sI(-2));
     case 'ln': return sPow(u, SM1);
     case 'abs': return sDiv(u, sFn('abs', [u]));
+    case 'heaviside': return sFn('dirac', [u]);
     case 'erf': return sMul([sDiv(sI(2), sSqrt(S_PI)), sExp(sNeg(sPow(u, sI(2))))]);
-    default: throw new MathError('cannot differentiate ' + fn);
+    default:
+      if (fn === 'dirac' || /^dirac\d+$/.test(fn)) return sFn('dirac' + ((Number(fn.slice(5)) || 0) + 1), [u]);
+      throw new MathError('cannot differentiate ' + fn);
   }
 }
 function diffS(e, x) {
@@ -707,7 +718,7 @@ function nthDiff(e, x, n) {
 // ---- conversion from the parser's AST ----------------------------------------------------------
 const AST_FN = {
   sin: 'sin', cos: 'cos', tan: 'tan', cot: 'cot', sec: 'sec', csc: 'csc', asin: 'asin', acos: 'acos',
-  atan: 'atan', sinh: 'sinh', cosh: 'cosh', tanh: 'tanh', ln: 'ln', abs: 'abs', erf: 'erf',
+  atan: 'atan', sinh: 'sinh', cosh: 'cosh', tanh: 'tanh', ln: 'ln', abs: 'abs', erf: 'erf', heaviside: 'heaviside', dirac: 'dirac',
 };
 function fromAst(n) {
   switch (n.t) {
@@ -808,7 +819,7 @@ function rfToS(r, x) {
 }
 
 // ---- printing ------------------------------------------------------------------------------------------
-const FN_LABEL = { asin: 'arcsin', acos: 'arccos', atan: 'arctan', zeta: 'ζ' };
+const FN_LABEL = { asin: 'arcsin', acos: 'arccos', atan: 'arctan', zeta: 'ζ', heaviside: 'u', dirac: 'δ' };
 /** True when the whole string is a single parenthesised group "( ... )". */
 function isWrapped(s) {
   if (s[0] !== '(' || s[s.length - 1] !== ')') return false;
@@ -830,7 +841,7 @@ function fmtS(e, ascii) {
       if (!out) out = p;
       else if (ascii) out += '*' + p;
       else if (/[0-9]$/.test(out) && /^[0-9]/.test(p)) out += '·' + p;
-      else if ((/^[A-Za-z]{2,}/.test(p) || /^e(\^|$)/.test(p)) && /[A-Za-zπ)²³¹⁰-⁹⁻|]$/.test(out)) out += ' ' + p;
+      else if ((/^[A-Za-z]{2,}/.test(p) || /^e(\^|$)/.test(p) || /^[uδ]\(/.test(p)) && /[A-Za-zπ)²³¹⁰-⁹⁻|]$/.test(out)) out += ' ' + p;
       else if (/[A-Za-z]\d+$/.test(out) && /^[A-Za-z(]/.test(p)) out += ' ' + p;
       else if (/^[A-Za-z]{2,}/.test(p) && /[0-9]$/.test(out)) out += ' ' + p;
       else out += (/[0-9A-Za-zπ)²³¹⁰-⁹⁻|]$/.test(out) && /^[A-Za-zπλθμσφωαβγδ√(|]/.test(p) ? '' : '·') + p;
@@ -903,7 +914,8 @@ function fmtS(e, ascii) {
       }
       default: {
         if (t.fn === 'abs') return ascii ? 'abs(' + go(t.a[0]) + ')' : '|' + go(t.a[0]) + '|';
-        const name = ascii ? t.fn : FN_LABEL[t.fn] || t.fn;
+        if (t.fn === 'fact') return (t.a[0].k === 'v' || (t.a[0].k === 'n' && t.a[0].q.isInt() && t.a[0].q.sign() >= 0) ? go(t.a[0]) : '(' + go(t.a[0]) + ')') + '!';
+        const name = ascii ? t.fn : FN_LABEL[t.fn] || (/^dirac\d+$/.test(t.fn) ? 'δ' + '′'.repeat(Number(t.fn.slice(5))) : t.fn);
         return name + '(' + t.a.map(go).join(', ') + ')';
       }
     }

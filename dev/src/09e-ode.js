@@ -372,7 +372,13 @@ function solveODEStatements(sts) {
   out.work.push('Type: ' + (linear ? 'linear' : 'non-linear') + ' differential equation of order ' + n);
   if (linear) {
     const isConstCoef = cks.every((c) => freeOf(c, x) && c.k === 'n');
-    if (n === 1) {
+    if (isConstCoef && hasStepOrDelta(g)) {
+      // a unit step u(t - a) or an impulse delta(t - a) in the forcing: Laplace transform with the initial values as constants
+      const lv = odeViaLaplace(cks.map((c) => c.q), simp(sNeg(g)), x, consts);
+      sol = lv.y;
+      out.work.push('Forcing with steps / impulses: Laplace transform, Y(' + lv.sName + ') = ' + fmtS(simp(lv.Y)).slice(0, 300) + ';  then the inverse transform with the shifts e^(−a·' + lv.sName + ') → u(' + x + ' − a)');
+      if (!ics.length) out.notes.push('C1 = y(0)' + (n > 1 ? ', C2 = y\'(0)' + (n > 2 ? ', ...' : '') : '') + ' (the initial values at ' + x + ' = 0).');
+    } else if (n === 1) {
       const a1 = cks[1];
       const p = simp(sDiv(cks[0], a1));
       const q = simp(sDiv(sNeg(g), a1));
