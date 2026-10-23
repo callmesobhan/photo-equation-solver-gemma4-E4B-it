@@ -322,7 +322,7 @@ function askFirst(out) {
 }
 
 // ---- the rules --------------------------------------------------------------------------------------------------------------------------
-const W_LEAD = /^\s*(?:please\s+|pls\s+|kindly\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:help\s+me\s+(?:to\s+)?)?(?:tell\s+me\s+)?(?:i\s+(?:want|need)\s+(?:to\s+)?)?(?:(?:find|calculate|calc|compute|determine|evaluate|work\s+out|get|give\s+me|show\s+me|what\s*(?:'s|is|are)|whats|how\s+(?:much|many)\s+is|how\s+(?:long|far|big|tall|wide|large)\s+(?:is|are))\s+(?:me\s+)?)?(?:(?:the|a|an)\s+)?(?:value\s+of\s+)?/i;
+const W_LEAD = /^\s*(?:please\s+|pls\s+|kindly\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:help\s+me\s+(?:to\s+)?)?(?:tell\s+me\s+)?(?:i\s+(?:want|need)\s+(?:to\s+)?)?(?:(?:find|calculate|calc|compute|determine|evaluate|work\s+out|get|give\s+me|show\s+me|what\s*(?:'s|is|are)|whats|how\s+(?:much|many)\s+is|how\s+(?:long|far|big|tall|wide|large)\s+(?:is|are))\s+(?:me\s+)?)?(?:(?:the|a|an)\s+(?![=<>+\-*/^]))?(?:value\s+of\s+)?/i;
 const W_ORD = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6 };
 const wOrd = (t) => (t == null || t === '' ? 1 : W_ORD[t.toLowerCase()] || parseInt(t, 10));
 const wCall = (name, ...args) => name + '(' + args.filter((a) => a != null).join(', ') + ')';
@@ -500,6 +500,30 @@ function wRepeating(t) {
   return 'repeatdec(' + (ip || '0') + ', ' + (pre ? String(BigInt(pre)) : '0') + ', ' + pre.length + ', ' + String(BigInt(rep)) + ', ' + rep.length + ')';
 }
 
+/** "F = m*a with m = 5 and a = 2, find F", "y = 2x + 1 when x = 3": the values are put in place of the letters. */
+function wSubstitution(s) {
+  const VAL = '(?:\\[[^\\]]*\\]|-?\\d+(?:\\.\\d+)?(?:e-?\\d+)?(?:\\s*/\\s*\\d+)?%?)';
+  let m = new RegExp('^(.+?)\\s*,?\\s*\\b(?:where|with|given\\s+that|given|when|if|for|using)\\s+((?:[A-Za-z]\\s*=\\s*' + VAL + '(?:\\s*(?:,|and|;)\\s*)?)+)\\s*(?:,?\\s*(?:find|solve\\s+for|what\\s+is|calculate|compute|determine|evaluate)\\s+[A-Za-z]\\w*)?\\s*[?.]?$', 'i').exec(s);
+  // "v = u + a*t, u = 3, a = 2, t = 4": an equation for one letter followed by the values of the others
+  if (!m) m = new RegExp('^([A-Za-z]\\s*=\\s*[^=]+?)\\s*[,;]\\s*((?:[A-Za-z]\\s*=\\s*' + VAL + '(?:\\s*(?:,|and|;)\\s*)?)+)\\s*(?:,?\\s*(?:find|solve\\s+for|what\\s+is|calculate|compute|determine|evaluate)\\s+[A-Za-z]\\w*)?\\s*[?.]?$', 'i').exec(s);
+  if (!m) return null;
+  const first = m[1].replace(/^(?:find|calculate|compute|determine|evaluate|what\s+is)\s+/i, '').trim();
+  const stripped = first.replace(/\b(?:sin|cos|tan|cot|sec|csc|asin|acos|atan|arcsin|arccos|arctan|ln|log|exp|sqrt|abs|pi|det|inv|dot|cross|norm)\b/gi, '');
+  if (/[A-Za-z]{2,}/.test(stripped) || !/[A-Za-z]/.test(stripped)) return null;
+  const vals = new Map();
+  m[2].replace(new RegExp('([A-Za-z])\\s*=\\s*(' + VAL + ')', 'g'), (x, name, v) => { vals.set(name, v.replace(/\s+/g, '')); return x; });
+  if (!vals.size) return null;
+  const lhs = /^([A-Za-z])\s*=/.exec(first);
+  if (lhs && vals.has(lhs[1])) return null;
+  let out = first;
+  let used = 0;
+  vals.forEach((v, name) => {
+    const rx = new RegExp('(?<![A-Za-z_])' + name + '(?![A-Za-z0-9_(])', 'g');
+    out = out.replace(rx, () => { used++; return '(' + v + ')'; });
+  });
+  return used ? out : null;
+}
+
 /** One line, whole-line patterns. Returns the replacement text or null. */
 function wRules(s) {
   let m;
@@ -508,6 +532,8 @@ function wRules(s) {
   if (pr) return pr;
   const st = wSetSentence(s);
   if (st) return st;
+  const sub = wSubstitution(s);
+  if (sub) return sub;
 
   // ---- arc length of a circle sector given the radius and the angle
   if ((m = /^(?:(?:the|a|an)\s+)?arc\s+length\s+(?:with|for|if|when|given)\s+(.*\bradius\b.*\bangle\b.*)$/i.exec(s))) return wRules('arc length of a sector with ' + m[1]);
@@ -1328,6 +1354,10 @@ function wFunctions(s) {
 const W_WORDY = /\b(?:plus|minus|times|multiplied|divided|over|squared|cubed|power|root|equals?|percent|per\s*cent|less\s+than|greater\s+than|at\s+least|at\s+most|twice|half|negative|sum\s+of|product\s+of|difference)\b/i;
 function convertWordLine(line) {
   const s0 = line.trim().replace(/\s+/g, ' ');
+  if (s0.length >= 4 && s0.length <= 400 && !/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|…|[∪∩⊂⊆×Δ]|\bP\s*\(/.test(s0) && /[,;]\s*[A-Za-z]\s*=/.test(s0)) {
+    const sub = wSubstitution(s0.replace(/\s*[?!.]+$/, ''));
+    if (sub) return sub;
+  }
   if (s0.length < 4 || s0.length > 400 || !/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|…|[∪∩⊂⊆×Δ]|\bP\s*\(/.test(s0)) return line;
   const s = s0.replace(/\s*[?!]+$/, '').replace(/\s*(?<!\.)\.$/, '');
   const lead = s.replace(W_LEAD, '');
@@ -1348,7 +1378,7 @@ function convertWordLine(line) {
   return line;
 }
 function convertWords(raw) {
-  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|…|[∪∩⊂⊆×Δ]|\bP\s*\(/.test(raw)) return raw;
+  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|…|[∪∩⊂⊆×Δ]|\bP\s*\(/.test(raw) && !/[,;]\s*[A-Za-z]\s*=/.test(raw)) return raw;
   return raw.split('\n').map(convertWordLine).join('\n');
 }
 

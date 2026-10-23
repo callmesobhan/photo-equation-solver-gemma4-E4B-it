@@ -369,14 +369,39 @@ function degreesToPi(a) {
   return '(' + (q.n === 1n ? '' : q.n + '*') + 'pi' + (q.d === 1n ? '' : '/' + q.d) + ')';
 }
 
+/** Things a photo of a worksheet adds around the maths: "Q3.", "Problem 2:", "(a)", "1)", bullets, **bold**, "(solve for x)", "=> x = ?". */
+function stripPrintedNoise(raw) {
+  return raw.split('\n').map((line) => {
+    let t = line.replace(/(^|\s)(\*\*|__)([^*_\s][^*_\n]*?)\2(?=\s|$|[:.,;])/g, '$1$3').replace(/`/g, '').replace(/^\s*#{1,6}\s+/, '').replace(/^\s*[*\u2022\u25aa\u25cf]\s+(?=\S)/, '');
+    for (let guard = 0; guard < 2; guard++) {
+      const before = t;
+      t = t
+        .replace(/^\s*(?:problem|question|exercise|example|exercice|prob|ex|eg|q|no|number|task|item)\s*\.?\s*#?\s*\d+\s*[a-z]?\s*[.:)]\s*/i, '')
+        .replace(/^\s*(?:problem|question|exercise|example|prob|ex|q|no|task|item)\s*\.?\s*#?\s*\d+\s+(?=[A-Za-z\\$\u221a\u222b\u2211(\[|-])/i, '')
+        .replace(/^\s*\(([a-z]|[ivx]{1,4})\)\s+(?=[A-Za-z0-9\\$\u221a\u222b\u2211\u220f(\[|]|-\S)/i, '')
+        .replace(/^\s*\((\d{1,2})\)\s+(?=[A-Za-z0-9\\$\u221a\u222b\u2211\u220f\[|])/, '')
+        .replace(/^\s*([a-z]|\d{1,2})\)\s+(?=[A-Za-z0-9\\$\u221a\u222b\u2211\u220f(\[|-])/, '')
+        .replace(/^\s*(?:problem|question|exercise|example|prob|ex|eg|q|no|task|item)\.\s*#?\s*\d+\s+(?=\S)/i, '')
+        .replace(/^\s*#\d+\s*[.:)]?\s+/, '');
+      t = t.replace(/^\s*\d{1,2}[.)]\s+(?=\S)/, '');
+      if (t === before) break;
+    }
+    t = t
+      .replace(/\s*\((?:solve|find|simplify|evaluate|calculate|compute|show|prove|factor|expand)\b[^)]*\)\s*[.?]?\s*$/i, '')
+      .replace(/\s*(?:\u21d2|\u27f9|\u2192|\u27f6|->|=>|\\Rightarrow|\\implies|\\rightarrow|\\to)\s*[a-zA-Z]\s*=?\s*\??\s*$/, '');
+    return t;
+  }).join('\n');
+}
+
 /** Character-level clean-up: unicode math, LaTeX, printed notation, abs bars. Keeps ; and newlines. */
 function normalizeText(raw) {
   SERIES_FLAG.v = null;
   WORDS_ASK.v = null;
-  let s = convertApplied(convertLogic(String(raw)));
+  let s = convertApplied(convertLogic(stripPrintedNoise(String(raw))));
   s = s.replace(/[\u2211\u03a3]/g, '\u0001S').replace(/[\u220f\u03a0]/g, '\u0001P');
   s = s.replace(/[\u2070\u00b9\u00b2\u00b3\u2074-\u207b]+/g, (m) =>
     '^(' + Array.from(m).map((c) => SUPERSCRIPT[c] || '').join('') + ')');
+  s = s.replace(/(\u222b|\u0001[sp])([\u2080-\u2089]+)/g, (m, c, d) => c + '_' + Array.from(d).map((x) => String(x.charCodeAt(0) - 0x2080)).join(''));
   s = s.replace(/[\u2080-\u2089]+/g, (m) => '_(' + Array.from(m).map((c) => String(c.charCodeAt(0) - 0x2080)).join('') + ')');
   s = s.replace(/\u2034/g, "'''").replace(/\u2033/g, "''").replace(/\u2032/g, "'");
   s = s.replace(new RegExp('(\\d)\\s*(' + VULGAR_CLASS + ')', 'g'), (_, d, f) => '(' + d + '+' + VULGAR[f] + ')');
@@ -955,9 +980,9 @@ function readScript(s, i) {
     if (k < 0) return null;
     return { text: s.slice(j + 1, k).trim(), end: k + 1 };
   }
-  const m = /^[+-]?\s*(?:\d+(?:\.\d+)?|oo|pi|[a-z])/.exec(s.slice(j));
+  const m = /^[+-]?\s*(?:\d+(?:\.\d+)?|oo|pi|\u03c0|\u221e|[a-z])/.exec(s.slice(j));
   if (!m) return null;
-  return { text: m[0].replace(/\s+/g, ''), end: j + m[0].length };
+  return { text: m[0].replace(/\s+/g, '').replace('\u03c0', 'pi').replace('\u221e', 'oo'), end: j + m[0].length };
 }
 
 /** Find "dx" (the differential) at bracket depth 0, starting at `from`. */
@@ -1019,10 +1044,15 @@ function convertSums(s) {
         j = r.end;
       } else break;
     }
-    const lm = lo === null ? null : /^([a-z])\s*=\s*(.+)$/.exec(lo);
-    if (!lm || hi === null) throw new MathError('a sum or product needs bounds such as k=1 and n');
+    let lm = lo === null ? null : /^([a-z])\s*=\s*(.+)$/.exec(lo);
     const end = endOfExpr(s, j);
     const body = s.slice(j, end).trim();
+    if (!lm && lo !== null && /^-?\d+$/.test(lo)) {
+      // only the first value is written (sigma with 1 below): the index is the letter in the term
+      const v = (/[a-z]/.exec(body.replace(/\b(?:pi|oo|sin|cos|tan|ln|log|exp|sqrt|abs|e)\b/g, '')) || [])[0];
+      if (v) lm = [lo, v, lo];
+    }
+    if (!lm || hi === null) throw new MathError('a sum or product needs bounds such as k=1 and n');
     s = s.slice(0, m.index) + ' ' + (m[1] === 's' ? 'sum' : 'product') + '(' + [body, lm[1], lm[2], hi].join(', ') + ') ' + s.slice(end);
   }
   return s;
@@ -1099,9 +1129,30 @@ function convertDerivatives(s) {
   return s;
 }
 
+/** "\u03a3 k from 1 to 10", "\u03a3 1/n for n = 1 to 5": bounds written in words become sub- and superscripts. */
+function convertTextSums(s) {
+  return s.replace(/\u0001([sp])\s*(?![_^])([^;\n]*?)\s+(?:for\s+([a-z])\s+)?(?:from|=)\s*(?:([a-z])\s*=\s*)?(-?\d+)\s*(?:to|\.\.|\u2192|through)\s*(-?\d+|n|oo|\u221e|infinity)(?![\w])/i, (m, kind, body, v1, v2, lo, hi) => {
+    const v = v1 || v2 || (/[a-z]/.exec(body.replace(/\b(?:pi|oo|sin|cos|tan|ln|log|exp|sqrt|abs|e)\b/g, '')) || [])[0];
+    if (!v) return m;
+    return '\u0001' + kind + '_(' + v + '=' + lo + ')^(' + String(hi).replace('\u221e', 'oo').replace('infinity', 'oo') + ') ' + body.trim();
+  });
+}
+/** A command name directly in front of a matrix literal (det[[1, 2], [3, 4]] from \\det\\begin{pmatrix}...) gets its brackets. */
+function wrapMatrixArgs(s) {
+  for (let guard = 0; guard < 8; guard++) {
+    const m = /\b([a-z][a-z0-9]*)\s*\[\[/.exec(s);
+    if (!m || !COMMANDS[m[1]]) break;
+    const open = m.index + m[0].length - 2;
+    const close = matchBracket(s, open, '[', ']');
+    if (close < 0) break;
+    s = s.slice(0, open) + '(' + s.slice(open, close + 1) + ')' + s.slice(close + 1);
+  }
+  return s;
+}
 function convertNotation(s) {
   if (s.indexOf('\u222b') >= 0) s = convertIntegrals(s);
-  if (s.indexOf('\u0001') >= 0) s = convertSums(s);
+  if (s.indexOf('\u0001') >= 0) s = convertSums(convertTextSums(s));
+  s = wrapMatrixArgs(s);
   if (/\blim(?![a-z])/.test(s)) s = convertLimits(s);
   if (/\bd(?:\^\d)?[a-z]?\s*\/\s*d[a-z]/.test(s) || /\(\(\s*d/.test(s)) s = convertDerivatives(s);
   return s;
@@ -12687,6 +12738,7 @@ function convertRatios(s) {
   return s;
 }
 function convertApplied(s) {
+  s = s.replace(/([\u222b\u2211\u03a3\u220f\u03a0])([\u2080-\u2089]+)/g, (m, c, d) => c + '_' + Array.from(d).map((x) => String(x.charCodeAt(0) - 0x2080)).join(''));
   s = convertRatios(s);
   if (!/[A-Za-z]/.test(s)) return /(?:\.{3}|\u2026)|[\u222a\u2229\u2282\u2286\u00d7\u0394]/.test(s) ? convertWords(s) : s;
   s = convertPlotWords(s);
@@ -13193,6 +13245,8 @@ HELP.syntax = [
   '  degrees: 30\u00b0 is read as 30*pi/180;  letters keep their case (F = m a, E = m c^2 are different from f, e)',
   '  subscripts: x_1, x1 (when x2 also appears), R_1;  derivatives: y\', y\'\', dy/dx, d/dx;  integrals: \u222b_a^b f dx;  limits: lim_(x->a);  sums: \u03a3_(k=1)^n',
   '  several problems: separate with ; or a new line.  Matrices: [[1,2],[3,4]].  Points: [x, y].  Lists: [1, 2, 3].',
+  '  worksheet text is cleaned: "Q3.", "Problem 2:", "(a)", "1)", bullets, **bold**, "(solve for x)" and "=> x = ?" are dropped; a numbered list ("1) ... 2) ...", "(a) ... (b) ...") becomes separate problems, except the equations of one system',
+  '  values after the formula: "F = m*a with m = 5 and a = 2", "y = 2x + 1 when x = 3", "v = u + a*t, u = 3, a = 2, t = 4" put the numbers in place of the letters;  sums "\u03a3 k from 1 to 10", "\u03a3\u2081^10 k", integrals "\u222b\u2080^\u03c0 sin x dx"',
   '  commands can be mixed with arithmetic:  ncr(5,2) * 3 + 1,   integrate(x^2, x, 0, 1) + sqrt(2)',
   '  named arguments: triangle(a=3, b=4, C=90),  suvat(u=0, a=9.8, t=3),  circle(d=10)',
   '  the tool field "solve_for" picks the unknown when a formula has several letters.',
@@ -20346,7 +20400,7 @@ function askFirst(out) {
 }
 
 // ---- the rules --------------------------------------------------------------------------------------------------------------------------
-const W_LEAD = /^\s*(?:please\s+|pls\s+|kindly\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:help\s+me\s+(?:to\s+)?)?(?:tell\s+me\s+)?(?:i\s+(?:want|need)\s+(?:to\s+)?)?(?:(?:find|calculate|calc|compute|determine|evaluate|work\s+out|get|give\s+me|show\s+me|what\s*(?:'s|is|are)|whats|how\s+(?:much|many)\s+is|how\s+(?:long|far|big|tall|wide|large)\s+(?:is|are))\s+(?:me\s+)?)?(?:(?:the|a|an)\s+)?(?:value\s+of\s+)?/i;
+const W_LEAD = /^\s*(?:please\s+|pls\s+|kindly\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:help\s+me\s+(?:to\s+)?)?(?:tell\s+me\s+)?(?:i\s+(?:want|need)\s+(?:to\s+)?)?(?:(?:find|calculate|calc|compute|determine|evaluate|work\s+out|get|give\s+me|show\s+me|what\s*(?:'s|is|are)|whats|how\s+(?:much|many)\s+is|how\s+(?:long|far|big|tall|wide|large)\s+(?:is|are))\s+(?:me\s+)?)?(?:(?:the|a|an)\s+(?![=<>+\-*/^]))?(?:value\s+of\s+)?/i;
 const W_ORD = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6 };
 const wOrd = (t) => (t == null || t === '' ? 1 : W_ORD[t.toLowerCase()] || parseInt(t, 10));
 const wCall = (name, ...args) => name + '(' + args.filter((a) => a != null).join(', ') + ')';
@@ -20524,6 +20578,30 @@ function wRepeating(t) {
   return 'repeatdec(' + (ip || '0') + ', ' + (pre ? String(BigInt(pre)) : '0') + ', ' + pre.length + ', ' + String(BigInt(rep)) + ', ' + rep.length + ')';
 }
 
+/** "F = m*a with m = 5 and a = 2, find F", "y = 2x + 1 when x = 3": the values are put in place of the letters. */
+function wSubstitution(s) {
+  const VAL = '(?:\\[[^\\]]*\\]|-?\\d+(?:\\.\\d+)?(?:e-?\\d+)?(?:\\s*/\\s*\\d+)?%?)';
+  let m = new RegExp('^(.+?)\\s*,?\\s*\\b(?:where|with|given\\s+that|given|when|if|for|using)\\s+((?:[A-Za-z]\\s*=\\s*' + VAL + '(?:\\s*(?:,|and|;)\\s*)?)+)\\s*(?:,?\\s*(?:find|solve\\s+for|what\\s+is|calculate|compute|determine|evaluate)\\s+[A-Za-z]\\w*)?\\s*[?.]?$', 'i').exec(s);
+  // "v = u + a*t, u = 3, a = 2, t = 4": an equation for one letter followed by the values of the others
+  if (!m) m = new RegExp('^([A-Za-z]\\s*=\\s*[^=]+?)\\s*[,;]\\s*((?:[A-Za-z]\\s*=\\s*' + VAL + '(?:\\s*(?:,|and|;)\\s*)?)+)\\s*(?:,?\\s*(?:find|solve\\s+for|what\\s+is|calculate|compute|determine|evaluate)\\s+[A-Za-z]\\w*)?\\s*[?.]?$', 'i').exec(s);
+  if (!m) return null;
+  const first = m[1].replace(/^(?:find|calculate|compute|determine|evaluate|what\s+is)\s+/i, '').trim();
+  const stripped = first.replace(/\b(?:sin|cos|tan|cot|sec|csc|asin|acos|atan|arcsin|arccos|arctan|ln|log|exp|sqrt|abs|pi|det|inv|dot|cross|norm)\b/gi, '');
+  if (/[A-Za-z]{2,}/.test(stripped) || !/[A-Za-z]/.test(stripped)) return null;
+  const vals = new Map();
+  m[2].replace(new RegExp('([A-Za-z])\\s*=\\s*(' + VAL + ')', 'g'), (x, name, v) => { vals.set(name, v.replace(/\s+/g, '')); return x; });
+  if (!vals.size) return null;
+  const lhs = /^([A-Za-z])\s*=/.exec(first);
+  if (lhs && vals.has(lhs[1])) return null;
+  let out = first;
+  let used = 0;
+  vals.forEach((v, name) => {
+    const rx = new RegExp('(?<![A-Za-z_])' + name + '(?![A-Za-z0-9_(])', 'g');
+    out = out.replace(rx, () => { used++; return '(' + v + ')'; });
+  });
+  return used ? out : null;
+}
+
 /** One line, whole-line patterns. Returns the replacement text or null. */
 function wRules(s) {
   let m;
@@ -20532,6 +20610,8 @@ function wRules(s) {
   if (pr) return pr;
   const st = wSetSentence(s);
   if (st) return st;
+  const sub = wSubstitution(s);
+  if (sub) return sub;
 
   // ---- arc length of a circle sector given the radius and the angle
   if ((m = /^(?:(?:the|a|an)\s+)?arc\s+length\s+(?:with|for|if|when|given)\s+(.*\bradius\b.*\bangle\b.*)$/i.exec(s))) return wRules('arc length of a sector with ' + m[1]);
@@ -21352,6 +21432,10 @@ function wFunctions(s) {
 const W_WORDY = /\b(?:plus|minus|times|multiplied|divided|over|squared|cubed|power|root|equals?|percent|per\s*cent|less\s+than|greater\s+than|at\s+least|at\s+most|twice|half|negative|sum\s+of|product\s+of|difference)\b/i;
 function convertWordLine(line) {
   const s0 = line.trim().replace(/\s+/g, ' ');
+  if (s0.length >= 4 && s0.length <= 400 && !/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|\u2026|[\u222a\u2229\u2282\u2286\u00d7\u0394]|\bP\s*\(/.test(s0) && /[,;]\s*[A-Za-z]\s*=/.test(s0)) {
+    const sub = wSubstitution(s0.replace(/\s*[?!.]+$/, ''));
+    if (sub) return sub;
+  }
   if (s0.length < 4 || s0.length > 400 || !/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|\u2026|[\u222a\u2229\u2282\u2286\u00d7\u0394]|\bP\s*\(/.test(s0)) return line;
   const s = s0.replace(/\s*[?!]+$/, '').replace(/\s*(?<!\.)\.$/, '');
   const lead = s.replace(W_LEAD, '');
@@ -21372,7 +21456,7 @@ function convertWordLine(line) {
   return line;
 }
 function convertWords(raw) {
-  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|\u2026|[\u222a\u2229\u2282\u2286\u00d7\u0394]|\bP\s*\(/.test(raw)) return raw;
+  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|\u2026|[\u222a\u2229\u2282\u2286\u00d7\u0394]|\bP\s*\(/.test(raw) && !/[,;]\s*[A-Za-z]\s*=/.test(raw)) return raw;
   return raw.split('\n').map(convertWordLine).join('\n');
 }
 
@@ -25371,6 +25455,34 @@ function trySpecial(sts, solveFor) {
 // ======================================================================
 const MAX_PROBLEMS = 8;
 
+const PROBLEM_LABEL = /^\s*(?:\(?[a-z]\)|\(?[ivx]{1,4}\)|\(?\d{1,2}\)|\d{1,2}[.:]\s|(?:problem|question|exercise|example|ex|q|no|task)\s*\.?\s*#?\s*\d+\s*[.:)]|#\d+\s*[.:)]?\s)/i;
+/** A photo with a numbered list ("1) ... 2) ...", "(a) ... (b) ...") holds separate problems, unless the lines are the equations of one system. */
+function splitLabelled(text) {
+  const lines = text.split('\n');
+  if (lines.length < 2) return [text];
+  const labelled = lines.filter((l) => PROBLEM_LABEL.test(l)).length;
+  if (labelled < 2) return [text];
+  const parts = [];
+  let head = [];
+  for (const l of lines) {
+    if (PROBLEM_LABEL.test(l)) parts.push([l]);
+    else if (parts.length) parts[parts.length - 1].push(l);
+    else head.push(l);
+  }
+  // text before the first label that holds no maths (an instruction such as "Solve the following:") is dropped
+  head = head.filter((l) => /[\d=+\-*/^]/.test(l));
+  const bodies = parts.map((p) => p.join('\n').trim());
+  if (head.length) bodies[0] = head.join('\n') + '\n' + bodies[0];
+  const stripped = bodies.map((b) => stripPrintedNoise(b));
+  const allEq = stripped.every((b) => /^[^=<>]*=[^=<>]*$/.test(b.replace(/\n/g, ' ')) && !/[A-Za-z]{3}/.test(b.replace(/\b(?:sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi)\b/gi, '')));
+  if (allEq) {
+    const letters = new Set();
+    stripped.forEach((b) => b.replace(/\b(?:sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi)\b/gi, '').replace(/[a-z]/gi, (c) => letters.add(c.toLowerCase())));
+    if (letters.size >= stripped.length) return [text];
+  }
+  return bodies;
+}
+
 /** Accepts {"equation": "..."}, {"problems": [...]}, a bare JSON string, or plain text. */
 function parseRequest(data) {
   const raw = data === undefined || data === null ? '' : String(data).trim();
@@ -25398,7 +25510,7 @@ function parseRequest(data) {
   } else {
     problems.push(asText(obj));
   }
-  const list = problems.map((p) => p.trim()).filter(Boolean);
+  const list = problems.map((p) => p.trim()).filter(Boolean).flatMap(splitLabelled);
   if (!list.length) throw new MathError('no equation was given (the "equation" field is empty)');
   if (list.length > MAX_PROBLEMS) throw new MathError('too many problems at once (maximum ' + MAX_PROBLEMS + ')');
   return { problems: list, solveFor };

@@ -132,14 +132,39 @@ function degreesToPi(a) {
   return '(' + (q.n === 1n ? '' : q.n + '*') + 'pi' + (q.d === 1n ? '' : '/' + q.d) + ')';
 }
 
+/** Things a photo of a worksheet adds around the maths: "Q3.", "Problem 2:", "(a)", "1)", bullets, **bold**, "(solve for x)", "=> x = ?". */
+function stripPrintedNoise(raw) {
+  return raw.split('\n').map((line) => {
+    let t = line.replace(/(^|\s)(\*\*|__)([^*_\s][^*_\n]*?)\2(?=\s|$|[:.,;])/g, '$1$3').replace(/`/g, '').replace(/^\s*#{1,6}\s+/, '').replace(/^\s*[*•▪●]\s+(?=\S)/, '');
+    for (let guard = 0; guard < 2; guard++) {
+      const before = t;
+      t = t
+        .replace(/^\s*(?:problem|question|exercise|example|exercice|prob|ex|eg|q|no|number|task|item)\s*\.?\s*#?\s*\d+\s*[a-z]?\s*[.:)]\s*/i, '')
+        .replace(/^\s*(?:problem|question|exercise|example|prob|ex|q|no|task|item)\s*\.?\s*#?\s*\d+\s+(?=[A-Za-z\\$√∫∑(\[|-])/i, '')
+        .replace(/^\s*\(([a-z]|[ivx]{1,4})\)\s+(?=[A-Za-z0-9\\$√∫∑∏(\[|]|-\S)/i, '')
+        .replace(/^\s*\((\d{1,2})\)\s+(?=[A-Za-z0-9\\$√∫∑∏\[|])/, '')
+        .replace(/^\s*([a-z]|\d{1,2})\)\s+(?=[A-Za-z0-9\\$√∫∑∏(\[|-])/, '')
+        .replace(/^\s*(?:problem|question|exercise|example|prob|ex|eg|q|no|task|item)\.\s*#?\s*\d+\s+(?=\S)/i, '')
+        .replace(/^\s*#\d+\s*[.:)]?\s+/, '');
+      t = t.replace(/^\s*\d{1,2}[.)]\s+(?=\S)/, '');
+      if (t === before) break;
+    }
+    t = t
+      .replace(/\s*\((?:solve|find|simplify|evaluate|calculate|compute|show|prove|factor|expand)\b[^)]*\)\s*[.?]?\s*$/i, '')
+      .replace(/\s*(?:⇒|⟹|→|⟶|->|=>|\\Rightarrow|\\implies|\\rightarrow|\\to)\s*[a-zA-Z]\s*=?\s*\??\s*$/, '');
+    return t;
+  }).join('\n');
+}
+
 /** Character-level clean-up: unicode math, LaTeX, printed notation, abs bars. Keeps ; and newlines. */
 function normalizeText(raw) {
   SERIES_FLAG.v = null;
   WORDS_ASK.v = null;
-  let s = convertApplied(convertLogic(String(raw)));
+  let s = convertApplied(convertLogic(stripPrintedNoise(String(raw))));
   s = s.replace(/[∑Σ]/g, '\u0001S').replace(/[∏Π]/g, '\u0001P');
   s = s.replace(/[⁰¹²³⁴-⁻]+/g, (m) =>
     '^(' + Array.from(m).map((c) => SUPERSCRIPT[c] || '').join('') + ')');
+  s = s.replace(/(∫|\u0001[sp])([₀-₉]+)/g, (m, c, d) => c + '_' + Array.from(d).map((x) => String(x.charCodeAt(0) - 0x2080)).join(''));
   s = s.replace(/[₀-₉]+/g, (m) => '_(' + Array.from(m).map((c) => String(c.charCodeAt(0) - 0x2080)).join('') + ')');
   s = s.replace(/‴/g, "'''").replace(/″/g, "''").replace(/′/g, "'");
   s = s.replace(new RegExp('(\\d)\\s*(' + VULGAR_CLASS + ')', 'g'), (_, d, f) => '(' + d + '+' + VULGAR[f] + ')');

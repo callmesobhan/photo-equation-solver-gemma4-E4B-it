@@ -37,9 +37,9 @@ function readScript(s, i) {
     if (k < 0) return null;
     return { text: s.slice(j + 1, k).trim(), end: k + 1 };
   }
-  const m = /^[+-]?\s*(?:\d+(?:\.\d+)?|oo|pi|[a-z])/.exec(s.slice(j));
+  const m = /^[+-]?\s*(?:\d+(?:\.\d+)?|oo|pi|π|∞|[a-z])/.exec(s.slice(j));
   if (!m) return null;
-  return { text: m[0].replace(/\s+/g, ''), end: j + m[0].length };
+  return { text: m[0].replace(/\s+/g, '').replace('π', 'pi').replace('∞', 'oo'), end: j + m[0].length };
 }
 
 /** Find "dx" (the differential) at bracket depth 0, starting at `from`. */
@@ -101,10 +101,15 @@ function convertSums(s) {
         j = r.end;
       } else break;
     }
-    const lm = lo === null ? null : /^([a-z])\s*=\s*(.+)$/.exec(lo);
-    if (!lm || hi === null) throw new MathError('a sum or product needs bounds such as k=1 and n');
+    let lm = lo === null ? null : /^([a-z])\s*=\s*(.+)$/.exec(lo);
     const end = endOfExpr(s, j);
     const body = s.slice(j, end).trim();
+    if (!lm && lo !== null && /^-?\d+$/.test(lo)) {
+      // only the first value is written (sigma with 1 below): the index is the letter in the term
+      const v = (/[a-z]/.exec(body.replace(/\b(?:pi|oo|sin|cos|tan|ln|log|exp|sqrt|abs|e)\b/g, '')) || [])[0];
+      if (v) lm = [lo, v, lo];
+    }
+    if (!lm || hi === null) throw new MathError('a sum or product needs bounds such as k=1 and n');
     s = s.slice(0, m.index) + ' ' + (m[1] === 's' ? 'sum' : 'product') + '(' + [body, lm[1], lm[2], hi].join(', ') + ') ' + s.slice(end);
   }
   return s;
@@ -181,9 +186,30 @@ function convertDerivatives(s) {
   return s;
 }
 
+/** "Σ k from 1 to 10", "Σ 1/n for n = 1 to 5": bounds written in words become sub- and superscripts. */
+function convertTextSums(s) {
+  return s.replace(/\u0001([sp])\s*(?![_^])([^;\n]*?)\s+(?:for\s+([a-z])\s+)?(?:from|=)\s*(?:([a-z])\s*=\s*)?(-?\d+)\s*(?:to|\.\.|→|through)\s*(-?\d+|n|oo|∞|infinity)(?![\w])/i, (m, kind, body, v1, v2, lo, hi) => {
+    const v = v1 || v2 || (/[a-z]/.exec(body.replace(/\b(?:pi|oo|sin|cos|tan|ln|log|exp|sqrt|abs|e)\b/g, '')) || [])[0];
+    if (!v) return m;
+    return '\u0001' + kind + '_(' + v + '=' + lo + ')^(' + String(hi).replace('∞', 'oo').replace('infinity', 'oo') + ') ' + body.trim();
+  });
+}
+/** A command name directly in front of a matrix literal (det[[1, 2], [3, 4]] from \\det\\begin{pmatrix}...) gets its brackets. */
+function wrapMatrixArgs(s) {
+  for (let guard = 0; guard < 8; guard++) {
+    const m = /\b([a-z][a-z0-9]*)\s*\[\[/.exec(s);
+    if (!m || !COMMANDS[m[1]]) break;
+    const open = m.index + m[0].length - 2;
+    const close = matchBracket(s, open, '[', ']');
+    if (close < 0) break;
+    s = s.slice(0, open) + '(' + s.slice(open, close + 1) + ')' + s.slice(close + 1);
+  }
+  return s;
+}
 function convertNotation(s) {
   if (s.indexOf('∫') >= 0) s = convertIntegrals(s);
-  if (s.indexOf('\u0001') >= 0) s = convertSums(s);
+  if (s.indexOf('\u0001') >= 0) s = convertSums(convertTextSums(s));
+  s = wrapMatrixArgs(s);
   if (/\blim(?![a-z])/.test(s)) s = convertLimits(s);
   if (/\bd(?:\^\d)?[a-z]?\s*\/\s*d[a-z]/.test(s) || /\(\(\s*d/.test(s)) s = convertDerivatives(s);
   return s;

@@ -4,6 +4,34 @@
 // ======================================================================
 const MAX_PROBLEMS = 8;
 
+const PROBLEM_LABEL = /^\s*(?:\(?[a-z]\)|\(?[ivx]{1,4}\)|\(?\d{1,2}\)|\d{1,2}[.:]\s|(?:problem|question|exercise|example|ex|q|no|task)\s*\.?\s*#?\s*\d+\s*[.:)]|#\d+\s*[.:)]?\s)/i;
+/** A photo with a numbered list ("1) ... 2) ...", "(a) ... (b) ...") holds separate problems, unless the lines are the equations of one system. */
+function splitLabelled(text) {
+  const lines = text.split('\n');
+  if (lines.length < 2) return [text];
+  const labelled = lines.filter((l) => PROBLEM_LABEL.test(l)).length;
+  if (labelled < 2) return [text];
+  const parts = [];
+  let head = [];
+  for (const l of lines) {
+    if (PROBLEM_LABEL.test(l)) parts.push([l]);
+    else if (parts.length) parts[parts.length - 1].push(l);
+    else head.push(l);
+  }
+  // text before the first label that holds no maths (an instruction such as "Solve the following:") is dropped
+  head = head.filter((l) => /[\d=+\-*/^]/.test(l));
+  const bodies = parts.map((p) => p.join('\n').trim());
+  if (head.length) bodies[0] = head.join('\n') + '\n' + bodies[0];
+  const stripped = bodies.map((b) => stripPrintedNoise(b));
+  const allEq = stripped.every((b) => /^[^=<>]*=[^=<>]*$/.test(b.replace(/\n/g, ' ')) && !/[A-Za-z]{3}/.test(b.replace(/\b(?:sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi)\b/gi, '')));
+  if (allEq) {
+    const letters = new Set();
+    stripped.forEach((b) => b.replace(/\b(?:sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi)\b/gi, '').replace(/[a-z]/gi, (c) => letters.add(c.toLowerCase())));
+    if (letters.size >= stripped.length) return [text];
+  }
+  return bodies;
+}
+
 /** Accepts {"equation": "..."}, {"problems": [...]}, a bare JSON string, or plain text. */
 function parseRequest(data) {
   const raw = data === undefined || data === null ? '' : String(data).trim();
@@ -31,7 +59,7 @@ function parseRequest(data) {
   } else {
     problems.push(asText(obj));
   }
-  const list = problems.map((p) => p.trim()).filter(Boolean);
+  const list = problems.map((p) => p.trim()).filter(Boolean).flatMap(splitLabelled);
   if (!list.length) throw new MathError('no equation was given (the "equation" field is empty)');
   if (list.length > MAX_PROBLEMS) throw new MathError('too many problems at once (maximum ' + MAX_PROBLEMS + ')');
   return { problems: list, solveFor };

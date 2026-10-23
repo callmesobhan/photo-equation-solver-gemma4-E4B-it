@@ -771,6 +771,7 @@ function convertRatios(s) {
   return s;
 }
 function convertApplied(s) {
+  s = s.replace(/([∫∑Σ∏Π])([₀-₉]+)/g, (m, c, d) => c + '_' + Array.from(d).map((x) => String(x.charCodeAt(0) - 0x2080)).join(''));
   s = convertRatios(s);
   if (!/[A-Za-z]/.test(s)) return /(?:\.{3}|…)|[∪∩⊂⊆×Δ]/.test(s) ? convertWords(s) : s;
   s = convertPlotWords(s);

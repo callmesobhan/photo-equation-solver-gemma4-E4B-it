@@ -21,9 +21,9 @@ with exact fractions and symbolic expressions. The answer always starts with a
 **"Read as"** line that shows how the picture was read, so a misread digit is easy to spot.
 
 Everything runs on the phone. `scripts/index.html` is a single self-contained file
-(about 550 KB): no CDN, no `fetch`, no API key, no secret. Ask it for `help` (or
+(about 1.2 MB): no CDN, no `fetch`, no API key, no secret. Ask it for `help` (or
 `help calculus`, `help stats`, ...) and it lists every command - offline too - so
-`SKILL.md` can stay short.
+`SKILL.md` can stay short: it is only about 6 KB (under 2,000 tokens), because an on-device model has a small context window shared with the photo, the tool call and the answer. Only the most common commands are listed there; the rest is found with `help`, or by writing the question in plain English.
 
 ## What it can do
 
@@ -48,6 +48,7 @@ Everything runs on the phone. `scripts/index.html` is a single self-contained fi
 | **Linear programming** | `maximize 3x + 2y subject to x + y <= 4, x, y >= 0` (up to 4 variables; exact corner points, unbounded/infeasible detection, integer programs) |
 | **Quadratics, logs, sets** | `discriminant`, `completesquare`, `vertex` (axis, minimum / maximum), `foci of the ellipse ...` and other conic features, expanding and condensing logarithms (`expand(log(x^2*y))`, `logcondense(2*log(x) + log(y))`), a term of a binomial expansion (`binomterm(x, y, 9, 4)`), sets (`union`, `intersection`, `setdiff`, `symdiff`, `setcomplement`, `cardinality`, `issubset`, `powerset`, `cartesian`; also `A = {1,2,3}, B = {2,3,4}, find A ∪ B`), digits in bases up to 36 (`hexadecimal FF to decimal`), ratios `12:18`, proportions `3:4 = x:12`, scientific notation, confidence intervals from summary numbers |
 | **Numbers, decimals, statistics phrasings** | `perfect(28)`, `perfectsq`, `todecimal(1/7)` = 0.(142857), `tofraction`, `0.333... as a fraction`, `nthterm([5,8,11],20)`, rounding "to the nearest hundredth / 2 significant figures", remainders of huge powers, `P(Z < 1.5)`, t / z / chi-square critical values, standard error, "at least one six in 4 rolls", regression line and prediction from two lists, pH of strong acids, annuity and present / future values in words |
+| **Messy input** | worksheet labels (`Q3.`, `Problem 2:`, `(a)`, `1)`), bullets, `**bold**`, `$...$`, trailing `=> x = ?` or `(solve for x)` are ignored; a numbered list becomes separate problems; `F = m*a with m = 5 and a = 2, find F`; `Σ k from 1 to 10`; `∫₀^π sin x dx`; `\\det\\begin{bmatrix}...` |
 | **Textbook theorems, series, probability** | `linapprox(sqrt(x), x, 4, 4.1)` (L(x), the estimate and its error), `mvt` / `rolle` / `ivt` (conditions checked, every c found), patterned sums written as they are (`1 + 2 + 3 + ... + 100`, `1 + 1/2 + 1/4 + ...`, `1 + 1/4 + 1/9 + ...` = π²/6), infinite sums with factorials (`sum(1/n!, n, 0, oo)` = e), `binomstats` / `poissonstats` / `geomstats` / `diestats`, `condprob`, `bayes` and sentences like "P(A|B) if P(A and B) = 0.2 and P(B) = 0.5", "how many ways can 5 people sit in a row" |
 | **Algebra** | `factor`, `expand`, `simplify`, `apart` (partial fractions), `gcd`/`lcm`, polynomial division, exact radicals |
 | **Radicals and trigonometry** | exact surds in canonical form (`(2+sqrt(3))^2` = 7 + 4√3, `1/(sqrt(6)-sqrt(2))` = (√6 + √2)/4, `denest(sqrt(5+2*sqrt(6)))` = √3 + √2, `rationalize(x/(sqrt(x)+1))`), exact values of all six trig functions at multiples of π/n for n = 1, 2, 3, 4, 5, 6, 8, 10, 12 (`tan(22.5°)` = √2 − 1, `cos(pi/5)` = (1 + √5)/4, `tan(pi/2)` is reported undefined), trig of inverse trig (`tan(asin(3/5))`, `cos(2*asin(1/3))`, `sin(atan(3)+atan(4))`), `simplify` of trigonometric expressions in one variable (Pythagorean and double-angle identities, tan / cot / sec / csc ratios: `sin(2x)/sin(x)` = 2cos(x)), `trigexpand` / `expand` (sum and multiple-angle formulas), `tosum` (product-to-sum, power reduction) |
@@ -160,7 +161,7 @@ photo-equation-solver/
 
 Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
 
-- 961 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
+- 987 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
   geometry, units, chemistry, finance, graphs, differential equations, messy transcriptions, errors)
 - calculus against **sympy** and **scipy**: 146 antiderivatives (each also verified by differentiating),
   42 definite/improper integrals, 43 limits, 22 sums, 593 random symbolic expressions

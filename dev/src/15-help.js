@@ -70,6 +70,8 @@ HELP.syntax = [
   '  degrees: 30° is read as 30*pi/180;  letters keep their case (F = m a, E = m c^2 are different from f, e)',
   '  subscripts: x_1, x1 (when x2 also appears), R_1;  derivatives: y\', y\'\', dy/dx, d/dx;  integrals: ∫_a^b f dx;  limits: lim_(x->a);  sums: Σ_(k=1)^n',
   '  several problems: separate with ; or a new line.  Matrices: [[1,2],[3,4]].  Points: [x, y].  Lists: [1, 2, 3].',
+  '  worksheet text is cleaned: "Q3.", "Problem 2:", "(a)", "1)", bullets, **bold**, "(solve for x)" and "=> x = ?" are dropped; a numbered list ("1) ... 2) ...", "(a) ... (b) ...") becomes separate problems, except the equations of one system',
+  '  values after the formula: "F = m*a with m = 5 and a = 2", "y = 2x + 1 when x = 3", "v = u + a*t, u = 3, a = 2, t = 4" put the numbers in place of the letters;  sums "Σ k from 1 to 10", "Σ₁^10 k", integrals "∫₀^π sin x dx"',
   '  commands can be mixed with arithmetic:  ncr(5,2) * 3 + 1,   integrate(x^2, x, 0, 1) + sqrt(2)',
   '  named arguments: triangle(a=3, b=4, C=90),  suvat(u=0, a=9.8, t=3),  circle(d=10)',
   '  the tool field "solve_for" picks the unknown when a formula has several letters.',
