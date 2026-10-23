@@ -750,6 +750,7 @@ defCmd('chisqtest chitest', (n) => {
     const rows = T.map(sumQ);
     const cols = T[0].map((_, j) => sumQ(T.map((r) => r[j])));
     const tot = sumQ(rows);
+    if (rows.some((r) => !(r.sign() > 0)) || cols.some((c) => !(c.sign() > 0))) throw new MathError('every row and every column of the table needs a positive total');
     T.forEach((r, i) => r.forEach((o, j) => {
       const e = rows[i].mul(cols[j]).div(tot).toNumber();
       chi += (o.toNumber() - e) ** 2 / e;
@@ -761,6 +762,7 @@ defCmd('chisqtest chitest', (n) => {
     const tot = sumQ(obs);
     const exp = n.args[1] ? dataOf([n.args[1]], 'chisqtest') : obs.map(() => tot.div(qInt(obs.length)));
     if (exp.length !== obs.length) throw new MathError('the observed and expected lists must have the same length');
+    if (exp.some((e) => !(e.sign() > 0))) throw new MathError('every expected count must be positive');
     obs.forEach((o, i) => { chi += (o.toNumber() - exp[i].toNumber()) ** 2 / exp[i].toNumber(); });
     df = obs.length - 1;
     out.work.push('Goodness of fit: χ² = Σ (O − E)² / E;  df = categories − 1 = ' + df);

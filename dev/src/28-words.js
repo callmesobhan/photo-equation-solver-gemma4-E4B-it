@@ -342,7 +342,7 @@ function wRules(s) {
   const T = (x) => x.replace(/^\s*(?:(?:the|a|an)\s+)?/i, '');
 
   // ---- equation with an interval for the unknown
-  if (/[<>≤≥]|\[|\(/.test(s) && /=/.test(s)) {
+  if (/[<>≤≥]|\[|\(/.test(s) && /=/.test(s) && !/\b(?:fourier|series|integral|integrate|derivative|limit|laplace|average|area|volume|length|taylor|maclaurin|sum|plot|graph|domain|tangent)\b/i.test(s)) {
     const win = wWindow(s.replace(/^solve\s+(?:the\s+equation\s+)?/i, ''));
     if (win) return win;
   }
@@ -706,7 +706,7 @@ function wRules(s) {
     if (/;/.test(mm[1]) && /^\[.*\]$/.test(mm[1].trim())) return wCall(cmd, mm[1].trim());
     return null;
   };
-  const MATS = [['determinant|det', 'det'], ['inverse', 'inv'], ['transpose', 'transpose'], ['trace', 'trace'], ['rank', 'rank'], ['(?:reduced\\s+)?row\\s+echelon\\s+form|rref', 'rref'], ['eigenvalues\\s+and\\s+eigenvectors|eigenvectors\\s+and\\s+eigenvalues|eigenvalues|eigenvectors|eigen\\s*system', 'eigen'],
+  const MATS = [['nullity|dimension\\s+of\\s+(?:the\\s+)?(?:null\\s*space|kernel)', 'nullity'], ['(?:a\\s+)?basis\\s+(?:for|of)\\s+(?:the\\s+)?(?:column\\s+space|range|image)', 'colspace'], ['(?:a\\s+)?basis\\s+(?:for|of)\\s+(?:the\\s+)?(?:null\\s*space|kernel)', 'nullspace'], ['determinant|det', 'det'], ['inverse', 'inv'], ['transpose', 'transpose'], ['trace', 'trace'], ['rank', 'rank'], ['(?:reduced\\s+)?row\\s+echelon\\s+form|rref', 'rref'], ['eigenvalues\\s+and\\s+eigenvectors|eigenvectors\\s+and\\s+eigenvalues|eigenvalues|eigenvectors|eigen\\s*system', 'eigen'],
     ['characteristic\\s+polynomial', 'charpoly'], ['null\\s*space|kernel', 'nullspace'], ['column\\s+space', 'colspace'], ['lu\\s+(?:decomposition|factori[sz]ation)', 'lu'], ['qr\\s+(?:decomposition|factori[sz]ation)', 'qr'],
     ['singular\\s+values?(?:\\s+decomposition)?|svd', 'svd'], ['diagonali[sz]ation', 'diagonalize'], ['cholesky\\s+(?:decomposition|factori[sz]ation)', 'cholesky'], ['pseudo-?inverse', 'pinv'], ['matrix\\s+exponential', 'expm'], ['jordan\\s+(?:normal\\s+)?form', 'jordan']];
   for (const [words, cmd] of MATS) {
@@ -716,6 +716,15 @@ function wRules(s) {
   if ((m = /^(?:diagonali[sz]e|invert|transpose)\s+(?:(?:the|a|an)\s+)?(?:matrix\s+)?(\[.*\])$/i.exec(s))) return wCall(/^diag/i.test(s) ? 'diagonalize' : /^inv/i.test(s) ? 'inv' : 'transpose', m[1]);
   if ((m = /^(?:is\s+)?(?:(?:the|a|an)\s+)?(?:matrix\s+)?(\[.*\])\s+(?:positive\s+definite|invertible|singular|diagonali[sz]able)$/i.exec(s))) return /definite/i.test(s) ? wCall('definite', m[1]) : /diagonali/i.test(s) ? wCall('diagonalize', m[1]) : wCall('det', m[1]);
   if ((m = /^(?:solve\s+)?(?:(?:the|a|an)\s+)?(?:linear\s+)?system\s+(?:with\s+)?(?:coefficient\s+)?matrix\s+(\[\[.*\]\])\s+(?:and\s+(?:right[- ]hand\s+side|constants?|vector)|=|\*\s*x\s*=)\s*(\[.*\])$/i.exec(s))) return wCall('linsolve', m[1], m[2]);
+  if ((m = /^(?:are|is)\s+(?:the\s+)?(?:vectors?\s+)?(.+?)\s+linearly\s+(independent|dependent)$/i.exec(s)) || (m = /^(?:the\s+)?linear\s+(independence|dependence)\s+of\s+(?:the\s+)?(?:vectors?\s+)?(.+)$/i.exec(s)) && (m = [m[0], m[2], m[1]])) {
+    const vs = wBrackets(m[1]).length ? wBrackets(m[1]) : wPoints(m[1]).map(wVec);
+    if (vs.length >= 1) return wCall('independent', ...vs);
+  }
+  if ((m = /^(?:is|does)\s+(?:the\s+)?(?:vector\s+)?(\[[^\[\]]*\]|\([^()]*\)|<[^<>]*>)\s+(?:in|lie\s+in|belong\s+to)\s+(?:the\s+)?span\s+of\s+(?:the\s+)?(?:vectors?\s+)?(.+)$/i.exec(s)) || (m = /^(?:can|could)\s+(?:the\s+)?(?:vector\s+)?(\[[^\[\]]*\]|\([^()]*\)|<[^<>]*>)\s+be\s+(?:written|expressed)\s+as\s+a\s+linear\s+combination\s+of\s+(?:the\s+)?(?:vectors?\s+)?(.+)$/i.exec(s))) {
+    const t = wBrackets(m[1]).length ? wBrackets(m[1])[0] : wPoints(m[1]).map(wVec)[0];
+    const gens = wBrackets(m[2]).length ? wBrackets(m[2]) : wPoints(m[2]).map(wVec);
+    if (t && gens.length) return wCall('inspan', t, ...gens);
+  }
   const vecs = (rest) => {
     const br = wBrackets(rest);
     if (br.length === 2) return br;
@@ -796,6 +805,96 @@ function wRules(s) {
     if (/<|less|below|fewer|≤/i.test(op)) return wCall('normalcdf', '-oo', a, mu, sd);
     return wCall('normalcdf', a, 'oo', mu, sd);
   }
+
+  // ---- rank / exact tests, regression inference
+  const lists = (str) => wBrackets(str).filter((b) => !/^\[\s*\[/.test(b));
+  if ((m = /^(?:the\s+)?(?:mann[- ]whitney(?:\s+u)?|wilcoxon\s+rank[- ]sum)(?:\s+test)?\s+(?:of|for|on|with|between)\s+(.+)$/i.exec(s))) {
+    const L = lists(m[1]);
+    if (L.length === 2) return wCall('mannwhitney', L[0], L[1]);
+  }
+  if ((m = /^(?:the\s+)?wilcoxon(?:\s+signed[- ]rank)?(?:\s+test)?\s+(?:of|for|on|with|between)\s+(.+)$/i.exec(s))) {
+    const L = lists(m[1]);
+    if (L.length === 2) return wCall('wilcoxon', L[0], L[1]);
+    if (L.length === 1) return wCall('wilcoxon', L[0]);
+  }
+  if ((m = /^(?:the\s+)?kruskal[- ]wallis(?:\s+(?:h\s+)?test)?\s+(?:of|for|on|with|between)\s+(.+)$/i.exec(s))) {
+    const L = lists(m[1]);
+    if (L.length >= 2) return wCall('kruskalwallis', ...L);
+  }
+  if ((m = /^(?:the\s+)?sign\s+test\s+(?:of|for|on|with)\s+(.+?)(?:\s+(?:against|versus|vs\.?|with\s+median|median)\s+(-?[\d.]+))?$/i.exec(s))) {
+    const L = lists(m[1]);
+    if (L.length === 2) return wCall('signtest', L[0], L[1]);
+    if (L.length === 1 && m[2]) return wCall('signtest', L[0], m[2]);
+  }
+  if ((m = /^(?:the\s+)?fisher'?s?(?:\s+exact)?(?:\s+test)?\s+(?:of|for|on|with)\s+(?:the\s+)?(?:table\s+)?(\[\s*\[.*\]\s*\])$/i.exec(s))) return wCall('fisherexact', m[1]);
+  if ((m = /^(?:the\s+)?mcnemar'?s?(?:\s+test)?\s+(?:of|for|on|with)\s+(?:the\s+)?(?:table\s+)?(\[\s*\[.*\]\s*\])$/i.exec(s))) return wCall('mcnemar', m[1]);
+  if ((m = /^(?:(?:test|inference|confidence\s+interval|t[- ]test)\s+(?:for|of|on)\s+)?(?:the\s+)?(?:slope|regression\s+(?:slope|inference)|slope\s+of\s+(?:the\s+)?regression\s+line)\s+(?:of|for|on|with|between)\s+(.+)$/i.exec(s)) || (m = /^regression\s+(?:inference|analysis|test)\s+(?:of|for|on|with|between)\s+(.+)$/i.exec(s))) {
+    const L = lists(m[1]);
+    if (L.length === 2) return wCall('reginf', L[0], L[1]);
+  }
+
+  // ---- Fourier series
+  if ((m = /^(?:the\s+)?(?:(half[- ]range)\s+)?fourier\s+(sine|cosine|)\s*(?:series|expansion)(?:\s+(?:expansion|representation))?\s+(?:of|for)\s+(.+)$/i.exec(s)) || (m = /^(?:the\s+)?(half[- ]range)\s+()?(sine|cosine)\s+(?:series|expansion)\s+(?:of|for)\s+(.+)$/i.exec(s)) && (m = [m[0], m[1], m[3], m[4]])) {
+    const pe = wPeel(m[3]);
+    const f = wE(pe.rest);
+    const kind = m[2].toLowerCase();
+    if (pe.lo != null) {
+      const v = pe.v || wVarOf(f);
+      if (kind) return wCall(kind === 'sine' ? 'fouriersin' : 'fouriercos', f, v, wBound(pe.hi));
+      return wCall('fourier', f, v, wBound(pe.lo), wBound(pe.hi));
+    }
+  }
+
+  // ---- precalculus helpers
+  if ((m = /^(?:the\s+)?(?:amplitude|period|phase\s+shift|frequency|vertical\s+shift|midline)(?:\s*,?\s*(?:and\s+)?(?:amplitude|period|phase\s+shift|frequency|vertical\s+shift|midline))*\s+of\s+(?:the\s+)?(?:function\s+)?(.+)$/i.exec(s)) && /\b(?:sin|cos|tan|cot|sec|csc)\b/i.test(m[1])) return wCall('sinusoid', wE(m[1]));
+  if ((m = /^(?:the\s+)?(?:rational|possible\s+rational)\s+(?:zeros|roots)(?:\s+and\s+(?:zeros|roots))?\s+(?:of|for)\s+(.+)$/i.exec(s))) return wCall('ratroots', wE(m[1]));
+  if ((m = /^(?:the\s+)?end\s+behaviou?r\s+of\s+(?:the\s+)?(?:function\s+|polynomial\s+)?(.+)$/i.exec(s))) return wCall('endbehavior', wE(m[1]));
+  if ((m = /^(?:the\s+)?range\s+of\s+(?:the\s+)?(?:function\s+)?(.+)$/i.exec(s)) && /[a-z]/i.test(m[1]) && !wNums(m[1])) return wCall('rangeof', wE(m[1]));
+  if ((m = /^(?:the\s+)?domain\s+and\s+range\s+of\s+(?:the\s+)?(?:function\s+)?(.+)$/i.exec(s))) return wCall('rangeof', wE(m[1]));
+  if ((m = /^(?:is|determine\s+whether|determine\s+if|check\s+whether|decide\s+whether)\s+(?:the\s+function\s+)?(.+?)\s+(?:is\s+)?even,?\s+(?:or\s+)?odd(?:,?\s+or\s+neither)?$/i.exec(s)) || (m = /^(?:the\s+)?(?:symmetry|parity)\s+of\s+(?:the\s+)?(?:function\s+)?(.+)$/i.exec(s))) return wCall('evenodd', wE(m[1]));
+  if ((m = /^(?:the\s+)?(constant\s+term|coefficient\s+of\s+([a-z])(?:\^(\d+)|\s*\^\s*\(\s*(\d+)\s*\))?)\s+(?:in|of)\s+(?:the\s+)?(?:expansion\s+of\s+)?(.+)$/i.exec(s))) {
+    const v = m[2] ? m[2].toLowerCase() : wVarOf(m[5]);
+    return wCall('coeff', wE(m[5]), v, m[2] ? (m[3] || m[4] || '1') : '0');
+  }
+  if ((m = /^(?:the\s+)?(?:remainder\s+(?:when|of|if|after)\s+)(.+?)\s+(?:is\s+)?divided\s+by\s+(.+)$/i.exec(s)) && /[a-z]/i.test(m[1])) return wCall('divide', wE(m[1]), wE(m[2]));
+  if ((m = /^divide\s+(.+?)\s+by\s+(.+)$/i.exec(s)) && /[a-z]/i.test(m[1])) return wCall('divide', wE(m[1]), wE(m[2]));
+  if ((m = /^(?:the\s+)?exact\s+value\s+of\s+(.+)$/i.exec(s))) return wE(m[1].replace(/(\d+(?:\.\d+)?)\s*degrees?\b/gi, '$1°'));
+  if ((m = /^(.+?)\s+in\s+degrees$/i.exec(s)) && /\b(?:arcsin|arccos|arctan|asin|acos|atan|inverse)/i.test(m[1])) return '(' + wE(m[1]) + ')*180/pi';
+  if ((m = /^(?:the\s+)?(\d+)(?:st|nd|rd|th)\s+term\s+of\s+(?:the\s+)?(arithmetic|geometric)\s+(?:sequence|progression|series)\s*:?\s*(.+)$/i.exec(s)) || (m = /^(?:the\s+)?sum\s+of\s+(?:the\s+)?first\s+(\d+)\s+terms\s+of\s+(?:the\s+)?(arithmetic|geometric)\s+(?:sequence|progression|series)\s*:?\s*(.+)$/i.exec(s))) {
+    const nums = wNums(m[3].replace(/\.\.\.|…/g, ''));
+    if (nums && nums.length >= 2) return /arith/i.test(m[2]) ? wCall('arith', nums[0], '(' + nums[1] + ') - (' + nums[0] + ')', m[1]) : wCall('geom', nums[0], '(' + nums[1] + ')/(' + nums[0] + ')', m[1]);
+  }
+  if ((m = /^(?:the\s+)?sum\s+of\s+(?:the\s+)?infinite\s+geometric\s+(?:series|sequence)\s*:?\s*(.+)$/i.exec(s))) {
+    const nums = wNums(m[1].replace(/\.\.\.|…/g, ''));
+    if (nums && nums.length >= 2) return wCall('geom', nums[0], '(' + nums[1] + ')/(' + nums[0] + ')', '5');
+  }
+  if ((m = /^(?:solve\s+)?(?:the\s+)?(?:triangle|law\s+of\s+(?:sines|cosines))\s*(?:with|where|given|:|,)?\s*(.+)$/i.exec(s))) {
+    const params = [...m[1].matchAll(/\b([abcABC])\s*=\s*(\d+(?:\.\d+)?)/g)].map((x) => x[1] + '=' + x[2]);
+    if (params.length >= 3 && new Set(params.map((x) => x[0])).size === params.length) return wCall('triangle', ...params);
+  }
+  if ((m = /^(?:find\s+)?(?:the\s+)?(?:composition|compose)\s+(?:of\s+)?(?:the\s+functions\s+)?([a-z])\s*\(\s*x\s*\)\s*=\s*(.+?)\s+(?:and|with)\s+([a-z])\s*\(\s*x\s*\)\s*=\s*(.+)$/i.exec(s))) return wCall('compose', wE(m[2]), wE(m[4]), 'x');
+  // ---- cards, bags of balls, dice
+  const CARDS = { hearts: 13, heart: 13, spades: 13, spade: 13, clubs: 13, club: 13, diamonds: 13, diamond: 13, 'red cards': 26, 'red card': 26, 'black cards': 26, 'black card': 26, aces: 4, ace: 4, kings: 4, king: 4, queens: 4, queen: 4, jacks: 4, jack: 4, 'face cards': 12, 'face card': 12 };
+  const NUMW = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+  const cnt = (t) => (/^\d+$/.test(t) ? Number(t) : NUMW[t.toLowerCase()]);
+  if ((m = /^(?:the\s+)?probability\s+(?:of|that)\s+(?:you\s+)?(?:drawing|getting|picking|selecting|choosing|being\s+dealt|draw|get)\s+(a|an|one|two|three|four|five|six|\d+)\s+(hearts?|spades?|clubs?|diamonds?|red\s+cards?|black\s+cards?|aces?|kings?|queens?|jacks?|face\s+cards?)(?:\s+(?:in|from|out\s+of)\s+(a|one|two|three|four|five|six|\d+)\s+(?:draws?|cards?|picks?))?(?:\s+(?:in|from|out\s+of|of)\s+(?:a\s+)?(?:standard\s+|regular\s+)?(?:52[- ]card\s+)?(?:deck|pack)(?:\s+of\s+cards)?)?(?:\s+without\s+replacement)?$/i.exec(s))) {
+    const K = CARDS[m[2].toLowerCase().replace(/\s+/g, ' ')];
+    const k = cnt(m[1]);
+    const nn = m[3] ? cnt(m[3]) : k;
+    if (K && k != null && nn != null && /deck|pack|cards?|standard/i.test(s)) return wCall('hyperpdf', '52', K, nn, k);
+  }
+  if ((m = /^(?:(?:a|an|the)\s+)?(?:(?:bag|box|jar|urn|bowl|basket)\s+(?:contains|has|holds|with|is\s+filled\s+with)\s+)?(\d+\s+[a-z]+.*?)[.;,]?\s*(?:what\s+is\s+)?(?:the\s+)?probability\s+(?:of|that)\s+(?:you\s+)?(?:drawing|getting|picking|selecting|choosing|draw|get)\s+(a|an|one|two|three|four|five|six|\d+)\s+(\w+?)(?:s)?(?:\s+(?:ball|marble|bead|candy|candie|sock|chip|card|coin)s?)?(?:\s+(?:in|from|out\s+of)\s+(a|one|two|three|four|five|six|\d+)\s+(?:draws?|picks?|tries|balls?|marbles?))?(\s+with(?:out)?\s+replacement)?$/i.exec(s))) {
+    const items = [...m[1].matchAll(/(\d+)\s+([a-z]+?)(?:s)?\b(?!\s*(?:balls?|marbles?|beads?)\s+and)/gi)].filter((x) => !/^(?:balls?|marbles?|beads?|candies|candy|socks?|chips?|cards?|coins?|and|in|total)$/i.test(x[2]));
+    const total = items.reduce((t, x) => t + Number(x[1]), 0);
+    const want = items.find((x) => x[2].toLowerCase() === m[3].toLowerCase().replace(/s$/, ''));
+    const k = cnt(m[2]);
+    const nn = m[4] ? cnt(m[4]) : k;
+    if (want && total && k != null && nn != null && nn >= k) {
+      const withRepl = /with\s+replacement/i.test(m[5] || '') && !/without/i.test(m[5] || '');
+      return withRepl ? wCall('binompdf', nn, Number(want[1]) + '/' + total, k) : wCall('hyperpdf', total, want[1], nn, k);
+    }
+  }
+  if ((m = /^(?:the\s+)?probability\s+(?:of\s+)?(?:rolling|getting|throwing|obtaining)\s+(?:a\s+)?(?:total|sum)\s+of\s+(\d+)\s+(?:with|on|when\s+rolling|when\s+throwing|using)\s+(two|three|four|\d+)\s+(?:fair\s+|six-sided\s+|standard\s+)*dice$/i.exec(s))) return wCall('dice', cnt(m[2]), 6, m[1]);
 
   // ---- finance
   const money = (t) => t.replace(/[$,]/g, '');

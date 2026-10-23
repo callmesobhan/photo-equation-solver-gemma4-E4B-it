@@ -41,7 +41,13 @@ HELP.words = [
   '  matrices   "determinant of [[1,2],[3,4]]"  "inverse of ..."  "eigenvalues of ..."  "rank / transpose / trace / rref of ..."  "dot product of [1,2,3] and [4,5,6]"  "angle between [1,0] and [1,1]"',
   '  data       "mean of 2, 4, 6, 8"  "median of ..."  "standard deviation of ..." (sample; "population standard deviation of ..." for the population)  "correlation between [1,2,3,4] and [2,4,5,9]"',
   '             "probability of exactly 3 heads in 5 coin flips"  "z-score of 85 with mean 70 and standard deviation 10"  "X is normally distributed with mean 100 and standard deviation 15, find P(X < 120)"',
+  '  precalc    "amplitude and period of y = 3 sin(2x - pi) + 1"  "the range of 1/(x^2+1)"  "end behavior of -2x^3 + x"  "is x^3 - x even or odd"  "the rational zeros of 2x^3 - 3x^2 - 8x - 3"  "the coefficient of x^3 in (1 + 2x)^6"',
+  '             "divide x^3 - 2x^2 + x - 5 by x - 2"  "the 10th term of the arithmetic sequence 3, 7, 11"  "solve the triangle with a = 5, b = 7, C = 60 degrees"  "arcsin(1/2) in degrees"  "exact value of cos(15 degrees)"',
+  '  linear alg "are the vectors [1,2,3], [4,5,6], [7,8,9] linearly independent"  "is [1,2,3] in the span of [1,0,1] and [0,1,1]"  "dimension of the null space of [[1,2,3],[2,4,6]]"  "basis for the column space of [[1,2],[3,4]]"',
+  '  chance     "probability of drawing 2 aces from a standard deck"  "A bag contains 3 red and 5 blue marbles. What is the probability of drawing 2 red marbles?"  "probability of rolling a sum of 7 with two dice"',
   '  ODEs       "equilibrium points of y\' = y(1 - y)"  "classify the equilibria of x\' = x(1 - y), y\' = y(x - 1)"  "stability of the system x\' = -x + 2y; y\' = -2x - y"',
+  '  tests      "Mann-Whitney U test for [1,3,5,7] and [2,4,6,8,10]"  "Wilcoxon signed-rank test for [125,115,130,140] and [110,122,125,120]"  "Kruskal-Wallis test of [2,3,6,7], [4,8,9,10], [1,5,11,12,13]"  "Fisher\'s exact test for [[8,2],[1,5]]"  "regression inference for [1,2,3,4,5] and [2,4,5,4,6]"',
+  '  Fourier    "Fourier series of f(x) = x on (-pi, pi)"  "Fourier cosine series of x on (0, pi)"  "half-range sine series of 1 on (0, pi)"',
   '  money      "compound interest on $1000 at 5% for 10 years compounded monthly"  "simple interest on $2000 at 4% for 3 years"  "monthly payment on a $200,000 loan at 6% for 30 years"',
 ].join('\n');
 HELP.syntax = [
@@ -83,6 +89,7 @@ HELP.calculus = [
   '  shells(f, x, a, b)  (about the y-axis)   arclength(f, x, a, b)   surfacearea of revolution: surfacearearev(f, x, a, b)   avgvalue(f, x, a, b)',
   '  convergence(n^2/2^n, n)  [converge, seriestest]  does the series converge? (term, geometric, ratio, root, p-series comparison, integral and alternating tests; absolute or conditional)   convergence(1/(n*ln(n)^2), n, 2)  starts at n = 2',
   '  radius(x^n/n, n, x, 1)  [radiusofconvergence, intervalofconvergence]  radius and interval of convergence of a power series (end points tested);  sentences work too:  "Does the series sum of n^2/2^n converge?"   "Find the interval of convergence of Σ_(n=1)^∞ (x-2)^n/(n 3^n)"',
+  '  fourier(x^2, x, -pi, pi)  [fourierseries]  Fourier series on (a, b): a0/2, general a_n and b_n, first harmonics;  piecewise: fourier(-1, 1, x, -pi, 0, pi) (f1 on (-pi, 0), f2 on (0, pi));  fouriercos(x, x, pi)  fouriersin(1, x, pi)  half-range cosine / sine series on (0, L);  terms=6 shows more harmonics',
   '  differential equations and Laplace transforms:  help ode',
 ].join('\n');
 HELP.logic = [
@@ -131,6 +138,11 @@ HELP.multivar = [
   '  critical points of f(x, y) (and f(x, y, z)) with the second-derivative test:   critical(x^3 - 3*x*y + y^3, x, y)',
   '  Lagrange multipliers:   lagrange(x*y, x + y, 10, x, y)   (maximise/minimise f on g = c);  lagrange(f, g, x, y) means g = 0',
   '  double and triple integrals are nested:   integrate(integrate(x*y, y, 0, x), x, 0, 2)   (inner limits may contain the outer variable)',
+  '  applications (limits are listed from the OUTER variable to the INNER one; single letters; θ is t, φ is f, ρ is r):',
+  '     lamina(rho, x, a, b, y, g1, g2)   mass, centre of mass, moments and inertia of a lamina       solid(rho, x, a, b, y, g1, g2, z, h1, h2)   the same for a solid',
+  '     polarint(f, t, 0, 2*pi, r, 0, 1)   cylint(f, t, t0, t1, r, r0, r1, z, z0, z1)   sphint(f, t, 0, 2*pi, f, 0, pi, r, 0, 1)   (x, y, z in f are replaced by the coordinates; Jacobians r and r² sin φ)',
+  '     surfacearea(x^2 + y^2, x, 0, 1, y, 0, 1)  [surfarea]  graph or parametric surfacearea([cos(u), sin(u), v], u, 0, 2*pi, v, 0, 1)      flux([x, y, z], [sin(f)*cos(t), sin(f)*sin(t), cos(f)], f, 0, pi, t, 0, 2*pi)  [surfaceintegral]  flux through a surface (normal r_u × r_v; -1 as a last argument reverses it)',
+  '     green(-y, x, x, -1, 1, y, -sqrt(1 - x^2), sqrt(1 - x^2))   divtheorem([x, y, z], x, 0, 1, y, 0, 1, z, 0, 1) [gauss]   stokes([-y, x, 0], [r*cos(t), r*sin(t), 1 - r^2], r, 0, 1, t, 0, 2*pi)    (exact when the integrator finds antiderivatives, otherwise a decimal)',
 ].join('\n');
 HELP.optimize = [
   'OPTIMISATION',
@@ -146,6 +158,9 @@ HELP.algebra = [
   '  factor(x^4 - 1)   factor(360)   expand((x+1)^5)   simplify(sin(x)^2 + cos(x)^2)',
   '  apart((3x+2)/(x^2-x-2))            partial fractions;   divide(x^3+1, x+1)   polynomial division',
   '  gcd(12, 18) gcd(x^2-1, x^2+2x+1)   lcm(4, 6)   (also with 3 or more numbers)',
+  '  ratroots(2x^3 - 3x^2 - 8x - 3)  [rationalroots]  rational zeros with the candidates ±p/q      endbehavior(-2x^3 + x)  as x → ±∞ (limits, degree and leading coefficient)      evenodd(x^3 - x)  [parity]  even, odd or neither',
+  '  rangeof(x/(x^2+1))  [functionrange]  range as intervals (e.g. [-1/2, 1/2], (-∞, 0) ∪ (0, ∞)), from the extrema, end values and limits      coeff((1 + 2x)^6, x, 3)  [coefficient]  coefficient of x^3 in an expansion (k = 0: the constant term)',
+  '  sinusoid(3*sin(2x - pi) + 1)  [trigprops]  amplitude, period, frequency, phase shift, vertical shift, midline, maximum and minimum (sin, cos; tan, cot, sec, csc give period and asymptotes)',
   '  complex: write i;  (1+i)^10,  1/(2+i),  abs(3+4i),  e^(i*pi),  conj(z),  re(z),  im(z),  arg(z)',
   '           polar(1+i)   rect(r, theta)   cis(theta)   nthroots(z, n)   unityroots(n)',
   '           z^2 + 2z + 5 = 0,  (2+i)z = 3 - i   (equations of degree 1 or 2 with complex coefficients)',
@@ -163,6 +178,7 @@ HELP.matrix = [
   '  svd(A) [singularvalues]  singular values (exact when possible), rank, norm, condition number, U and V as decimals',
   '  expm(A) [matrixexp, matrixexponential]  e^A   expm(A, t)  e^(At) exactly when the eigenvalues are rational or A is 2×2   jordan(A) [jordanform]  Jordan form J and P with A = P J P⁻¹ (rational eigenvalues)',
   '  A system  2x + y = 5; x - y = 1  can also be written directly as equations.',
+  'independent([1,2,3],[4,5,6],[7,8,9])  [linindep]  linearly independent or dependent (with a relation)   inspan([1,2,3],[1,0,1],[0,1,1])  [span]  is the vector in the span, with the coefficients   nullity(A)  rank, nullity and a basis of the null space',
 ].join('\n');
 HELP.number = [
   'NUMBER THEORY, COUNTING, SEQUENCES, SETS',
@@ -193,6 +209,7 @@ HELP.stats = [
   '  other tests:  anova([g1], [g2], [g3])   corrtest(xs, ys)   vartest(s, n, sigma0)   ftest2(s1, n1, s2, n2)   varinterval(s, n, 0.95)   samplesize(sigma, E, conf)   samplesizeprop(E, conf, p)   clt(mu, sigma, n, x)   binomnormal(n, p, k)',
   '  descriptive:  outliers(list)  fivenum  mad  skewness  kurtosis  geomean  harmean  rms  cv  wmean([values], [weights])  zscores  percentrank(list, x)  freqtable(list, width)  stemleaf(list)  grouped([midpoints], [freqs])  ranks  spearman(xs, ys)  kendall(xs, ys)',
   '  regression:  multireg([[x1, x2], ...], [y...], [x1, x2])   expreg  powerreg  logreg (xs, ys, x0)     Markov chains: markov([[0.9,0.1],[0.5,0.5]], 3, [1,0])     coupon(n)',
+  'regression inference and rank / exact tests:  reginf(xs, ys)  reginf(xs, ys, 0.9, x0)  slope and intercept (SE, t, p, confidence intervals), r², F, interval at x0      mannwhitney(xs, ys) [ranksum]   wilcoxon(d)  wilcoxon(before, after)   kruskalwallis(g1, g2, g3)   signtest(xs, median)   fisherexact([[8,2],[1,5]])   mcnemar([[59,6],[16,80]])',
   '  ztest(mean, mu0, sigma, n)   ttest(mean, s, n, mu0)  or ttest([data], mu0)   proptest(x, n, p0)   chisqtest([[10,20],[30,40]])  or  chisqtest(observed, expected)',
 ].join('\n');
 HELP.geometry = [

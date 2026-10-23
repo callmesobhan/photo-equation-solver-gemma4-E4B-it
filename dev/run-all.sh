@@ -47,6 +47,10 @@ echo; echo "== 8t. plain-English phrasings give exactly the answer of the comman
 echo; echo "== 8u. plane geometry (circles, tangents, lines, triangle centres, transformations, hulls) vs sympy.geometry"; for s in 1 2; do node coord2d-battery.mjs "$skill" $s; done
 echo; echo "== 8v. equations with an interval for the unknown (trig, exponential, polynomial) vs a fine scan + brentq and polynomials with chosen roots"; for s in 1 2; do node window-battery.mjs "$skill" $s; done
 echo; echo "== 8w. equilibria and phase portraits (phase lines, Jacobian types of planar systems, linear classification) vs sympy exact trace / determinant signs"; for s in 1 2; do node phase-battery.mjs "$skill" $s; done
+echo; echo "== 8x. regression inference and rank / exact tests (Mann-Whitney, Wilcoxon, Kruskal-Wallis, sign, Fisher, McNemar) vs scipy.stats"; for s in 1 2; do node inference2-battery.mjs "$skill" $s; done
+echo; echo "== 8y. Fourier series (piecewise, |x - c|, half-range) coefficients vs adaptive quadrature"; for s in 1 2; do node fourier-battery.mjs "$skill" $s; done
+echo; echo "== 8z. precalculus helpers (sinusoids, independence / span, rational zeros, end behaviour, parity, coefficients, range of a function) vs closed forms and sympy"; for s in 1 2; do node precalc-battery.mjs "$skill" $s; done
+echo; echo "== 8za. applications of multiple integrals (lamina, solid, polar / cylindrical / spherical, surface area, flux) and the theorems of Green, Gauss and Stokes vs sympy / scipy and the other side of each theorem"; for s in 1 2; do node vectorcalc-battery.mjs "$skill" $s; done
 echo; echo "== 8h. random limits, Taylor polynomials, definite integrals (pole detection) and finite sums, checked numerically"; for s in 1 2; do node calc-random-battery.mjs "$skill" $s 80; done
 echo; echo "== 8i. random equations (rational, radical, exponential, log, abs, polynomial) and inequalities, checked by a numerical scan"; for s in 1 2; do node eq-battery.mjs "$skill" $s 80; done
 echo; echo "== 8g. random rational functions (non-monic factors): apart, integrals, inverse Laplace, checked numerically"; for s in 1 2; do node rational-battery.mjs "$skill" $s 100; done

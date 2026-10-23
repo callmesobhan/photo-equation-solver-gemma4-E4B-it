@@ -11190,6 +11190,7 @@ defCmd('chisqtest chitest', (n) => {
     const rows = T.map(sumQ);
     const cols = T[0].map((_, j) => sumQ(T.map((r) => r[j])));
     const tot = sumQ(rows);
+    if (rows.some((r) => !(r.sign() > 0)) || cols.some((c) => !(c.sign() > 0))) throw new MathError('every row and every column of the table needs a positive total');
     T.forEach((r, i) => r.forEach((o, j) => {
       const e = rows[i].mul(cols[j]).div(tot).toNumber();
       chi += (o.toNumber() - e) ** 2 / e;
@@ -11201,6 +11202,7 @@ defCmd('chisqtest chitest', (n) => {
     const tot = sumQ(obs);
     const exp = n.args[1] ? dataOf([n.args[1]], 'chisqtest') : obs.map(() => tot.div(qInt(obs.length)));
     if (exp.length !== obs.length) throw new MathError('the observed and expected lists must have the same length');
+    if (exp.some((e) => !(e.sign() > 0))) throw new MathError('every expected count must be positive');
     obs.forEach((o, i) => { chi += (o.toNumber() - exp[i].toNumber()) ** 2 / exp[i].toNumber(); });
     df = obs.length - 1;
     out.work.push('Goodness of fit: \u03c7\u00b2 = \u03a3 (O \u2212 E)\u00b2 / E;  df = categories \u2212 1 = ' + df);
@@ -13021,7 +13023,13 @@ HELP.words = [
   '  matrices   "determinant of [[1,2],[3,4]]"  "inverse of ..."  "eigenvalues of ..."  "rank / transpose / trace / rref of ..."  "dot product of [1,2,3] and [4,5,6]"  "angle between [1,0] and [1,1]"',
   '  data       "mean of 2, 4, 6, 8"  "median of ..."  "standard deviation of ..." (sample; "population standard deviation of ..." for the population)  "correlation between [1,2,3,4] and [2,4,5,9]"',
   '             "probability of exactly 3 heads in 5 coin flips"  "z-score of 85 with mean 70 and standard deviation 10"  "X is normally distributed with mean 100 and standard deviation 15, find P(X < 120)"',
+  '  precalc    "amplitude and period of y = 3 sin(2x - pi) + 1"  "the range of 1/(x^2+1)"  "end behavior of -2x^3 + x"  "is x^3 - x even or odd"  "the rational zeros of 2x^3 - 3x^2 - 8x - 3"  "the coefficient of x^3 in (1 + 2x)^6"',
+  '             "divide x^3 - 2x^2 + x - 5 by x - 2"  "the 10th term of the arithmetic sequence 3, 7, 11"  "solve the triangle with a = 5, b = 7, C = 60 degrees"  "arcsin(1/2) in degrees"  "exact value of cos(15 degrees)"',
+  '  linear alg "are the vectors [1,2,3], [4,5,6], [7,8,9] linearly independent"  "is [1,2,3] in the span of [1,0,1] and [0,1,1]"  "dimension of the null space of [[1,2,3],[2,4,6]]"  "basis for the column space of [[1,2],[3,4]]"',
+  '  chance     "probability of drawing 2 aces from a standard deck"  "A bag contains 3 red and 5 blue marbles. What is the probability of drawing 2 red marbles?"  "probability of rolling a sum of 7 with two dice"',
   '  ODEs       "equilibrium points of y\' = y(1 - y)"  "classify the equilibria of x\' = x(1 - y), y\' = y(x - 1)"  "stability of the system x\' = -x + 2y; y\' = -2x - y"',
+  '  tests      "Mann-Whitney U test for [1,3,5,7] and [2,4,6,8,10]"  "Wilcoxon signed-rank test for [125,115,130,140] and [110,122,125,120]"  "Kruskal-Wallis test of [2,3,6,7], [4,8,9,10], [1,5,11,12,13]"  "Fisher\'s exact test for [[8,2],[1,5]]"  "regression inference for [1,2,3,4,5] and [2,4,5,4,6]"',
+  '  Fourier    "Fourier series of f(x) = x on (-pi, pi)"  "Fourier cosine series of x on (0, pi)"  "half-range sine series of 1 on (0, pi)"',
   '  money      "compound interest on $1000 at 5% for 10 years compounded monthly"  "simple interest on $2000 at 4% for 3 years"  "monthly payment on a $200,000 loan at 6% for 30 years"',
 ].join('\n');
 HELP.syntax = [
@@ -13063,6 +13071,7 @@ HELP.calculus = [
   '  shells(f, x, a, b)  (about the y-axis)   arclength(f, x, a, b)   surfacearea of revolution: surfacearearev(f, x, a, b)   avgvalue(f, x, a, b)',
   '  convergence(n^2/2^n, n)  [converge, seriestest]  does the series converge? (term, geometric, ratio, root, p-series comparison, integral and alternating tests; absolute or conditional)   convergence(1/(n*ln(n)^2), n, 2)  starts at n = 2',
   '  radius(x^n/n, n, x, 1)  [radiusofconvergence, intervalofconvergence]  radius and interval of convergence of a power series (end points tested);  sentences work too:  "Does the series sum of n^2/2^n converge?"   "Find the interval of convergence of \u03a3_(n=1)^\u221e (x-2)^n/(n 3^n)"',
+  '  fourier(x^2, x, -pi, pi)  [fourierseries]  Fourier series on (a, b): a0/2, general a_n and b_n, first harmonics;  piecewise: fourier(-1, 1, x, -pi, 0, pi) (f1 on (-pi, 0), f2 on (0, pi));  fouriercos(x, x, pi)  fouriersin(1, x, pi)  half-range cosine / sine series on (0, L);  terms=6 shows more harmonics',
   '  differential equations and Laplace transforms:  help ode',
 ].join('\n');
 HELP.logic = [
@@ -13111,6 +13120,11 @@ HELP.multivar = [
   '  critical points of f(x, y) (and f(x, y, z)) with the second-derivative test:   critical(x^3 - 3*x*y + y^3, x, y)',
   '  Lagrange multipliers:   lagrange(x*y, x + y, 10, x, y)   (maximise/minimise f on g = c);  lagrange(f, g, x, y) means g = 0',
   '  double and triple integrals are nested:   integrate(integrate(x*y, y, 0, x), x, 0, 2)   (inner limits may contain the outer variable)',
+  '  applications (limits are listed from the OUTER variable to the INNER one; single letters; \u03b8 is t, \u03c6 is f, \u03c1 is r):',
+  '     lamina(rho, x, a, b, y, g1, g2)   mass, centre of mass, moments and inertia of a lamina       solid(rho, x, a, b, y, g1, g2, z, h1, h2)   the same for a solid',
+  '     polarint(f, t, 0, 2*pi, r, 0, 1)   cylint(f, t, t0, t1, r, r0, r1, z, z0, z1)   sphint(f, t, 0, 2*pi, f, 0, pi, r, 0, 1)   (x, y, z in f are replaced by the coordinates; Jacobians r and r\u00b2 sin \u03c6)',
+  '     surfacearea(x^2 + y^2, x, 0, 1, y, 0, 1)  [surfarea]  graph or parametric surfacearea([cos(u), sin(u), v], u, 0, 2*pi, v, 0, 1)      flux([x, y, z], [sin(f)*cos(t), sin(f)*sin(t), cos(f)], f, 0, pi, t, 0, 2*pi)  [surfaceintegral]  flux through a surface (normal r_u \u00d7 r_v; -1 as a last argument reverses it)',
+  '     green(-y, x, x, -1, 1, y, -sqrt(1 - x^2), sqrt(1 - x^2))   divtheorem([x, y, z], x, 0, 1, y, 0, 1, z, 0, 1) [gauss]   stokes([-y, x, 0], [r*cos(t), r*sin(t), 1 - r^2], r, 0, 1, t, 0, 2*pi)    (exact when the integrator finds antiderivatives, otherwise a decimal)',
 ].join('\n');
 HELP.optimize = [
   'OPTIMISATION',
@@ -13126,6 +13140,9 @@ HELP.algebra = [
   '  factor(x^4 - 1)   factor(360)   expand((x+1)^5)   simplify(sin(x)^2 + cos(x)^2)',
   '  apart((3x+2)/(x^2-x-2))            partial fractions;   divide(x^3+1, x+1)   polynomial division',
   '  gcd(12, 18) gcd(x^2-1, x^2+2x+1)   lcm(4, 6)   (also with 3 or more numbers)',
+  '  ratroots(2x^3 - 3x^2 - 8x - 3)  [rationalroots]  rational zeros with the candidates \u00b1p/q      endbehavior(-2x^3 + x)  as x \u2192 \u00b1\u221e (limits, degree and leading coefficient)      evenodd(x^3 - x)  [parity]  even, odd or neither',
+  '  rangeof(x/(x^2+1))  [functionrange]  range as intervals (e.g. [-1/2, 1/2], (-\u221e, 0) \u222a (0, \u221e)), from the extrema, end values and limits      coeff((1 + 2x)^6, x, 3)  [coefficient]  coefficient of x^3 in an expansion (k = 0: the constant term)',
+  '  sinusoid(3*sin(2x - pi) + 1)  [trigprops]  amplitude, period, frequency, phase shift, vertical shift, midline, maximum and minimum (sin, cos; tan, cot, sec, csc give period and asymptotes)',
   '  complex: write i;  (1+i)^10,  1/(2+i),  abs(3+4i),  e^(i*pi),  conj(z),  re(z),  im(z),  arg(z)',
   '           polar(1+i)   rect(r, theta)   cis(theta)   nthroots(z, n)   unityroots(n)',
   '           z^2 + 2z + 5 = 0,  (2+i)z = 3 - i   (equations of degree 1 or 2 with complex coefficients)',
@@ -13143,6 +13160,7 @@ HELP.matrix = [
   '  svd(A) [singularvalues]  singular values (exact when possible), rank, norm, condition number, U and V as decimals',
   '  expm(A) [matrixexp, matrixexponential]  e^A   expm(A, t)  e^(At) exactly when the eigenvalues are rational or A is 2\u00d72   jordan(A) [jordanform]  Jordan form J and P with A = P J P\u207b\u00b9 (rational eigenvalues)',
   '  A system  2x + y = 5; x - y = 1  can also be written directly as equations.',
+  'independent([1,2,3],[4,5,6],[7,8,9])  [linindep]  linearly independent or dependent (with a relation)   inspan([1,2,3],[1,0,1],[0,1,1])  [span]  is the vector in the span, with the coefficients   nullity(A)  rank, nullity and a basis of the null space',
 ].join('\n');
 HELP.number = [
   'NUMBER THEORY, COUNTING, SEQUENCES, SETS',
@@ -13173,6 +13191,7 @@ HELP.stats = [
   '  other tests:  anova([g1], [g2], [g3])   corrtest(xs, ys)   vartest(s, n, sigma0)   ftest2(s1, n1, s2, n2)   varinterval(s, n, 0.95)   samplesize(sigma, E, conf)   samplesizeprop(E, conf, p)   clt(mu, sigma, n, x)   binomnormal(n, p, k)',
   '  descriptive:  outliers(list)  fivenum  mad  skewness  kurtosis  geomean  harmean  rms  cv  wmean([values], [weights])  zscores  percentrank(list, x)  freqtable(list, width)  stemleaf(list)  grouped([midpoints], [freqs])  ranks  spearman(xs, ys)  kendall(xs, ys)',
   '  regression:  multireg([[x1, x2], ...], [y...], [x1, x2])   expreg  powerreg  logreg (xs, ys, x0)     Markov chains: markov([[0.9,0.1],[0.5,0.5]], 3, [1,0])     coupon(n)',
+  'regression inference and rank / exact tests:  reginf(xs, ys)  reginf(xs, ys, 0.9, x0)  slope and intercept (SE, t, p, confidence intervals), r\u00b2, F, interval at x0      mannwhitney(xs, ys) [ranksum]   wilcoxon(d)  wilcoxon(before, after)   kruskalwallis(g1, g2, g3)   signtest(xs, median)   fisherexact([[8,2],[1,5]])   mcnemar([[59,6],[16,80]])',
   '  ztest(mean, mu0, sigma, n)   ttest(mean, s, n, mu0)  or ttest([data], mu0)   proptest(x, n, p0)   chisqtest([[10,20],[30,40]])  or  chisqtest(observed, expected)',
 ].join('\n');
 HELP.geometry = [
@@ -15140,6 +15159,7 @@ defCmd('stemleaf stemandleaf', (n) => {
   });
   const first = Number(vs[0].n / 10n);
   const last = Number(vs[vs.length - 1].n / 10n);
+  if (last - first > 200) throw new MathError('the values span ' + (last - first + 1) + ' stems; a stem-and-leaf plot is meant for data within a few hundred (use freqtable or a histogram for wide ranges)');
   const out = newOut();
   out.answer.push('stem | leaves');
   for (let s = first; s <= last; s++) out.answer.push(String(s).padStart(4) + ' | ' + (stems.get(String(s)) || []).join(' '));
@@ -20180,7 +20200,7 @@ function wRules(s) {
   const T = (x) => x.replace(/^\s*(?:(?:the|a|an)\s+)?/i, '');
 
   // ---- equation with an interval for the unknown
-  if (/[<>\u2264\u2265]|\[|\(/.test(s) && /=/.test(s)) {
+  if (/[<>\u2264\u2265]|\[|\(/.test(s) && /=/.test(s) && !/\b(?:fourier|series|integral|integrate|derivative|limit|laplace|average|area|volume|length|taylor|maclaurin|sum|plot|graph|domain|tangent)\b/i.test(s)) {
     const win = wWindow(s.replace(/^solve\s+(?:the\s+equation\s+)?/i, ''));
     if (win) return win;
   }
@@ -20544,7 +20564,7 @@ function wRules(s) {
     if (/;/.test(mm[1]) && /^\[.*\]$/.test(mm[1].trim())) return wCall(cmd, mm[1].trim());
     return null;
   };
-  const MATS = [['determinant|det', 'det'], ['inverse', 'inv'], ['transpose', 'transpose'], ['trace', 'trace'], ['rank', 'rank'], ['(?:reduced\\s+)?row\\s+echelon\\s+form|rref', 'rref'], ['eigenvalues\\s+and\\s+eigenvectors|eigenvectors\\s+and\\s+eigenvalues|eigenvalues|eigenvectors|eigen\\s*system', 'eigen'],
+  const MATS = [['nullity|dimension\\s+of\\s+(?:the\\s+)?(?:null\\s*space|kernel)', 'nullity'], ['(?:a\\s+)?basis\\s+(?:for|of)\\s+(?:the\\s+)?(?:column\\s+space|range|image)', 'colspace'], ['(?:a\\s+)?basis\\s+(?:for|of)\\s+(?:the\\s+)?(?:null\\s*space|kernel)', 'nullspace'], ['determinant|det', 'det'], ['inverse', 'inv'], ['transpose', 'transpose'], ['trace', 'trace'], ['rank', 'rank'], ['(?:reduced\\s+)?row\\s+echelon\\s+form|rref', 'rref'], ['eigenvalues\\s+and\\s+eigenvectors|eigenvectors\\s+and\\s+eigenvalues|eigenvalues|eigenvectors|eigen\\s*system', 'eigen'],
     ['characteristic\\s+polynomial', 'charpoly'], ['null\\s*space|kernel', 'nullspace'], ['column\\s+space', 'colspace'], ['lu\\s+(?:decomposition|factori[sz]ation)', 'lu'], ['qr\\s+(?:decomposition|factori[sz]ation)', 'qr'],
     ['singular\\s+values?(?:\\s+decomposition)?|svd', 'svd'], ['diagonali[sz]ation', 'diagonalize'], ['cholesky\\s+(?:decomposition|factori[sz]ation)', 'cholesky'], ['pseudo-?inverse', 'pinv'], ['matrix\\s+exponential', 'expm'], ['jordan\\s+(?:normal\\s+)?form', 'jordan']];
   for (const [words, cmd] of MATS) {
@@ -20554,6 +20574,15 @@ function wRules(s) {
   if ((m = /^(?:diagonali[sz]e|invert|transpose)\s+(?:(?:the|a|an)\s+)?(?:matrix\s+)?(\[.*\])$/i.exec(s))) return wCall(/^diag/i.test(s) ? 'diagonalize' : /^inv/i.test(s) ? 'inv' : 'transpose', m[1]);
   if ((m = /^(?:is\s+)?(?:(?:the|a|an)\s+)?(?:matrix\s+)?(\[.*\])\s+(?:positive\s+definite|invertible|singular|diagonali[sz]able)$/i.exec(s))) return /definite/i.test(s) ? wCall('definite', m[1]) : /diagonali/i.test(s) ? wCall('diagonalize', m[1]) : wCall('det', m[1]);
   if ((m = /^(?:solve\s+)?(?:(?:the|a|an)\s+)?(?:linear\s+)?system\s+(?:with\s+)?(?:coefficient\s+)?matrix\s+(\[\[.*\]\])\s+(?:and\s+(?:right[- ]hand\s+side|constants?|vector)|=|\*\s*x\s*=)\s*(\[.*\])$/i.exec(s))) return wCall('linsolve', m[1], m[2]);
+  if ((m = /^(?:are|is)\s+(?:the\s+)?(?:vectors?\s+)?(.+?)\s+linearly\s+(independent|dependent)$/i.exec(s)) || (m = /^(?:the\s+)?linear\s+(independence|dependence)\s+of\s+(?:the\s+)?(?:vectors?\s+)?(.+)$/i.exec(s)) && (m = [m[0], m[2], m[1]])) {
+    const vs = wBrackets(m[1]).length ? wBrackets(m[1]) : wPoints(m[1]).map(wVec);
+    if (vs.length >= 1) return wCall('independent', ...vs);
+  }
+  if ((m = /^(?:is|does)\s+(?:the\s+)?(?:vector\s+)?(\[[^\[\]]*\]|\([^()]*\)|<[^<>]*>)\s+(?:in|lie\s+in|belong\s+to)\s+(?:the\s+)?span\s+of\s+(?:the\s+)?(?:vectors?\s+)?(.+)$/i.exec(s)) || (m = /^(?:can|could)\s+(?:the\s+)?(?:vector\s+)?(\[[^\[\]]*\]|\([^()]*\)|<[^<>]*>)\s+be\s+(?:written|expressed)\s+as\s+a\s+linear\s+combination\s+of\s+(?:the\s+)?(?:vectors?\s+)?(.+)$/i.exec(s))) {
+    const t = wBrackets(m[1]).length ? wBrackets(m[1])[0] : wPoints(m[1]).map(wVec)[0];
+    const gens = wBrackets(m[2]).length ? wBrackets(m[2]) : wPoints(m[2]).map(wVec);
+    if (t && gens.length) return wCall('inspan', t, ...gens);
+  }
   const vecs = (rest) => {
     const br = wBrackets(rest);
     if (br.length === 2) return br;
@@ -20634,6 +20663,96 @@ function wRules(s) {
     if (/<|less|below|fewer|\u2264/i.test(op)) return wCall('normalcdf', '-oo', a, mu, sd);
     return wCall('normalcdf', a, 'oo', mu, sd);
   }
+
+  // ---- rank / exact tests, regression inference
+  const lists = (str) => wBrackets(str).filter((b) => !/^\[\s*\[/.test(b));
+  if ((m = /^(?:the\s+)?(?:mann[- ]whitney(?:\s+u)?|wilcoxon\s+rank[- ]sum)(?:\s+test)?\s+(?:of|for|on|with|between)\s+(.+)$/i.exec(s))) {
+    const L = lists(m[1]);
+    if (L.length === 2) return wCall('mannwhitney', L[0], L[1]);
+  }
+  if ((m = /^(?:the\s+)?wilcoxon(?:\s+signed[- ]rank)?(?:\s+test)?\s+(?:of|for|on|with|between)\s+(.+)$/i.exec(s))) {
+    const L = lists(m[1]);
+    if (L.length === 2) return wCall('wilcoxon', L[0], L[1]);
+    if (L.length === 1) return wCall('wilcoxon', L[0]);
+  }
+  if ((m = /^(?:the\s+)?kruskal[- ]wallis(?:\s+(?:h\s+)?test)?\s+(?:of|for|on|with|between)\s+(.+)$/i.exec(s))) {
+    const L = lists(m[1]);
+    if (L.length >= 2) return wCall('kruskalwallis', ...L);
+  }
+  if ((m = /^(?:the\s+)?sign\s+test\s+(?:of|for|on|with)\s+(.+?)(?:\s+(?:against|versus|vs\.?|with\s+median|median)\s+(-?[\d.]+))?$/i.exec(s))) {
+    const L = lists(m[1]);
+    if (L.length === 2) return wCall('signtest', L[0], L[1]);
+    if (L.length === 1 && m[2]) return wCall('signtest', L[0], m[2]);
+  }
+  if ((m = /^(?:the\s+)?fisher'?s?(?:\s+exact)?(?:\s+test)?\s+(?:of|for|on|with)\s+(?:the\s+)?(?:table\s+)?(\[\s*\[.*\]\s*\])$/i.exec(s))) return wCall('fisherexact', m[1]);
+  if ((m = /^(?:the\s+)?mcnemar'?s?(?:\s+test)?\s+(?:of|for|on|with)\s+(?:the\s+)?(?:table\s+)?(\[\s*\[.*\]\s*\])$/i.exec(s))) return wCall('mcnemar', m[1]);
+  if ((m = /^(?:(?:test|inference|confidence\s+interval|t[- ]test)\s+(?:for|of|on)\s+)?(?:the\s+)?(?:slope|regression\s+(?:slope|inference)|slope\s+of\s+(?:the\s+)?regression\s+line)\s+(?:of|for|on|with|between)\s+(.+)$/i.exec(s)) || (m = /^regression\s+(?:inference|analysis|test)\s+(?:of|for|on|with|between)\s+(.+)$/i.exec(s))) {
+    const L = lists(m[1]);
+    if (L.length === 2) return wCall('reginf', L[0], L[1]);
+  }
+
+  // ---- Fourier series
+  if ((m = /^(?:the\s+)?(?:(half[- ]range)\s+)?fourier\s+(sine|cosine|)\s*(?:series|expansion)(?:\s+(?:expansion|representation))?\s+(?:of|for)\s+(.+)$/i.exec(s)) || (m = /^(?:the\s+)?(half[- ]range)\s+()?(sine|cosine)\s+(?:series|expansion)\s+(?:of|for)\s+(.+)$/i.exec(s)) && (m = [m[0], m[1], m[3], m[4]])) {
+    const pe = wPeel(m[3]);
+    const f = wE(pe.rest);
+    const kind = m[2].toLowerCase();
+    if (pe.lo != null) {
+      const v = pe.v || wVarOf(f);
+      if (kind) return wCall(kind === 'sine' ? 'fouriersin' : 'fouriercos', f, v, wBound(pe.hi));
+      return wCall('fourier', f, v, wBound(pe.lo), wBound(pe.hi));
+    }
+  }
+
+  // ---- precalculus helpers
+  if ((m = /^(?:the\s+)?(?:amplitude|period|phase\s+shift|frequency|vertical\s+shift|midline)(?:\s*,?\s*(?:and\s+)?(?:amplitude|period|phase\s+shift|frequency|vertical\s+shift|midline))*\s+of\s+(?:the\s+)?(?:function\s+)?(.+)$/i.exec(s)) && /\b(?:sin|cos|tan|cot|sec|csc)\b/i.test(m[1])) return wCall('sinusoid', wE(m[1]));
+  if ((m = /^(?:the\s+)?(?:rational|possible\s+rational)\s+(?:zeros|roots)(?:\s+and\s+(?:zeros|roots))?\s+(?:of|for)\s+(.+)$/i.exec(s))) return wCall('ratroots', wE(m[1]));
+  if ((m = /^(?:the\s+)?end\s+behaviou?r\s+of\s+(?:the\s+)?(?:function\s+|polynomial\s+)?(.+)$/i.exec(s))) return wCall('endbehavior', wE(m[1]));
+  if ((m = /^(?:the\s+)?range\s+of\s+(?:the\s+)?(?:function\s+)?(.+)$/i.exec(s)) && /[a-z]/i.test(m[1]) && !wNums(m[1])) return wCall('rangeof', wE(m[1]));
+  if ((m = /^(?:the\s+)?domain\s+and\s+range\s+of\s+(?:the\s+)?(?:function\s+)?(.+)$/i.exec(s))) return wCall('rangeof', wE(m[1]));
+  if ((m = /^(?:is|determine\s+whether|determine\s+if|check\s+whether|decide\s+whether)\s+(?:the\s+function\s+)?(.+?)\s+(?:is\s+)?even,?\s+(?:or\s+)?odd(?:,?\s+or\s+neither)?$/i.exec(s)) || (m = /^(?:the\s+)?(?:symmetry|parity)\s+of\s+(?:the\s+)?(?:function\s+)?(.+)$/i.exec(s))) return wCall('evenodd', wE(m[1]));
+  if ((m = /^(?:the\s+)?(constant\s+term|coefficient\s+of\s+([a-z])(?:\^(\d+)|\s*\^\s*\(\s*(\d+)\s*\))?)\s+(?:in|of)\s+(?:the\s+)?(?:expansion\s+of\s+)?(.+)$/i.exec(s))) {
+    const v = m[2] ? m[2].toLowerCase() : wVarOf(m[5]);
+    return wCall('coeff', wE(m[5]), v, m[2] ? (m[3] || m[4] || '1') : '0');
+  }
+  if ((m = /^(?:the\s+)?(?:remainder\s+(?:when|of|if|after)\s+)(.+?)\s+(?:is\s+)?divided\s+by\s+(.+)$/i.exec(s)) && /[a-z]/i.test(m[1])) return wCall('divide', wE(m[1]), wE(m[2]));
+  if ((m = /^divide\s+(.+?)\s+by\s+(.+)$/i.exec(s)) && /[a-z]/i.test(m[1])) return wCall('divide', wE(m[1]), wE(m[2]));
+  if ((m = /^(?:the\s+)?exact\s+value\s+of\s+(.+)$/i.exec(s))) return wE(m[1].replace(/(\d+(?:\.\d+)?)\s*degrees?\b/gi, '$1\u00b0'));
+  if ((m = /^(.+?)\s+in\s+degrees$/i.exec(s)) && /\b(?:arcsin|arccos|arctan|asin|acos|atan|inverse)/i.test(m[1])) return '(' + wE(m[1]) + ')*180/pi';
+  if ((m = /^(?:the\s+)?(\d+)(?:st|nd|rd|th)\s+term\s+of\s+(?:the\s+)?(arithmetic|geometric)\s+(?:sequence|progression|series)\s*:?\s*(.+)$/i.exec(s)) || (m = /^(?:the\s+)?sum\s+of\s+(?:the\s+)?first\s+(\d+)\s+terms\s+of\s+(?:the\s+)?(arithmetic|geometric)\s+(?:sequence|progression|series)\s*:?\s*(.+)$/i.exec(s))) {
+    const nums = wNums(m[3].replace(/\.\.\.|\u2026/g, ''));
+    if (nums && nums.length >= 2) return /arith/i.test(m[2]) ? wCall('arith', nums[0], '(' + nums[1] + ') - (' + nums[0] + ')', m[1]) : wCall('geom', nums[0], '(' + nums[1] + ')/(' + nums[0] + ')', m[1]);
+  }
+  if ((m = /^(?:the\s+)?sum\s+of\s+(?:the\s+)?infinite\s+geometric\s+(?:series|sequence)\s*:?\s*(.+)$/i.exec(s))) {
+    const nums = wNums(m[1].replace(/\.\.\.|\u2026/g, ''));
+    if (nums && nums.length >= 2) return wCall('geom', nums[0], '(' + nums[1] + ')/(' + nums[0] + ')', '5');
+  }
+  if ((m = /^(?:solve\s+)?(?:the\s+)?(?:triangle|law\s+of\s+(?:sines|cosines))\s*(?:with|where|given|:|,)?\s*(.+)$/i.exec(s))) {
+    const params = [...m[1].matchAll(/\b([abcABC])\s*=\s*(\d+(?:\.\d+)?)/g)].map((x) => x[1] + '=' + x[2]);
+    if (params.length >= 3 && new Set(params.map((x) => x[0])).size === params.length) return wCall('triangle', ...params);
+  }
+  if ((m = /^(?:find\s+)?(?:the\s+)?(?:composition|compose)\s+(?:of\s+)?(?:the\s+functions\s+)?([a-z])\s*\(\s*x\s*\)\s*=\s*(.+?)\s+(?:and|with)\s+([a-z])\s*\(\s*x\s*\)\s*=\s*(.+)$/i.exec(s))) return wCall('compose', wE(m[2]), wE(m[4]), 'x');
+  // ---- cards, bags of balls, dice
+  const CARDS = { hearts: 13, heart: 13, spades: 13, spade: 13, clubs: 13, club: 13, diamonds: 13, diamond: 13, 'red cards': 26, 'red card': 26, 'black cards': 26, 'black card': 26, aces: 4, ace: 4, kings: 4, king: 4, queens: 4, queen: 4, jacks: 4, jack: 4, 'face cards': 12, 'face card': 12 };
+  const NUMW = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6 };
+  const cnt = (t) => (/^\d+$/.test(t) ? Number(t) : NUMW[t.toLowerCase()]);
+  if ((m = /^(?:the\s+)?probability\s+(?:of|that)\s+(?:you\s+)?(?:drawing|getting|picking|selecting|choosing|being\s+dealt|draw|get)\s+(a|an|one|two|three|four|five|six|\d+)\s+(hearts?|spades?|clubs?|diamonds?|red\s+cards?|black\s+cards?|aces?|kings?|queens?|jacks?|face\s+cards?)(?:\s+(?:in|from|out\s+of)\s+(a|one|two|three|four|five|six|\d+)\s+(?:draws?|cards?|picks?))?(?:\s+(?:in|from|out\s+of|of)\s+(?:a\s+)?(?:standard\s+|regular\s+)?(?:52[- ]card\s+)?(?:deck|pack)(?:\s+of\s+cards)?)?(?:\s+without\s+replacement)?$/i.exec(s))) {
+    const K = CARDS[m[2].toLowerCase().replace(/\s+/g, ' ')];
+    const k = cnt(m[1]);
+    const nn = m[3] ? cnt(m[3]) : k;
+    if (K && k != null && nn != null && /deck|pack|cards?|standard/i.test(s)) return wCall('hyperpdf', '52', K, nn, k);
+  }
+  if ((m = /^(?:(?:a|an|the)\s+)?(?:(?:bag|box|jar|urn|bowl|basket)\s+(?:contains|has|holds|with|is\s+filled\s+with)\s+)?(\d+\s+[a-z]+.*?)[.;,]?\s*(?:what\s+is\s+)?(?:the\s+)?probability\s+(?:of|that)\s+(?:you\s+)?(?:drawing|getting|picking|selecting|choosing|draw|get)\s+(a|an|one|two|three|four|five|six|\d+)\s+(\w+?)(?:s)?(?:\s+(?:ball|marble|bead|candy|candie|sock|chip|card|coin)s?)?(?:\s+(?:in|from|out\s+of)\s+(a|one|two|three|four|five|six|\d+)\s+(?:draws?|picks?|tries|balls?|marbles?))?(\s+with(?:out)?\s+replacement)?$/i.exec(s))) {
+    const items = [...m[1].matchAll(/(\d+)\s+([a-z]+?)(?:s)?\b(?!\s*(?:balls?|marbles?|beads?)\s+and)/gi)].filter((x) => !/^(?:balls?|marbles?|beads?|candies|candy|socks?|chips?|cards?|coins?|and|in|total)$/i.test(x[2]));
+    const total = items.reduce((t, x) => t + Number(x[1]), 0);
+    const want = items.find((x) => x[2].toLowerCase() === m[3].toLowerCase().replace(/s$/, ''));
+    const k = cnt(m[2]);
+    const nn = m[4] ? cnt(m[4]) : k;
+    if (want && total && k != null && nn != null && nn >= k) {
+      const withRepl = /with\s+replacement/i.test(m[5] || '') && !/without/i.test(m[5] || '');
+      return withRepl ? wCall('binompdf', nn, Number(want[1]) + '/' + total, k) : wCall('hyperpdf', total, want[1], nn, k);
+    }
+  }
+  if ((m = /^(?:the\s+)?probability\s+(?:of\s+)?(?:rolling|getting|throwing|obtaining)\s+(?:a\s+)?(?:total|sum)\s+of\s+(\d+)\s+(?:with|on|when\s+rolling|when\s+throwing|using)\s+(two|three|four|\d+)\s+(?:fair\s+|six-sided\s+|standard\s+)*dice$/i.exec(s))) return wCall('dice', cnt(m[2]), 6, m[1]);
 
   // ---- finance
   const money = (t) => t.replace(/[$,]/g, '');
@@ -21714,6 +21833,1241 @@ function phPortraitNote(M) {
   const r = phClassify(M[0][0], M[0][1], M[1][0], M[1][1]);
   return 'Phase portrait: the origin is a ' + r.label;
 }
+// ======================================================================
+// 31. Regression inference (slope / intercept tests and intervals, F test, predictions) and rank / exact tests:
+//     Mann-Whitney U, Wilcoxon signed-rank, Kruskal-Wallis, sign test, Fisher's exact test, McNemar's test.
+// ======================================================================
+const ni2Float = (q) => q.toNumber();
+const ni2P = (p) => fmtNum(Math.min(1, Math.max(0, p)));
+const ni2Sf = (z) => normCdf(-z); // upper tail of the standard normal
+const ni2BinHalf = (nn, k) => Math.exp(lgamma(nn + 1) - lgamma(k + 1) - lgamma(nn - k + 1) - nn * Math.LN2);
+/** average ranks (ties share the mean rank) and the sizes of the tie groups; values are exact rationals */
+function ni2Ranks(vals) {
+  const idx = vals.map((v, i) => i).sort((a, b) => vals[a].sub(vals[b]).sign());
+  const ranks = new Array(vals.length);
+  const ties = [];
+  for (let i = 0; i < idx.length;) {
+    let j = i;
+    while (j + 1 < idx.length && vals[idx[j + 1]].eq(vals[idx[i]])) j++;
+    const r = (i + j) / 2 + 1;
+    for (let k = i; k <= j; k++) ranks[idx[k]] = r;
+    ties.push(j - i + 1);
+    i = j + 1;
+  }
+  return { ranks, ties };
+}
+const ni2TieSum = (ties) => ties.reduce((s, t) => s + t * t * t - t, 0);
+
+// ---- regression inference -----------------------------------------------------------------------------------------------------------
+defCmd('reginf regressioninference slopetest', (n) => {
+  if (n.args.length < 2 || n.args[0].t !== 'list' || n.args[1].t !== 'list') throw new MathError('reginf needs two lists: reginf([1,2,3,4,5], [2,4,5,4,6])  (optionally the confidence level and an x0 for a prediction)');
+  const { xs, ys } = twoLists(n, 'reginf');
+  const nn = xs.length;
+  if (nn < 3) throw new MathError('at least 3 points are needed for inference on the slope');
+  const { mx, my, sxx, syy, sxy } = sums2(xs, ys);
+  if (sxx.isZero()) throw new MathError('all the x values are equal, so there is no regression line');
+  const conf = n.args[2] ? levelOf(n.args[2]) : 0.95;
+  const b = sxy.div(sxx);
+  const a = my.sub(b.mul(mx));
+  const sse = syy.sub(b.mul(sxy));
+  const df = nn - 2;
+  const out = newOut();
+  const bf = ni2Float(b);
+  const af = ni2Float(a);
+  const sseF = Math.max(0, ni2Float(sse));
+  const s = Math.sqrt(sseF / df);
+  const sxxF = ni2Float(sxx);
+  const mxF = ni2Float(mx);
+  const seB = s / Math.sqrt(sxxF);
+  const seA = s * Math.sqrt(1 / nn + (mxF * mxF) / sxxF);
+  const tcrit = invCdf((x) => tCdf(x, df), (1 + conf) / 2, -5, 5);
+  const r2 = syy.isZero() ? 1 : ni2Float(sxy.mul(sxy).div(sxx.mul(syy)));
+  out.answer.push('y = ' + fmtNum(af) + (bf < 0 ? ' \u2212 ' : ' + ') + fmtNum(Math.abs(bf)) + 'x');
+  if (seB === 0) {
+    out.answer.push('the points lie exactly on the line: the standard errors are 0, so no test is needed (r\u00b2 = 1)');
+    return out;
+  }
+  const tB = bf / seB;
+  const tA = af / seA;
+  const pB = 2 * (1 - tCdf(Math.abs(tB), df));
+  const pA = 2 * (1 - tCdf(Math.abs(tA), df));
+  out.answer.push('slope: b = ' + fmtNum(bf) + ',  SE = ' + fmtNum(seB) + ',  t = ' + fmtNum(tB) + ' (df = ' + df + '),  p-value (two-tailed) = ' + ni2P(pB));
+  out.answer.push(fmtNum(conf * 100) + '% confidence interval for the slope: (' + fmtNum(bf - tcrit * seB) + ', ' + fmtNum(bf + tcrit * seB) + ')');
+  out.answer.push('intercept: a = ' + fmtNum(af) + ',  SE = ' + fmtNum(seA) + ',  t = ' + fmtNum(tA) + ',  p-value = ' + ni2P(pA) + ';  ' + fmtNum(conf * 100) + '% CI (' + fmtNum(af - tcrit * seA) + ', ' + fmtNum(af + tcrit * seA) + ')');
+  out.answer.push('r\u00b2 = ' + fmtNum(r2) + ',  r = ' + fmtNum(Math.sign(bf) * Math.sqrt(r2)) + ',  residual standard error s = ' + fmtNum(s) + ' (df = ' + df + ')');
+  const ssr = ni2Float(sxy.mul(sxy).div(sxx));
+  const F = ssr / (sseF / df);
+  out.work.push('Sxx = ' + qText(sxx) + ',  Syy = ' + qText(syy) + ',  Sxy = ' + qText(sxy) + ';  SSE = Syy \u2212 b\u00b7Sxy = ' + fmtNum(sseF) + ',  s = \u221a(SSE/(n \u2212 2))');
+  out.work.push('ANOVA: SSR = ' + fmtNum(ssr) + ',  SSE = ' + fmtNum(sseF) + ',  SST = ' + fmtNum(ni2Float(syy)) + ';  F = SSR/(SSE/' + df + ') = ' + fmtNum(F) + ' (= t\u00b2 for the slope),  p = ' + ni2P(pB));
+  out.work.push('SE(b) = s/\u221aSxx,  SE(a) = s\u00b7\u221a(1/n + x\u0304\u00b2/Sxx);  critical value t* = ' + fmtNum(tcrit) + ' for ' + fmtNum(conf * 100) + '% confidence');
+  if (n.args[3]) {
+    const x0 = ni2Float(constQ(n.args[3]));
+    const yh = af + bf * x0;
+    const seMean = s * Math.sqrt(1 / nn + ((x0 - mxF) ** 2) / sxxF);
+    const sePred = s * Math.sqrt(1 + 1 / nn + ((x0 - mxF) ** 2) / sxxF);
+    out.answer.push('at x = ' + fmtNum(x0) + ': \u0177 = ' + fmtNum(yh) + ';  ' + fmtNum(conf * 100) + '% CI for the mean response (' + fmtNum(yh - tcrit * seMean) + ', ' + fmtNum(yh + tcrit * seMean) + ');  prediction interval for a new observation (' + fmtNum(yh - tcrit * sePred) + ', ' + fmtNum(yh + tcrit * sePred) + ')');
+  }
+  out.value = { num: pB };
+  return out;
+});
+
+// ---- Mann-Whitney U ------------------------------------------------------------------------------------------------------------------
+/** counts[u] = number of arrangements of n1 + n2 values with Mann-Whitney statistic u: the coefficients of the Gaussian binomial
+ *  [n1 + n2 choose n1]_q = prod_{i=1..m} (1 - q^(k + i)) / (1 - q^i) with m = min(n1, n2), k = max(n1, n2) */
+function ni2MwuCounts(n1, n2) {
+  const m = Math.min(n1, n2);
+  const k = Math.max(n1, n2);
+  const maxDeg = m * k;
+  const poly = new Float64Array(maxDeg + 1);
+  poly[0] = 1;
+  for (let i = 1; i <= m; i++) {
+    for (let d = maxDeg; d >= k + i; d--) poly[d] -= poly[d - (k + i)];
+    for (let d = i; d <= maxDeg; d++) poly[d] += poly[d - i];
+  }
+  return Array.from(poly);
+}
+defCmd('mannwhitney ranksum wilcoxonranksum mwu', (n) => {
+  needArgs(n, 2, 2, 'two lists: mannwhitney([1,3,5,7], [2,4,6,8,10])');
+  const x = listArg(n.args[0], 'mannwhitney');
+  const y = listArg(n.args[1], 'mannwhitney');
+  const n1 = x.length;
+  const n2 = y.length;
+  const { ranks, ties } = ni2Ranks(x.concat(y));
+  const R1 = ranks.slice(0, n1).reduce((s, r) => s + r, 0);
+  const U1 = R1 - (n1 * (n1 + 1)) / 2;
+  const U2 = n1 * n2 - U1;
+  const hasTies = ties.some((t) => t > 1);
+  const comb = Math.exp(lgamma(n1 + n2 + 1) - lgamma(n1 + 1) - lgamma(n2 + 1));
+  const exact = !(n1 > 8 && n2 > 8) && !hasTies && n1 * n2 <= 40000 && comb < 9e15;
+  const out = newOut();
+  let p2;
+  let pRight;
+  let pLeft;
+  let how;
+  if (exact) {
+    const counts = ni2MwuCounts(n1, n2);
+    const total = counts.reduce((s, v) => s + v, 0);
+    const sf = (u) => counts.slice(Math.max(0, Math.ceil(u - 1e-9))).reduce((s, v) => s + v, 0) / total;
+    pRight = sf(U1);
+    pLeft = sf(U2);
+    p2 = Math.min(1, 2 * sf(Math.max(U1, U2)));
+    how = 'exact distribution of U (no ties, a sample of at most 8)';
+  } else {
+    const mu = (n1 * n2) / 2;
+    const N = n1 + n2;
+    const sd = Math.sqrt(((n1 * n2) / 12) * (N + 1 - ni2TieSum(ties) / (N * (N - 1))));
+    if (!(sd > 0)) throw new MathError('all the values are equal, so the test is undefined');
+    const zOf = (u) => (u - mu - 0.5) / sd;
+    pRight = ni2Sf(zOf(U1));
+    pLeft = ni2Sf(zOf(U2));
+    p2 = Math.min(1, 2 * ni2Sf(zOf(Math.max(U1, U2))));
+    how = 'normal approximation with continuity correction' + (hasTies ? ' and tie correction' : '');
+  }
+  out.answer.push('U\u2081 = ' + fmtNum(U1) + ' (first sample),  U\u2082 = ' + fmtNum(U2));
+  out.answer.push('p-value: two-tailed ' + ni2P(p2) + ',  first sample larger (right-tailed) ' + ni2P(pRight) + ',  first sample smaller (left-tailed) ' + ni2P(pLeft));
+  out.work.push('rank sum of the first sample R\u2081 = ' + fmtNum(R1) + ',  U\u2081 = R\u2081 \u2212 n\u2081(n\u2081 + 1)/2 with n\u2081 = ' + n1 + ', n\u2082 = ' + n2 + ';  U\u2082 = n\u2081n\u2082 \u2212 U\u2081');
+  out.work.push('p-value from the ' + how);
+  out.notes.push('H0: the two samples come from the same distribution; reject when the p-value is below \u03b1.');
+  out.value = { num: p2 };
+  return out;
+});
+
+// ---- Wilcoxon signed-rank -------------------------------------------------------------------------------------------------------------
+/** counts[w] = number of subsets of {1..n} with sum w */
+function ni2SignedRankCounts(n) {
+  const max = (n * (n + 1)) / 2;
+  const c = new Array(max + 1).fill(0);
+  c[0] = 1;
+  for (let k = 1; k <= n; k++) for (let w = max; w >= k; w--) c[w] += c[w - k];
+  return c;
+}
+defCmd('wilcoxon signedrank wilcoxonsigned', (n) => {
+  if (!n.args.length || n.args[0].t !== 'list') throw new MathError('wilcoxon needs a list of differences, or two paired lists: wilcoxon([1.5,-0.5,2,3.1,-1]) or wilcoxon([125,115,130], [110,122,125])');
+  let d;
+  if (n.args[1] && n.args[1].t === 'list') {
+    const { xs, ys } = twoLists(n, 'wilcoxon');
+    d = xs.map((v, i) => v.sub(ys[i]));
+  } else {
+    const xs = listArg(n.args[0], 'wilcoxon');
+    const m0 = n.args[1] ? constQ(n.args[1]) : Q0;
+    d = xs.map((v) => v.sub(m0));
+  }
+  const nAll = d.length;
+  const nz = d.filter((v) => !v.isZero());
+  const zeros = nAll - nz.length;
+  const nn = nz.length;
+  if (nn < 1) throw new MathError('all the differences are zero, so there is nothing to rank');
+  const { ranks, ties } = ni2Ranks(nz.map((v) => v.abs()));
+  let rPlus = 0;
+  let rMinus = 0;
+  nz.forEach((v, i) => { if (v.sign() > 0) rPlus += ranks[i]; else rMinus += ranks[i]; });
+  const hasTies = ties.some((t) => t > 1);
+  const exact = !hasTies && zeros === 0 && nAll <= 50;
+  const W = Math.min(rPlus, rMinus);
+  let p2;
+  let pRight;
+  let pLeft;
+  let how;
+  if (exact) {
+    const counts = ni2SignedRankCounts(nn);
+    const total = 2 ** nn;
+    const cdf = (w) => counts.slice(0, Math.floor(w + 1e-9) + 1).reduce((s, v) => s + v, 0) / total;
+    const sf = (w) => counts.slice(Math.ceil(w - 1e-9)).reduce((s, v) => s + v, 0) / total;
+    pLeft = cdf(rPlus);
+    pRight = sf(rPlus);
+    p2 = Math.min(1, 2 * Math.min(pLeft, pRight));
+    how = 'exact distribution of W\u207a (no ties or zero differences)';
+  } else {
+    const mn = (nn * (nn + 1)) / 4;
+    const se = Math.sqrt((nn * (nn + 1) * (2 * nn + 1)) / 24 - ni2TieSum(ties) / 48);
+    if (!(se > 0)) throw new MathError('the differences are all equal in size, so the test is undefined');
+    const z = (rPlus - mn) / se;
+    const zc = (zz, sign) => zz - (sign * 0.5) / se;
+    p2 = Math.min(1, 2 * ni2Sf(Math.abs(zc(z, Math.sign(z)))));
+    pRight = ni2Sf(zc(z, 1));
+    pLeft = normCdf(zc(z, -1));
+    how = 'normal approximation with continuity correction' + (hasTies ? ' and tie correction' : '') + (zeros ? ' (zero differences are dropped)' : '');
+  }
+  const out = newOut();
+  out.answer.push('W\u207a = ' + fmtNum(rPlus) + ',  W\u207b = ' + fmtNum(rMinus) + ',  W = min = ' + fmtNum(W));
+  out.answer.push('p-value: two-tailed ' + ni2P(p2) + ',  right-tailed (median > 0) ' + ni2P(pRight) + ',  left-tailed (median < 0) ' + ni2P(pLeft));
+  out.work.push('n = ' + nn + ' non-zero differences' + (zeros ? ' (' + zeros + ' zero dropped)' : '') + ';  W\u207a = sum of the ranks of |d| for d > 0;  p-value from the ' + how);
+  out.notes.push('H0: the median difference is 0; reject when the p-value is below \u03b1.');
+  out.value = { num: p2 };
+  return out;
+});
+
+// ---- Kruskal-Wallis ------------------------------------------------------------------------------------------------------------------
+defCmd('kruskalwallis kwtest', (n) => {
+  if (n.args.length < 2 || n.args.some((a) => a.t !== 'list')) throw new MathError('kruskalwallis needs two or more lists, one per group: kruskalwallis([1,2,3], [4,5,6], [7,8,9])');
+  const groups = n.args.map((a) => listArg(a, 'kruskalwallis'));
+  const all = groups.flat();
+  const N = all.length;
+  const { ranks, ties } = ni2Ranks(all);
+  let pos = 0;
+  let H = 0;
+  const sums = groups.map((g) => {
+    let s = 0;
+    for (let i = 0; i < g.length; i++) s += ranks[pos + i];
+    pos += g.length;
+    return s;
+  });
+  groups.forEach((g, i) => { H += (sums[i] * sums[i]) / g.length; });
+  H = (12 / (N * (N + 1))) * H - 3 * (N + 1);
+  const corr = 1 - ni2TieSum(ties) / (N ** 3 - N);
+  if (!(corr > 0)) throw new MathError('all the values are equal, so the test is undefined');
+  H /= corr;
+  const df = groups.length - 1;
+  const p = 1 - chi2Cdf(H, df);
+  const out = newOut();
+  out.answer.push('H = ' + fmtNum(H) + ' (df = ' + df + ')');
+  out.answer.push('p-value = ' + ni2P(p));
+  out.work.push('rank sums ' + sums.map((s, i) => 'R' + (i + 1) + ' = ' + fmtNum(s) + ' (n = ' + groups[i].length + ')').join(', ') + ';  H = 12/(N(N + 1))\u00b7\u03a3 R\u1d62\u00b2/n\u1d62 \u2212 3(N + 1)' + (corr < 1 ? ', divided by the tie correction ' + fmtNum(corr) : ''));
+  out.work.push('H is compared with the chi-square distribution with k \u2212 1 = ' + df + ' degrees of freedom (best when every group has at least 5 values)');
+  out.notes.push('H0: all groups have the same distribution; reject when the p-value is below \u03b1.');
+  out.value = { num: p };
+  return out;
+});
+
+// ---- sign test ---------------------------------------------------------------------------------------------------------------------------
+defCmd('signtest', (n) => {
+  if (!n.args.length || n.args[0].t !== 'list') throw new MathError('signtest needs a list and the hypothesised median, or two paired lists: signtest([5,7,3,9,8], 4) or signtest(before, after)');
+  let d;
+  if (n.args[1] && n.args[1].t === 'list') {
+    const { xs, ys } = twoLists(n, 'signtest');
+    d = xs.map((v, i) => v.sub(ys[i]));
+  } else {
+    if (!n.args[1]) throw new MathError('signtest needs the hypothesised median: signtest([5,7,3,9,8], 4)');
+    const m0 = constQ(n.args[1]);
+    d = listArg(n.args[0], 'signtest').map((v) => v.sub(m0));
+  }
+  const pos = d.filter((v) => v.sign() > 0).length;
+  const neg = d.filter((v) => v.sign() < 0).length;
+  const tot = pos + neg;
+  if (!tot) throw new MathError('every difference is zero, so there are no signs to count');
+  const cdf = (k) => { let s = 0; for (let i = 0; i <= k; i++) s += ni2BinHalf(tot, i); return Math.min(1, s); };
+  const pLeft = cdf(pos);
+  const pRight = 1 - cdf(pos - 1);
+  const p2 = Math.min(1, 2 * Math.min(pLeft, pRight));
+  const out = newOut();
+  out.answer.push(pos + ' positive and ' + neg + ' negative differences' + (d.length > tot ? ' (' + (d.length - tot) + ' zero dropped)' : ''));
+  out.answer.push('p-value: two-tailed ' + ni2P(p2) + ',  right-tailed ' + ni2P(pRight) + ',  left-tailed ' + ni2P(pLeft));
+  out.work.push('under H0 the number of positive signs is Binomial(' + tot + ', 1/2); exact p-values');
+  out.value = { num: p2 };
+  return out;
+});
+
+// ---- 2\u00d72 tables: Fisher's exact test, McNemar ----------------------------------------------------------------------------------------------
+function ni2Table(n, what) {
+  const A = needMat(evalMat(n.args[0]), what);
+  if (A.length !== 2 || A[0].length !== 2 || A.flat().some((q) => !q.isInt() || q.sign() < 0)) throw new MathError(what + ' needs a 2\u00d72 table of counts such as [[8, 2], [1, 5]]');
+  return A.map((r) => r.map((q) => Number(q.n)));
+}
+defCmd('fisherexact fishertest', (n) => {
+  needArgs(n, 1, 1, 'a 2\u00d72 table of counts: fisherexact([[8,2],[1,5]])');
+  const [[a, b], [c, d]] = ni2Table(n, 'fisher');
+  const r1 = a + b;
+  const r2 = c + d;
+  const c1 = a + c;
+  const N = r1 + r2;
+  const lc = (nn, k) => lgamma(nn + 1) - lgamma(k + 1) - lgamma(nn - k + 1);
+  const prob = (x) => Math.exp(lc(r1, x) + lc(r2, c1 - x) - lc(N, c1));
+  const lo = Math.max(0, c1 - r2);
+  const hi = Math.min(r1, c1);
+  const p0 = prob(a);
+  let p2 = 0;
+  let pRight = 0;
+  let pLeft = 0;
+  for (let x = lo; x <= hi; x++) {
+    const px = prob(x);
+    if (px <= p0 * (1 + 1e-7)) p2 += px;
+    if (x >= a) pRight += px;
+    if (x <= a) pLeft += px;
+  }
+  const out = newOut();
+  const odds = b * c === 0 ? (a * d === 0 ? NaN : Infinity) : (a * d) / (b * c);
+  out.answer.push('sample odds ratio = ' + (isNaN(odds) ? 'undefined' : odds === Infinity ? '\u221e' : fmtNum(odds)) + ' (ad/bc)');
+  out.answer.push('Fisher exact p-value: two-tailed ' + ni2P(p2) + ',  right-tailed (a larger) ' + ni2P(pRight) + ',  left-tailed ' + ni2P(pLeft));
+  out.work.push('the count in the first cell is hypergeometric given the margins (' + r1 + ', ' + r2 + ' | ' + c1 + ', ' + (N - c1) + ');  two-tailed p = sum of the probabilities of all tables that are not more likely than the observed one');
+  out.value = { num: p2 };
+  return out;
+});
+defCmd('mcnemar', (n) => {
+  needArgs(n, 1, 1, 'a 2\u00d72 table of paired counts: mcnemar([[59,6],[16,80]])');
+  const [[, b], [c]] = ni2Table(n, 'mcnemar');
+  const tot = b + c;
+  if (!tot) throw new MathError('there are no discordant pairs (b = c = 0), so the test is undefined');
+  const chi = (Math.abs(b - c) - 1) ** 2 / tot;
+  const pChi = 1 - chi2Cdf(chi, 1);
+  let s = 0;
+  for (let i = 0; i <= Math.min(b, c); i++) s += ni2BinHalf(tot, i);
+  const pExact = Math.min(1, 2 * s);
+  const out = newOut();
+  out.answer.push('\u03c7\u00b2 = ' + fmtNum(chi) + ' (df = 1, with continuity correction),  p-value = ' + ni2P(pChi));
+  out.answer.push('exact binomial p-value = ' + ni2P(pExact) + ' (use it when b + c < 25)');
+  out.work.push('only the discordant pairs matter: b = ' + b + ', c = ' + c + ';  \u03c7\u00b2 = (|b \u2212 c| \u2212 1)\u00b2/(b + c)');
+  out.value = { num: tot < 25 ? pExact : pChi };
+  return out;
+});
+// ======================================================================
+// 32. Fourier series: fourier(f, x, a, b) for f on (a, b) extended periodically, piecewise definitions
+//     fourier(f1, f2, ..., x, b0, b1, ..., bk), and the half-range cosine / sine series on (0, L).
+//     The coefficients come from the exact integrator; the general term is shown when its closed form (with sin(n pi) = 0 and
+//     cos(n pi) = (-1)^n) agrees with the exact coefficients of the first eight harmonics.
+// ======================================================================
+const f4Sub = ['\u2080', '\u2081', '\u2082', '\u2083', '\u2084', '\u2085', '\u2086', '\u2087', '\u2088', '\u2089'];
+const f4Idx = (n) => String(n).split('').map((d) => f4Sub[Number(d)]).join('');
+/** exact value of the integral of expr\u00b7cos|sin(n w x) over [lo, hi]: through the integrator, as a symbolic expression */
+function f4Integral(pieceText, trig, nText, wText, v, loText, hiText) {
+  const call = 'integrate((' + pieceText + ')' + (trig ? '*' + trig + '(' + nText + '*(' + wText + ')*' + v + ')' : '') + ', ' + v + ', ' + loText + ', ' + hiText + ')';
+  return commandValueS(parseExpression(call));
+}
+/** sin(p pi n + b) -> sin(b) (-1)^(p n) and cos(p pi n + b) -> cos(b) (-1)^(p n) for whole p: valid because n is an integer */
+function f4IntegerN(e, n) {
+  const walk = (x) => {
+    if (x.k === 'f' && (x.fn === 'sin' || x.fn === 'cos') && x.a.length === 1 && !freeOf(x.a[0], n)) {
+      const lin = linearIn_(x.a[0], n);
+      if (lin) {
+        const ratio = simp(sDiv(lin.a1, S_PI));
+        if (ratio.k === 'n' && ratio.q.isInt()) {
+          const a0 = simp(lin.a0);
+          const sign = Number(ratio.q.n % 2n) === 0 ? S1 : sPow(sI(-1), sV(n));
+          if (zeroS(a0)) return x.fn === 'sin' ? S0 : sign;
+          return sMul([sFn(x.fn, [a0]), sign]);
+        }
+      }
+    }
+    if (x.k === '+' || x.k === '*' || x.k === '^' || x.k === 'f') return mapS(x, walk);
+    return x;
+  };
+  return simp(expandS(walk(e)));
+}
+function f4SplitAbs(pieces, v) {
+  const findAbs = (e) => {
+    if (e.k === 'f' && e.fn === 'abs') {
+      const lin = linearIn_(e.a[0], v);
+      if (lin && lin.a1.k === 'n' && !lin.a1.q.isZero() && freeOf(lin.a0, v)) return e;
+    }
+    if (e.k === '+' || e.k === '*' || e.k === '^' || e.k === 'f') {
+      for (const c of e.k === '^' ? [e.b, e.e] : e.a) {
+        const r = findAbs(c);
+        if (r) return r;
+      }
+    }
+    return null;
+  };
+  const replaceAbs = (e, target, sign) => {
+    if (e === target) return sign > 0 ? target.a[0] : sNeg(target.a[0]);
+    if (e.k === '+' || e.k === '*' || e.k === '^' || e.k === 'f') return mapS(e, (c) => replaceAbs(c, target, sign));
+    return e;
+  };
+  let work = pieces.slice();
+  for (let guard = 0; guard < 12; guard++) {
+    let changed = false;
+    const next = [];
+    for (const p of work) {
+      const a = findAbs(p.f);
+      if (!a) { next.push(p); continue; }
+      changed = true;
+      const lin = linearIn_(a.a[0], v);
+      const z = simp(sDiv(sNeg(lin.a0), lin.a1));
+      const zn = numS(z, {});
+      const lo = numS(p.lo, {});
+      const hi = numS(p.hi, {});
+      const at = (x) => numS(subsS(a.a[0], v, sN(qFromLiteral(String(x).replace(/^-/, '')).mul(x < 0 ? qInt(-1) : Q1))), {});
+      const sgnOn = (l, h) => (numS(subsS(a.a[0], v, sN(new Q(1n, 1n))), {}) * 0 + (lin.a1.q.sign() > 0 ? ((l + h) / 2 > zn ? 1 : -1) : ((l + h) / 2 > zn ? -1 : 1)));
+      void at;
+      if (zn > lo + 1e-12 && zn < hi - 1e-12) {
+        next.push({ f: simp(replaceAbs(p.f, a, sgnOn(lo, zn))), lo: p.lo, hi: z });
+        next.push({ f: simp(replaceAbs(p.f, a, sgnOn(zn, hi))), lo: z, hi: p.hi });
+      } else next.push({ f: simp(replaceAbs(p.f, a, sgnOn(lo, hi))), lo: p.lo, hi: p.hi });
+    }
+    work = next;
+    if (!changed) break;
+  }
+  return work;
+}
+function f4Series(pieces0, v, out, opts) {
+  const pieces = f4SplitAbs(pieces0, v);
+  const used = new Set();
+  pieces.forEach((p) => varsOfS(p.f).forEach((u) => used.add(u)));
+  used.delete(v);
+  if (used.size) throw new MathError('f may contain only the variable ' + v + ' (found ' + Array.from(used).join(', ') + ')');
+  const idx = ['n', 'k', 'm', 'j'].find((c) => c !== v) || 'n';
+  const lo0 = pieces[0].lo;
+  const hi1 = pieces[pieces.length - 1].hi;
+  const T = simp(sSub(hi1, lo0));
+  const Tn = numS(T, {});
+  if (!(Tn > 0)) throw new MathError('the interval must have a positive length (a < b)');
+  const w = simp(sDiv(sMul([sI(2), S_PI]), T));
+  const wText = fmtS(w, true);
+  const texts = pieces.map((p) => ({ f: fmtS(p.f, true), lo: fmtS(p.lo, true), hi: fmtS(p.hi, true) }));
+  const scale = simp(sDiv(sI(2), T));
+  const coef = (trig, nText) => {
+    let sum = S0;
+    texts.forEach((t) => { sum = sAdd([sum, f4Integral(t.f, trig, nText, wText, v, t.lo, t.hi)]); });
+    return simp(expandS(sMul([scale, sum])));
+  };
+  const a0 = coef(null, '0');
+  const N = opts.terms;
+  const ev = 8;
+  const A = [];
+  const B = [];
+  for (let k = 1; k <= Math.max(N, ev); k++) {
+    A.push(coef('cos', String(k)));
+    B.push(coef('sin', String(k)));
+  }
+  // general terms
+  const general = (trig) => {
+    try {
+      const g = f4IntegerN(simp(expandS(sMul([scale, texts.reduce((s, t) => sAdd([s, f4Integral(t.f, trig, idx, wText, v, t.lo, t.hi)]), S0)]))), idx);
+      const list = trig === 'cos' ? A : B;
+      for (let k = 1; k <= ev; k++) {
+        const gv = numS(subsS(g, idx, sI(k)), {});
+        const ex = numS(list[k - 1], {});
+        if (!isFinite(gv) || Math.abs(gv - ex) > 1e-9 * (1 + Math.abs(ex))) return null;
+      }
+      return g;
+    } catch (e) {
+      if (e instanceof MathError || e instanceof NotAlgebraic) return null;
+      throw e;
+    }
+  };
+  const gA = general('cos');
+  const gB = general('sin');
+  const allZero = (list) => list.every((c) => zeroS(c));
+  const evenF = allZero(B);
+  const oddF = allZero(A) && zeroS(a0);
+  const sym = (x) => (zeroS(x) ? '0' : symText(x));
+  const mean = simp(sDiv(a0, sI(2)));
+  out.answer.push('a\u2080/2 = ' + sym(mean) + '   (the average value of f over one period T = ' + symText(T) + ')');
+  const sb = (c) => (idx === 'n' ? c + '\u2099' : c + '_' + idx);
+  out.answer.push(gA ? sb('a') + ' = ' + fmtS(gA) : (evenF || !allZero(A) ? 'a\u2081 = ' + sym(A[0]) + ',  a\u2082 = ' + sym(A[1]) + ',  a\u2083 = ' + sym(A[2]) + ',  a\u2084 = ' + sym(A[3]) + '  (no closed form recognised)' : sb('a') + ' = 0 for every ' + idx));
+  out.answer.push(gB ? sb('b') + ' = ' + fmtS(gB) : (!allZero(B) ? 'b\u2081 = ' + sym(B[0]) + ',  b\u2082 = ' + sym(B[1]) + ',  b\u2083 = ' + sym(B[2]) + ',  b\u2084 = ' + sym(B[3]) + '  (no closed form recognised)' : sb('b') + ' = 0 for every ' + idx));
+  // the first harmonics as a sum, in the order of the harmonics
+  const X = sV(v);
+  const parts = [];
+  if (!zeroS(mean)) parts.push(fmtS(mean));
+  let shown = 0;
+  for (let k = 1; k <= Math.max(N, ev) && shown < N; k++) {
+    const ak = A[k - 1];
+    const bk = B[k - 1];
+    if (zeroS(ak) && zeroS(bk)) continue;
+    const arg = simp(sMul([sI(k), w, X]));
+    if (!zeroS(ak)) parts.push(fmtS(simp(sMul([ak, sFn('cos', [arg])]))));
+    if (!zeroS(bk)) parts.push(fmtS(simp(sMul([bk, sFn('sin', [arg])]))));
+    shown++;
+  }
+  const joined = parts.map((t, i) => (i === 0 ? t : t.startsWith('-') ? ' - ' + t.slice(1) : ' + ' + t)).join('') || '0';
+  out.answer.push(shown ? 'f(' + v + ') ~ ' + joined + ' + \u2026   (up to the first ' + shown + ' harmonic' + (shown === 1 ? '' : 's') + ' that ' + (shown === 1 ? 'is' : 'are') + ' not zero)' : 'f(' + v + ') = ' + joined + '   (a constant: there are no harmonics)');
+  const rows = [];
+  for (let k = 1; k <= Math.min(6, Math.max(N, 4)); k++) rows.push('n = ' + k + ': a = ' + fmtNum(numS(A[k - 1], {})) + ', b = ' + fmtNum(numS(B[k - 1], {})));
+  out.work.push('coefficients  a\u2099 = (2/T)\u222b f cos(2\u03c0n' + v + '/T) d' + v + ',  b\u2099 = (2/T)\u222b f sin(2\u03c0n' + v + '/T) d' + v + ',  a\u2080 = (2/T)\u222b f d' + v + ';  T = ' + symText(T));
+  out.work.push('numerical values: ' + rows.join(';  '));
+  if (evenF) out.work.push('f is even on the interval, so every b\u2099 is 0 (a cosine series)');
+  if (oddF) out.work.push('f is odd on the interval, so a\u2080 and every a\u2099 are 0 (a sine series)');
+  if (gA === null && !allZero(A)) out.notes.push('The closed form of a\u2099 is not shown; the exact values of the first harmonics are in the numerical row.');
+  out.notes.push('Where f is continuous the series converges to f; at a jump it converges to the average of the two one-sided limits (Dirichlet).');
+  out.value = { S: mean };
+  return out;
+}
+function f4Args(n, what) {
+  const pos = n.args.filter((a) => a.t !== 'named');
+  const named = new Map(n.args.filter((a) => a.t === 'named').map((a) => [a.name, a.a]));
+  const terms = named.has('terms') ? Number(intArg(named.get('terms'))) : 4;
+  if (terms < 1 || terms > 12) throw new MathError('terms must be between 1 and 12');
+  return { pos, terms };
+}
+defCmd('fourier fourierseries', (n) => {
+  const { pos, terms } = f4Args(n, 'fourier');
+  if (pos.length < 4 || pos.length % 2) throw new MathError('fourier(f, x, a, b) expands f on (a, b);  piecewise: fourier(f1, f2, x, b0, b1, b2)  with f1 on (b0, b1) and f2 on (b1, b2);  terms=6 shows more harmonics');
+  const k = (pos.length - 2) / 2;
+  const v = varOfArg(pos[k]);
+  const pieces = [];
+  for (let i = 0; i < k; i++) pieces.push({ f: fromAst(pos[i]), lo: fromAst(pos[k + 1 + i]), hi: fromAst(pos[k + 2 + i]) });
+  for (let i = 0; i + 1 < pieces.length; i++) if (!(numS(pieces[i].hi, {}) > numS(pieces[i].lo, {}))) throw new MathError('the breakpoints must increase');
+  const out = newOut();
+  return f4Series(pieces, v, out, { terms });
+});
+COMMANDS.fourier.show = (n) => {
+  const pos = n.args.filter((a) => a.t !== 'named');
+  const k = (pos.length - 2) / 2;
+  if (pos.length < 4 || pos.length % 2) return showRaw(n);
+  return 'Fourier series of ' + (k === 1 ? showRaw(pos[0]) : '{' + pos.slice(0, k).map((a, i) => showRaw(a) + ' on (' + showRaw(pos[k + 1 + i]) + ', ' + showRaw(pos[k + 2 + i]) + ')').join(';  ')) + (k === 1 ? ' on (' + showRaw(pos[2]) + ', ' + showRaw(pos[3]) + ')' : '}');
+};
+function f4HalfRange(kind) {
+  return (n) => {
+    const { pos, terms } = f4Args(n, kind);
+    if (pos.length !== 3) throw new MathError(kind + '(f, x, L) expands f given on (0, L) as a ' + (kind === 'fouriercos' ? 'cosine' : 'sine') + ' series');
+    const v = varOfArg(pos[1]);
+    const f = fromAst(pos[0]);
+    const L = fromAst(pos[2]);
+    if (!(numS(L, {}) > 0)) throw new MathError('L must be positive');
+    const mirrored = simp(subsS(f, v, sNeg(sV(v))));
+    const left = kind === 'fouriercos' ? mirrored : simp(sNeg(mirrored));
+    const out = newOut();
+    out.work.push('f is extended to (\u2212L, L) as an ' + (kind === 'fouriercos' ? 'even' : 'odd') + ' function (half-range ' + (kind === 'fouriercos' ? 'cosine' : 'sine') + ' series), L = ' + symText(L));
+    return f4Series([{ f: left, lo: simp(sNeg(L)), hi: S0 }, { f, lo: S0, hi: L }], v, out, { terms });
+  };
+}
+defCmd('fouriercos halfrangecos', f4HalfRange('fouriercos'));
+defCmd('fouriersin halfrangesin', f4HalfRange('fouriersin'));
+// ======================================================================
+// 33. Precalculus and linear-algebra helpers: amplitude / period / phase shift of a sinusoid, linear independence, span, nullity,
+//     rational zeros, end behaviour, even / odd, coefficient of a power, the range of a function.
+// ======================================================================
+const pcName = (S) => fmtS(S);
+
+// ---- sinusoids ---------------------------------------------------------------------------------------------------------------------------
+defCmd('sinusoid trigprops', (n) => {
+  needArgs(n, 1, 2, 'a function such as 3 sin(2x - pi) + 1, and optionally the variable');
+  const S = expandS(fromAst(n.args[0]));
+  const v = n.args[1] ? varOfArg(n.args[1]) : singleVarOf(S);
+  let D = S0;
+  let term = null;
+  for (const t of termsOf(S)) {
+    if (freeOf(t, v)) D = sAdd([D, t]);
+    else if (term) throw new MathError('the function must have the form A\u00b7sin(Bx + C) + D with one trigonometric term');
+    else term = t;
+  }
+  if (!term) throw new MathError('there is no trigonometric term in ' + v);
+  const fs = term.k === '*' ? term.a : [term];
+  const tr = fs.filter((f) => !freeOf(f, v));
+  const kinds = ['sin', 'cos', 'tan', 'cot', 'sec', 'csc'];
+  if (tr.length !== 1 || tr[0].k !== 'f' || !kinds.includes(tr[0].fn) || tr[0].a.length !== 1) throw new MathError('the function must have the form A\u00b7sin(Bx + C) + D (sin, cos, tan, cot, sec or csc)');
+  let A = fs.filter((f) => freeOf(f, v)).length ? simp(sMul(fs.filter((f) => freeOf(f, v)))) : S1;
+  const lin = linearIn_(tr[0].a[0], v);
+  if (!lin || zeroS(simp(lin.a1))) throw new MathError('the argument must be a linear expression in ' + v + ' such as 2x - pi');
+  let B = simp(lin.a1);
+  let C = simp(lin.a0);
+  const fn = tr[0].fn;
+  const flip = numS(B, {}) < 0;
+  let reflected = numS(A, {}) < 0;
+  if (flip) {
+    B = simp(sNeg(B));
+    C = simp(sNeg(C));
+    if (fn !== 'cos' && fn !== 'sec') A = simp(sNeg(A));
+  }
+  reflected = numS(A, {}) < 0;
+  const periodic = fn === 'sin' || fn === 'cos' || fn === 'sec' || fn === 'csc';
+  const period = simp(sDiv(periodic ? sMul([sI(2), S_PI]) : S_PI, B));
+  const h = simp(sDiv(sNeg(C), B));
+  const out = newOut();
+  const absA = numS(A, {}) < 0 ? simp(sNeg(A)) : A;
+  if (fn === 'sin' || fn === 'cos') {
+    out.answer.push('amplitude |A| = ' + symText(absA) + (reflected ? '   (A < 0: the graph is reflected in the midline)' : ''));
+    out.answer.push('period = 2\u03c0/|B| = ' + symText(period) + ',  frequency = ' + symText(simp(sDiv(B, sMul([sI(2), S_PI])))));
+    out.answer.push('phase shift = \u2212C/B = ' + symText(h) + (zeroS(h) ? '' : numS(h, {}) > 0 ? ' (to the right)' : ' (to the left)'));
+    out.answer.push('vertical shift D = ' + symText(D) + ',  midline y = ' + symText(D));
+    out.answer.push('maximum = ' + symText(simp(sAdd([D, absA]))) + ',  minimum = ' + symText(simp(sSub(D, absA))) + ',  range [' + symText(simp(sSub(D, absA))) + ', ' + symText(simp(sAdd([D, absA]))) + ']');
+    out.work.push(fmtS(simp(sAdd([sMul([A, sFn(fn, [simp(sAdd([sMul([B, sV(v)]), C]))])]), D]))) + ' = A ' + fn + '(B(' + v + ' \u2212 h)) + D with A = ' + symText(A) + ', B = ' + symText(B) + ', h = ' + symText(h) + ', D = ' + symText(D));
+    const starts = fn === 'sin' ? 'a sine wave starts a cycle at ' + v + ' = ' + symText(h) : 'a cosine wave has its maximum (for A > 0) at ' + v + ' = ' + symText(h);
+    out.work.push(starts + ' and repeats every ' + symText(period));
+  } else {
+    out.answer.push('no amplitude (' + fn + ' is unbounded);  period = ' + (periodic ? '2\u03c0/|B|' : '\u03c0/|B|') + ' = ' + symText(period));
+    out.answer.push('phase shift = \u2212C/B = ' + symText(h) + (zeroS(h) ? '' : numS(h, {}) > 0 ? ' (to the right)' : ' (to the left)') + ',  vertical shift D = ' + symText(D));
+    // vertical asymptotes: argument = pi/2 + k pi (tan, sec) or k pi (cot, csc)
+    const base = fn === 'tan' || fn === 'sec' ? simp(sDiv(sSub(sDiv(S_PI, sI(2)), C), B)) : simp(sDiv(sNeg(C), B));
+    const step = simp(sDiv(S_PI, B));
+    out.answer.push('vertical asymptotes ' + v + ' = ' + symText(base) + ' + k\u00b7' + symText(step) + '  (k any integer)');
+    if (fn === 'sec' || fn === 'csc') out.work.push('the graph never enters the strip between ' + symText(simp(sAdd([D, S1.k ? absA : absA]))) + ' and ' + symText(simp(sSub(D, absA))) + ' (|A| above and below the midline y = ' + symText(D) + ')');
+  }
+  out.value = { S: period };
+  return out;
+});
+
+// ---- linear independence, span, nullity -------------------------------------------------------------------------------------------------------
+function pcVectors(args, what) {
+  const vs = args.map((a) => {
+    const m = needMat(a, what);
+    const flatv = m.length === 1 ? m[0] : m[0].length === 1 ? m.map((r) => r[0]) : null;
+    if (!flatv) throw new MathError(what + ' needs vectors such as [1, 2, 3]');
+    return flatv;
+  });
+  if (vs.some((v) => v.length !== vs[0].length)) throw new MathError('all the vectors must have the same number of entries');
+  return vs;
+}
+const pcVecText = (v) => '[' + v.map((q) => q.toString()).join(', ') + ']';
+const pcSub = (i) => 'v' + String(i + 1).split('').map((d) => f4Sub[Number(d)]).join('');
+defMat('independent linindep', (args, n, out) => {
+  if (args.length < 1) throw new MathError('independent needs vectors: independent([1,2,3], [4,5,6], [7,8,9])');
+  const vs = pcVectors(args, 'independent');
+  const k = vs.length;
+  const dim = vs[0].length;
+  const M = mT(vs); // columns are the vectors
+  const { pivots } = mRref(M);
+  const rank = pivots.length;
+  if (rank === k) {
+    out.answer.push('linearly independent (the ' + k + ' vectors have rank ' + k + ')');
+    out.work.push('c\u2081v\u2081 + \u2026 + c' + f4Idx(k) + 'v' + f4Idx(k) + ' = 0 has only the solution c = 0' + (k === dim ? ';  they form a basis of the whole space of ' + dim + ' entries' : ''));
+  } else {
+    const rel = mNullspace(M)[0];
+    const prim = primitiveVector(rel);
+    out.answer.push('linearly dependent (rank ' + rank + ' < ' + k + ')');
+    out.work.push('a non-trivial relation: ' + prim.map((c, i) => (c.isZero() ? null : qParen(c) + '\u00b7' + pcSub(i))).filter(Boolean).join(' + ') + ' = 0');
+    const piv = pivots;
+    out.work.push('the vectors ' + pivots.map((c) => pcSub(c)).join(', ') + ' are independent (a basis of their span); the others are combinations of them');
+    if (k > dim) out.work.push('more vectors (' + k + ') than entries (' + dim + '): they are always dependent');
+    void piv;
+  }
+  out.__done = true;
+  return mat([[Q0]], { __skip: true });
+}, [1, 'vectors']);
+defMat('inspan span', (args, n, out) => {
+  if (args.length < 2) throw new MathError('inspan needs a vector and the spanning vectors: inspan([1,2,3], [1,0,1], [0,1,1])');
+  const vs = pcVectors(args, 'inspan');
+  const target = vs[0];
+  const gens = vs.slice(1);
+  const M = mT(gens);
+  const aug = M.map((r, i) => r.concat([target[i]]));
+  const { R, pivots } = mRref(aug);
+  const k = gens.length;
+  if (pivots.includes(k)) {
+    out.answer.push('the vector ' + pcVecText(target) + ' is NOT in the span of the given vectors');
+    out.work.push('A c = v has no solution (the augmented matrix has rank ' + pivots.length + ' but A has rank ' + pivots.filter((c) => c < k).length + ')');
+  } else {
+    const c = new Array(k).fill(Q0);
+    pivots.forEach((pc, i) => { c[pc] = R[i][k]; });
+    out.answer.push('the vector ' + pcVecText(target) + ' is in the span: v = ' + c.map((q, i) => qParen(q) + '\u00b7u' + f4Idx(i + 1)).join(' + '));
+    out.work.push('with ' + gens.map((g, i) => 'u' + f4Idx(i + 1) + ' = ' + pcVecText(g)).join(', '));
+    if (pivots.length < k) out.work.push('the spanning vectors are dependent, so the coefficients are not unique (free variables set to 0)');
+  }
+  out.__done = true;
+  return mat([[Q0]], { __skip: true });
+}, [2, 'a vector and the vectors that span']);
+defMat('nullity', (args, n, out) => {
+  const A = needMat(args[0], 'nullity');
+  const { pivots } = mRref(A);
+  const cols = A[0].length;
+  const nul = cols - pivots.length;
+  out.answer.push('nullity = ' + nul + ',  rank = ' + pivots.length + '  (rank + nullity = ' + cols + ' columns)');
+  const basis = mNullspace(A);
+  if (basis.length) out.work.push('basis of the null space: ' + basis.map((b) => pcVecText(primitiveVector(b))).join(', '));
+  else out.work.push('only the zero vector solves A x = 0');
+  out.__done = true;
+  return mat([[Q0]], { __skip: true });
+}, [1, 'a matrix']);
+
+// ---- rational zeros -------------------------------------------------------------------------------------------------------------------------
+function pcDivisors(nn) {
+  const ds = [];
+  for (let d = 1n; d * d <= nn; d++) if (nn % d === 0n) { ds.push(d); if (d * d !== nn) ds.push(nn / d); }
+  return ds.sort((a, b) => (a < b ? -1 : 1));
+}
+defCmd('ratroots rationalroots ratzeros', (n) => {
+  needArgs(n, 1, 2, 'a polynomial such as 2x^3 - 3x^2 - 8x - 3');
+  const S = expandS(fromAst(n.args[0]));
+  const v = n.args[1] ? varOfArg(n.args[1]) : singleVarOf(S);
+  const cs = polyCoeffsS(S, v);
+  if (!cs || cs.some((c) => c.k !== 'n')) throw new MathError('the polynomial needs rational coefficients');
+  let L = 1n;
+  cs.forEach((c) => { L = (L * c.q.d) / bgcd(L, c.q.d); });
+  let ints = cs.map((c) => c.q.n * (L / c.q.d));
+  let zeros = 0;
+  while (ints.length > 1 && ints[0] === 0n) { ints = ints.slice(1); zeros++; }
+  if (ints.length < 2) throw new MathError('the polynomial must have degree at least 1');
+  const lead = babs(ints[ints.length - 1]);
+  const cst = babs(ints[0]);
+  const ps = pcDivisors(cst);
+  const qs = pcDivisors(lead);
+  const cand = [];
+  ps.forEach((p) => qs.forEach((q) => { if (bgcd(p, q) === 1n) cand.push([p, q]); }));
+  cand.sort((a, b) => Number(a[0]) / Number(a[1]) - Number(b[0]) / Number(b[1]));
+  const out = newOut();
+  out.answer.push('possible rational zeros \u00b1p/q with p | ' + cst + ' and q | ' + lead + ':  ' + (cand.length > 40 ? cand.length * 2 + ' candidates' : cand.map(([p, q]) => '\u00b1' + (q === 1n ? p.toString() : p + '/' + q)).join(', ')));
+  const roots = polyRoots(intsToPoly(ints)).real.filter((r) => r.q);
+  if (zeros) roots.unshift({ q: Q0, mult: zeros });
+  if (!roots.length) out.answer.push('no rational zero: the polynomial has no linear factor with rational coefficients');
+  else out.answer.push('rational zeros: ' + roots.map((r) => r.q.toString() + (r.mult > 1 ? ' (multiplicity ' + r.mult + ')' : '')).join(', '));
+  try {
+    const f = runCommandCall(parseExpression('factor(' + fmtS(S, true) + ')'));
+    out.work.push('factored: ' + f.answer[0]);
+  } catch (e) {
+    if (!(e instanceof MathError)) throw e;
+  }
+  out.work.push('rational root theorem: every rational zero p/q in lowest terms has p dividing the constant term and q dividing the leading coefficient;  each candidate is tested with the remainder theorem');
+  return out;
+});
+
+// ---- end behaviour -----------------------------------------------------------------------------------------------------------------------------
+defCmd('endbehavior endbehaviour', (n) => {
+  needArgs(n, 1, 2, 'f and optionally the variable');
+  const S = fromAst(n.args[0]);
+  const v = n.args[1] ? varOfArg(n.args[1]) : singleVarOf(S);
+  const out = newOut();
+  const side = (inf) => {
+    try {
+      const r = runCommandCall(parseExpression('limit(' + fmtS(S, true) + ', ' + v + ', ' + inf + ')'));
+      return r.answer[0].replace(/^.*?(?:=|\u2192)\s*/, '');
+    } catch (e) {
+      if (e instanceof MathError) return null;
+      throw e;
+    }
+  };
+  const plus = side('oo');
+  const minus = side('-oo');
+  const word = (t, dir) => (t === null ? 'could not be determined' : /^-?\u221e$|infinity|^[-\u2212]?\s*\u221e/.test(t) ? 'f(' + v + ') \u2192 ' + t : 'f(' + v + ') \u2192 ' + t + '  (horizontal asymptote y = ' + t + ')');
+  out.answer.push('as ' + v + ' \u2192 \u221e:  ' + word(plus));
+  out.answer.push('as ' + v + ' \u2192 \u2212\u221e:  ' + word(minus));
+  try {
+    const cs = polyCoeffsS(expandS(S), v);
+    if (cs && cs.length > 1 && cs.every((c) => c.k === 'n')) {
+      const deg = cs.length - 1;
+      const lc = cs[deg].q;
+      out.work.push('polynomial of degree ' + deg + ' (' + (deg % 2 ? 'odd' : 'even') + ') with leading coefficient ' + lc.toString() + ': the end behaviour follows the leading term ' + (lc.eq(Q1) ? '' : lc.eq(qInt(-1)) ? '\u2212' : lc.toString()) + v + toSup(String(deg)) + ' \u2014 ' + (deg % 2 ? (lc.sign() > 0 ? 'falls to the left, rises to the right' : 'rises to the left, falls to the right') : (lc.sign() > 0 ? 'rises on both sides' : 'falls on both sides')));
+    }
+  } catch (e) {
+    if (!(e instanceof NotAlgebraic) && !(e instanceof MathError)) throw e;
+  }
+  return out;
+});
+
+// ---- even / odd ---------------------------------------------------------------------------------------------------------------------------------
+defCmd('evenodd parity symmetry', (n) => {
+  needArgs(n, 1, 2, 'f and optionally the variable');
+  const S = simp(expandS(fromAst(n.args[0])));
+  const v = n.args[1] ? varOfArg(n.args[1]) : singleVarOf(S);
+  const mirrored = simp(expandS(subsS(S, v, sNeg(sV(v)))));
+  const out = newOut();
+  const same = zeroS(simp(expandS(sSub(mirrored, S))));
+  const neg = zeroS(simp(expandS(sAdd([mirrored, S]))));
+  const numCheck = (sign) => {
+    for (const x of [0.37, 1.9, -2.6, 0.81]) {
+      const a = numS(S, { [v]: x });
+      const b = numS(S, { [v]: -x });
+      if (isFinite(a) && isFinite(b) && Math.abs(b - sign * a) > 1e-9 * (1 + Math.abs(a))) return false;
+    }
+    return true;
+  };
+  let even = same;
+  let odd = neg && !same;
+  if (!even && !odd) { even = numCheck(1); odd = !even && numCheck(-1); }
+  out.answer.push(even ? 'even: f(\u2212' + v + ') = f(' + v + '), the graph is symmetric about the y-axis' : odd ? 'odd: f(\u2212' + v + ') = \u2212f(' + v + '), the graph is symmetric about the origin' : 'neither even nor odd');
+  out.work.push('f(' + v + ') = ' + fmtS(S) + ';  f(\u2212' + v + ') = ' + fmtS(mirrored));
+  return out;
+});
+
+// ---- coefficient of a power ---------------------------------------------------------------------------------------------------------------------------
+defCmd('coeff coefficient', (n) => {
+  needArgs(n, 2, 3, 'a polynomial (or a power to expand), the variable and the exponent: coeff((1 + 2x)^6, x, 3)');
+  const S = expandS(fromAst(n.args[0]));
+  const v = n.args.length === 3 ? varOfArg(n.args[1]) : singleVarOf(S);
+  const k = Number(intArg(n.args[n.args.length - 1]));
+  const cs = polyCoeffsS(S, v);
+  if (!cs) throw new MathError('the expression must be a polynomial in ' + v + ' once expanded');
+  const out = newOut();
+  const c = k >= 0 && k < cs.length ? cs[k] : S0;
+  out.answer.push('coefficient of ' + v + (k === 0 ? '\u2070 (the constant term)' : k === 1 ? '' : toSup(String(k))) + ' = ' + symText(simp(c)));
+  out.work.push('expanded: ' + fmtS(simp(S)));
+  out.value = { S: simp(c) };
+  return out;
+});
+
+// ---- the range of a function ------------------------------------------------------------------------------------------------------------------------
+/** points where the function is excluded or changes form (zeros of denominators, even-root and logarithm arguments): exact breakpoints */
+function rgForced(S, v) {
+  const pts = [];
+  domainConditions(S, v, []).forEach((c) => {
+    try {
+      realRootsOf(simp(c.expr), v, -1e4, 1e4).forEach((r) => pts.push({ val: Number(r.val.toPrecision(13)), S: r.S }));
+    } catch (e) {
+      if (!(e instanceof NotAlgebraic) && !(e instanceof MathError)) throw e;
+    }
+  });
+  return pts;
+}
+/** an exact expression for a number that is a simple fraction, a multiple of pi or a square root of a fraction */
+function rgExact(x) {
+  const fr = toFraction(x, 1000);
+  if (fr && Math.abs(fr.p / fr.q - x) < 1e-10 * (1 + Math.abs(x))) return sN(new Q(BigInt(fr.p), BigInt(fr.q)));
+  const pf = toFraction(x / Math.PI, 24);
+  if (pf && Math.abs((pf.p * Math.PI) / pf.q - x) < 1e-10 * (1 + Math.abs(x))) return sMul([sN(new Q(BigInt(pf.p), BigInt(pf.q))), S_PI]);
+  const f2 = toFraction(x * x, 200);
+  if (f2 && f2.p > 0 && Math.abs(Math.sqrt(f2.p / f2.q) - Math.abs(x)) < 1e-10 * (1 + Math.abs(x))) return sMul([sN(new Q(x < 0 ? -1n : 1n)), sSqrt(sN(new Q(BigInt(f2.p), BigInt(f2.q))))]);
+  return null;
+}
+function rgFmt(x) {
+  if (x === Infinity) return '\u221e';
+  if (x === -Infinity) return '-\u221e';
+  const rec = recognizeLoose(x);
+  if (rec) return rec.text;
+  return '\u2248' + fmtNum(x);
+}
+/** limit of S at the end e of a piece, approached from inside; { v } or { v: \u00b1Infinity } */
+function rgLimit(S, v, e, side, F) {
+  const isInf = typeof e === 'number' && !isFinite(e);
+  const point = isInf ? { inf: e > 0 ? 1 : -1 } : (() => { const ex = e.S || rgExact(e.val !== undefined ? e.val : e); return ex ? { S: ex } : null; })();
+  if (point) {
+    try {
+      const r = limitOf(S, v, point, point.inf ? 0 : side);
+      if (r.kind === 'inf') return { v: r.sign > 0 ? Infinity : -Infinity };
+      if (r.kind === 'value') return { v: limNum(r) };
+    } catch (err) {
+      if (!(err instanceof MathError) && !(err instanceof NotAlgebraic)) throw err;
+    }
+  }
+  // numerical fallback
+  const ev = typeof e === 'object' ? e.val : e;
+  const probe = isFinite(ev) ? [1e-6, 1e-7, 1e-8].map((h) => F(ev + side * h * (1 + Math.abs(ev)))) : [1e6, 1e8, 1e10].map((h) => F(ev > 0 ? h : -h));
+  const last = probe[probe.length - 1];
+  if (!isFinite(last)) return { v: Infinity, approx: true };
+  if (Math.abs(last) > 1e7) return { v: last > 0 ? Infinity : -Infinity };
+  return { v: last, approx: true };
+}
+defCmd('rangeof functionrange', (n) => {
+  const { S, v } = funcArgs(n, 1, 2, 'f and optionally the variable');
+  const F = (x) => {
+    try {
+      const y = numS(S, { [v]: x });
+      return isFinite(y) ? y : NaN;
+    } catch (e) {
+      return NaN;
+    }
+  };
+  // 1. breaks: exact ones and poles of trigonometric functions found on a wide grid (sign change between large values of growing size)
+  const forced = rgForced(S, v);
+  const breaks = new Map(forced.map((f) => [f.val, f.S]));
+  const T = Math.asinh(1e8);
+  const grid = [];
+  for (let i = 0; i <= 40000; i++) grid.push(0.01 * Math.sinh(-T + (2 * T * i) / 40000));
+  let prev = F(grid[0]);
+  for (let i = 1; i < grid.length; i++) {
+    const cur = F(grid[i]);
+    if (isFinite(prev) && isFinite(cur) && prev * cur < 0 && Math.min(Math.abs(prev), Math.abs(cur)) > 5) {
+      let a = grid[i - 1];
+      let b = grid[i];
+      for (let k = 0; k < 80; k++) {
+        const m = (a + b) / 2;
+        const fm = F(m);
+        if (!isFinite(fm)) break;
+        if ((fm < 0) === (prev < 0)) a = m; else b = m;
+      }
+      const p = Number(((a + b) / 2).toPrecision(13));
+      if (!isFinite(F(p)) || Math.abs(F(p)) > 1e6) { if (![...breaks.keys()].some((k) => Math.abs(k - p) < 1e-9 * (1 + Math.abs(p)))) breaks.set(p, null); }
+    }
+    prev = cur;
+  }
+  const cutList = [...breaks.keys()].sort((a, b) => a - b);
+  const cuts = cutList.length ? cutList : [0];
+  const bounds = [-Infinity].concat(cuts, [Infinity]);
+  const endObj = (x) => (isFinite(x) ? { val: x, S: breaks.get(x) || null } : x);
+  const intervals = [];
+  for (let bi = 0; bi < bounds.length - 1; bi++) {
+    const a = bounds[bi];
+    const b = bounds[bi + 1];
+    const finite = isFinite(a) && isFinite(b);
+    const at = (t) => {
+      if (finite) return a + (b - a) * ((1 - Math.cos(Math.PI * t)) / 2);
+      if (!isFinite(a) && !isFinite(b)) return 0.01 * Math.sinh(T * (2 * t - 1));
+      const h = 0.01 * Math.sinh(T * t);
+      return isFinite(a) ? a + h : b - h;
+    };
+    const M = 6000;
+    const xs = [];
+    for (let i = 1; i < M; i++) xs.push(at(i / M));
+    const ys = xs.map(F);
+    const cands = []; // { val, attained }
+    // local extrema of the samples, refined
+    const ok = ys.map((y) => isFinite(y));
+    const golden = (l, r, sign) => {
+      const g = (Math.sqrt(5) - 1) / 2;
+      let c = r - g * (r - l);
+      let d = l + g * (r - l);
+      for (let it = 0; it < 100; it++) {
+        if (sign * F(c) > sign * F(d)) { r = d; d = c; c = r - g * (r - l); } else { l = c; c = d; d = l + g * (r - l); }
+      }
+      return F((l + r) / 2);
+    };
+    for (let i = 1; i < xs.length - 1; i++) {
+      if (!(ok[i - 1] && ok[i] && ok[i + 1]) || Math.abs(ys[i]) > 1e6) continue;
+      const sig = 1e-13 * (1 + Math.abs(ys[i])); // rounding noise in flat parts must not look like an extremum
+      if (ys[i] - ys[i - 1] > sig && ys[i] - ys[i + 1] > sig) cands.push({ val: Math.max(ys[i], golden(xs[i - 1], xs[i + 1], 1)), attained: true });
+      if (ys[i - 1] - ys[i] > sig && ys[i + 1] - ys[i] > sig) cands.push({ val: Math.min(ys[i], golden(xs[i - 1], xs[i + 1], -1)), attained: true });
+    }
+    if (!ok.some(Boolean)) continue;
+    // flat pieces (constant function)
+    const fin = ys.filter((y) => isFinite(y));
+    if (Math.max(...fin) - Math.min(...fin) < 1e-12 * (1 + Math.abs(fin[0]))) cands.push({ val: fin[0], attained: true });
+    // the ends
+    const ends = [[a, 1], [b, -1]];
+    ends.forEach(([e, side]) => {
+      if (isFinite(e)) {
+        // the value at the end point: exact substitution when the end is an exact number (rounding can turn 0 into -1e-17 under a root)
+        let Fe = F(e);
+        const eo = endObj(e);
+        const exactS = eo.S || rgExact(e);
+        if (exactS) {
+          try {
+            const y = numS(simp(subsS(S, v, exactS)), {});
+            if (isFinite(y)) Fe = y;
+            else if (!eo.S) Fe = NaN;
+          } catch (err) {
+            if (!(err instanceof MathError) && !(err instanceof NotAlgebraic)) throw err;
+          }
+        }
+        const L = rgLimit(S, v, eo, side, F);
+        // the value at the end counts only when it agrees with the limit (rounding can make a pole look finite)
+        const here = isFinite(Fe) && isFinite(L.v) && Math.abs(Fe - L.v) <= 1e-6 * (1 + Math.abs(L.v));
+        if (here) cands.push({ val: Fe, attained: true });
+        cands.push({ val: L.v, attained: here });
+      } else {
+        const L = rgLimit(S, v, e, 0, F);
+        cands.push({ val: L.v, attained: false });
+      }
+    });
+    const tol = (x) => (isFinite(x) ? 1e-9 * (1 + Math.abs(x)) : 0);
+    const pick = (better) => {
+      let best = null;
+      cands.forEach((c) => {
+        if (!isFinite(c.val) && !(c.val === Infinity || c.val === -Infinity)) return;
+        if (best === null || better(c.val, best.val)) best = { val: c.val, attained: c.attained };
+        else if (Math.abs(c.val - best.val) <= tol(best.val) && c.attained) best.attained = true;
+      });
+      return best;
+    };
+    const hi = pick((p, q) => p > q + tol(q));
+    const lo = pick((p, q) => p < q - tol(q));
+    if (!hi || !lo) continue;
+    intervals.push({ lo: lo.val, hi: hi.val, loOpen: !lo.attained, hiOpen: !hi.attained });
+  }
+  if (!intervals.length) throw new MathError('the function has no real values');
+  // 2. union of the intervals
+  const eq = (x, y) => (x === y) || (isFinite(x) && isFinite(y) && Math.abs(x - y) <= 1e-9 * (1 + Math.abs(x)));
+  intervals.sort((p, q) => (eq(p.lo, q.lo) ? (p.loOpen ? 1 : 0) - (q.loOpen ? 1 : 0) : p.lo - q.lo));
+  const merged = [];
+  intervals.forEach((r) => {
+    const last = merged[merged.length - 1];
+    if (last && (r.lo < last.hi && !eq(r.lo, last.hi) || (eq(r.lo, last.hi) && !(last.hiOpen && r.loOpen)))) {
+      if (eq(r.hi, last.hi)) last.hiOpen = last.hiOpen && r.hiOpen;
+      else if (r.hi > last.hi) { last.hi = r.hi; last.hiOpen = r.hiOpen; }
+    } else merged.push({ ...r });
+  });
+  const text = merged.map((m) => {
+    if (eq(m.lo, m.hi) && !m.loOpen && !m.hiOpen) return '{' + rgFmt(m.lo) + '}';
+    return (m.loOpen || !isFinite(m.lo) ? '(' : '[') + rgFmt(m.lo) + ', ' + rgFmt(m.hi) + (m.hiOpen || !isFinite(m.hi) ? ')' : ']');
+  }).join(' \u222a ');
+  const out = newOut();
+  out.answer.push('range: ' + text);
+  out.work.push('f(' + v + ') = ' + fmtS(S) + ';  the values come from the local extrema, the end values and the limits at the ends of each interval of the domain');
+  out.work.push('domain: ' + domainOf(S, v));
+  out.notes.push('Found by a numerical search with exact limits; a decimal with \u2248 means no simple exact form was recognised.');
+  return out;
+});
+// ======================================================================
+// 34. Applications of multiple integrals and vector calculus:  mass / centre of mass / moments of inertia of a lamina or a solid,
+//     integrals in polar, cylindrical and spherical coordinates, surface area, flux, Green's, the divergence theorem and Stokes' theorem.
+//     Bounds are listed from the OUTER integral to the INNER one; letters are single letters (\u03b8 is t, \u03c6 is f, \u03c1 is r when typed as Greek).
+//     Exact values come from the symbolic integrator; when it cannot find an antiderivative a Gauss-Legendre rule gives a decimal.
+// ======================================================================
+const vcNodes = {};
+function vcGL(n) {
+  if (vcNodes[n]) return vcNodes[n];
+  const x = [];
+  const w = [];
+  for (let i = 0; i < n; i++) {
+    let z = Math.cos((Math.PI * (i + 0.75)) / (n + 0.5));
+    let pp = 0;
+    for (let it = 0; it < 100; it++) {
+      let p1 = 1;
+      let p2 = 0;
+      for (let j = 0; j < n; j++) {
+        const p3 = p2;
+        p2 = p1;
+        p1 = ((2 * j + 1) * z * p2 - j * p3) / (j + 1);
+      }
+      pp = (n * (z * p1 - p2)) / (z * z - 1);
+      const z1 = z;
+      z = z1 - p1 / pp;
+      if (Math.abs(z - z1) < 1e-15) break;
+    }
+    x.push(z);
+    w.push(2 / ((1 - z * z) * pp * pp));
+  }
+  vcNodes[n] = { x, w };
+  return vcNodes[n];
+}
+/** numerical iterated integral; dims are listed from the outermost integral to the innermost */
+function vcNumeric(f, dims) {
+  const { x, w } = vcGL(dims.length >= 3 ? 24 : 48);
+  const env = {};
+  const rec = (k) => {
+    if (k === dims.length) return numS(f, env);
+    const d = dims[k];
+    const a = numS(d.lo, env);
+    const b = numS(d.hi, env);
+    const half = (b - a) / 2;
+    const mid = (a + b) / 2;
+    let s = 0;
+    for (let i = 0; i < x.length; i++) {
+      env[d.v] = mid + half * x[i];
+      s += w[i] * rec(k + 1);
+    }
+    delete env[d.v];
+    return s * half;
+  };
+  return rec(0);
+}
+/** the iterated integral of f over dims (outermost first): { S, num } when exact, { num } otherwise */
+function vcIterated(f, dims) {
+  let text = fmtS(f, true);
+  for (let i = dims.length - 1; i >= 0; i--) text = 'integrate(' + text + ', ' + dims[i].v + ', ' + fmtS(dims[i].lo, true) + ', ' + fmtS(dims[i].hi, true) + ')';
+  try {
+    const o = runCommandCall(parseExpression(text));
+    if (o.value && o.value.S) return { S: o.value.S, num: numS(o.value.S, {}) };
+  } catch (e) {
+    if (!(e instanceof MathError) && !(e instanceof NotAlgebraic)) throw e;
+  }
+  const num = vcNumeric(f, dims);
+  if (!isFinite(num)) throw new MathError('the integral could not be evaluated (a singularity inside the region?)');
+  return { num };
+}
+const vcLine = (label, r) => integralLine(label, r).replace(/ = \u2248/, ' \u2248');
+const vcDivide = (a, b) => {
+  if (a.S && b.S) {
+    const q = simp(sDiv(a.S, b.S));
+    return { S: q, num: numS(q, {}) };
+  }
+  return { num: (a.S ? a.num : a.num) / (b.S ? b.num : b.num) };
+};
+/** triples (variable, lower, upper) from the arguments, outermost first */
+function vcDims(args, start, count, what) {
+  const dims = [];
+  for (let i = 0; i < count; i++) {
+    const a = args.slice(start + 3 * i, start + 3 * i + 3);
+    if (a.length < 3) throw new MathError(what + ' needs bounds for ' + count + ' variables: a variable and its two limits each');
+    dims.push({ v: varOfArg(a[0]), lo: fromAst(a[1]), hi: fromAst(a[2]) });
+  }
+  if (new Set(dims.map((d) => d.v)).size !== dims.length) throw new MathError('the variables of the integration must be different letters');
+  return dims;
+}
+const vcRegionText = (dims) => dims.map((d) => fmtS(d.lo) + ' \u2264 ' + d.v + ' \u2264 ' + fmtS(d.hi)).join(',  ');
+
+// ---- lamina and solid -------------------------------------------------------------------------------------------------------------------------------------
+defCmd('lamina', (n) => {
+  needArgs(n, 7, 7, 'the density, then x with its limits and y with its limits (outer first): lamina(1, x, 0, 2, y, 0, x^2)');
+  const rho = fromAst(n.args[0]);
+  const dims = vcDims(n.args, 1, 2, 'lamina');
+  const [X, Y] = [sV(dims[0].v), sV(dims[1].v)];
+  const out = newOut();
+  const M = vcIterated(rho, dims);
+  const Mx = vcIterated(simp(sMul([Y, rho])), dims);
+  const My = vcIterated(simp(sMul([X, rho])), dims);
+  const Ix = vcIterated(simp(sMul([Y, Y, rho])), dims);
+  const Iy = vcIterated(simp(sMul([X, X, rho])), dims);
+  out.answer.push(vcLine('mass M = \u222c \u03c1 dA', M));
+  const cx = vcDivide(My, M);
+  const cy = vcDivide(Mx, M);
+  const t = (r) => (r.S ? symText(r.S) : (recognizeLoose(r.num) ? recognizeLoose(r.num).text + ' (\u2248 ' + fmtNum(r.num) + ')' : '\u2248 ' + fmtNum(r.num)));
+  out.answer.push('centre of mass (x\u0304, \u0233) = (' + t(cx) + ', ' + t(cy) + ')');
+  out.answer.push(vcLine('moment about the x-axis M\u2093 = \u222c y \u03c1 dA', Mx));
+  out.answer.push(vcLine('moment about the y-axis M_y = \u222c x \u03c1 dA', My));
+  const I0 = Ix.S && Iy.S ? { S: simp(sAdd([Ix.S, Iy.S])), num: Ix.num + Iy.num } : { num: Ix.num + Iy.num };
+  out.answer.push(vcLine('moments of inertia  I\u2093 = \u222c y\u00b2 \u03c1 dA', Ix));
+  out.answer.push(vcLine('                    I_y = \u222c x\u00b2 \u03c1 dA', Iy));
+  out.answer.push(vcLine('                    I\u2080 = I\u2093 + I_y', I0));
+  out.work.push('region: ' + vcRegionText(dims) + ';  density \u03c1 = ' + fmtS(rho) + ';  x\u0304 = M_y/M,  \u0233 = M\u2093/M');
+  if (!M.S) out.notes.push('No closed form was found, so the values are numerical (Gauss-Legendre).');
+  out.value = M.S ? { S: M.S } : { num: M.num };
+  return out;
+});
+defCmd('solid', (n) => {
+  needArgs(n, 10, 10, 'the density, then x, y, z with their limits (outer first): solid(1, x, 0, 1, y, 0, 1, z, 0, x + y)');
+  const rho = fromAst(n.args[0]);
+  const dims = vcDims(n.args, 1, 3, 'solid');
+  const [X, Y, Z] = dims.map((d) => sV(d.v));
+  const out = newOut();
+  const I = (g) => vcIterated(simp(sMul([g, rho])), dims);
+  const M = I(S1);
+  const Mx = I(X);
+  const My = I(Y);
+  const Mz = I(Z);
+  out.answer.push(vcLine('mass M = \u222d \u03c1 dV', M));
+  const t = (r) => (r.S ? symText(r.S) : (recognizeLoose(r.num) ? recognizeLoose(r.num).text + ' (\u2248 ' + fmtNum(r.num) + ')' : '\u2248 ' + fmtNum(r.num)));
+  out.answer.push('centre of mass (x\u0304, \u0233, z\u0304) = (' + t(vcDivide(Mx, M)) + ', ' + t(vcDivide(My, M)) + ', ' + t(vcDivide(Mz, M)) + ')');
+  const Ixx = I(simp(sAdd([sMul([Y, Y]), sMul([Z, Z])])));
+  const Iyy = I(simp(sAdd([sMul([X, X]), sMul([Z, Z])])));
+  const Izz = I(simp(sAdd([sMul([X, X]), sMul([Y, Y])])));
+  out.answer.push(vcLine('moments of inertia  I\u2093 = \u222d (y\u00b2 + z\u00b2) \u03c1 dV', Ixx));
+  out.answer.push(vcLine('                    I_y = \u222d (x\u00b2 + z\u00b2) \u03c1 dV', Iyy));
+  out.answer.push(vcLine('                    I_z = \u222d (x\u00b2 + y\u00b2) \u03c1 dV', Izz));
+  out.work.push('region: ' + vcRegionText(dims) + ';  density \u03c1 = ' + fmtS(rho));
+  if (!M.S) out.notes.push('No closed form was found, so the values are numerical (Gauss-Legendre).');
+  out.value = M.S ? { S: M.S } : { num: M.num };
+  return out;
+});
+
+// ---- polar, cylindrical, spherical coordinates -------------------------------------------------------------------------------------------------------
+function vcCoord(kind, dims) {
+  const [a, b, c] = dims.map((d) => sV(d.v));
+  if (kind === 'polar') return { map: new Map([['x', sMul([b, sFn('cos', [a])])], ['y', sMul([b, sFn('sin', [a])])]]), jac: b, label: 'x = r cos \u03b8, y = r sin \u03b8, dA = r dr d\u03b8' };
+  if (kind === 'cyl') return { map: new Map([['x', sMul([b, sFn('cos', [a])])], ['y', sMul([b, sFn('sin', [a])])]]), jac: b, label: 'x = r cos \u03b8, y = r sin \u03b8, dV = r dz dr d\u03b8' };
+  // spherical: a = \u03b8, b = \u03c6, c = \u03c1
+  return {
+    map: new Map([['x', sMul([c, sFn('sin', [b]), sFn('cos', [a])])], ['y', sMul([c, sFn('sin', [b]), sFn('sin', [a])])], ['z', sMul([c, sFn('cos', [b])])]]),
+    jac: sMul([c, c, sFn('sin', [b])]),
+    label: 'x = \u03c1 sin \u03c6 cos \u03b8, y = \u03c1 sin \u03c6 sin \u03b8, z = \u03c1 cos \u03c6, dV = \u03c1\u00b2 sin \u03c6 d\u03c1 d\u03c6 d\u03b8',
+  };
+}
+function vcCoordCmd(kind, count, usage, order) {
+  return (n) => {
+    needArgs(n, 1 + 3 * count, 1 + 3 * count, usage);
+    const f = fromAst(n.args[0]);
+    const dims = vcDims(n.args, 1, count, kind);
+    const co = vcCoord(kind, dims);
+    const names = dims.map((d) => d.v);
+    const inner = simp(subsMany(f, new Map(Array.from(co.map).filter(([k]) => !names.includes(k)))));
+    const integrand = simp(expandS(sMul([inner, co.jac])));
+    const out = newOut();
+    out.work.push('order of the variables: ' + order + ';  ' + co.label);
+    out.work.push('region: ' + vcRegionText(dims) + ';  integrand f\u00b7Jacobian = ' + fmtS(integrand));
+    const r = vcIterated(integrand, dims);
+    out.answer.push(vcLine(kind === 'polar' ? '\u222c f dA' : '\u222d f dV', r));
+    if (!r.S) out.notes.push('No closed form was found, so the value is numerical (Gauss-Legendre).');
+    out.value = r.S ? { S: r.S } : { num: r.num };
+    return out;
+  };
+}
+defCmd('polarint polardouble', vcCoordCmd('polar', 2, 'f, then \u03b8 with its limits and r with its limits (outer first): polarint(r^2, t, 0, 2*pi, r, 0, 1)   (x and y in f are replaced by r cos \u03b8 and r sin \u03b8)', '\u03b8 (outer), r (inner)'));
+defCmd('cylint cylindricalint', vcCoordCmd('cyl', 3, 'f, then \u03b8, r and z with their limits (outer first): cylint(z, t, 0, 2*pi, r, 0, 1, z, 0, 2)', '\u03b8, r, z (z innermost)'));
+defCmd('sphint sphericalint', vcCoordCmd('sph', 3, 'f, then \u03b8, \u03c6 and \u03c1 with their limits (outer first): sphint(1, t, 0, 2*pi, f, 0, pi, r, 0, 1)', '\u03b8 (azimuth), \u03c6 (from the z-axis), \u03c1 (radius)'));
+
+// ---- surfaces: area, flux, Stokes -----------------------------------------------------------------------------------------------------------------------
+const vcCross = (a, b) => [simp(expandS(sSub(sMul([a[1], b[2]]), sMul([a[2], b[1]])))), simp(expandS(sSub(sMul([a[2], b[0]]), sMul([a[0], b[2]])))), simp(expandS(sSub(sMul([a[0], b[1]]), sMul([a[1], b[0]]))))];
+/** the surface of a command: a graph z = f(x, y) (the variables x, y) or a parametrisation [X(u,v), Y(u,v), Z(u,v)] */
+function vcSurface(node, dims) {
+  if (node.t === 'list') {
+    if (node.items.length !== 3) throw new MathError('a parametrised surface is written [x(u,v), y(u,v), z(u,v)]');
+    return node.items.map((it) => fromAst(it));
+  }
+  const f = fromAst(node);
+  return [sV(dims[0].v), sV(dims[1].v), f];
+}
+function vcNormal(r, dims) {
+  const ru = vDiffS(r, dims[0].v);
+  const rv = vDiffS(r, dims[1].v);
+  return vcCross(ru, rv);
+}
+defCmd('surfacearea surfarea', (n) => {
+  needArgs(n, 7, 7, 'z = f(x, y): surfacearea(x^2 + y^2, x, 0, 1, y, 0, 1);   parametric: surfacearea([cos(u), sin(u), v], u, 0, 2*pi, v, 0, 1)   (limits outer first)');
+  const dims = vcDims(n.args, 1, 2, 'surfacearea');
+  const r = vcSurface(n.args[0], dims);
+  const N = vcNormal(r, dims);
+  const mag2 = simp(expandS(sAdd(N.map((c) => sMul([c, c])))));
+  const mag = simp(sSqrt(mag2));
+  const out = newOut();
+  out.work.push('surface ' + (n.args[0].t === 'list' ? 'r(' + dims[0].v + ', ' + dims[1].v + ') = ' + vecText(r) : 'z = ' + fmtS(r[2])) + ';  normal r_' + dims[0].v + ' \u00d7 r_' + dims[1].v + ' = ' + vecText(N) + ';  dS = |r_' + dims[0].v + ' \u00d7 r_' + dims[1].v + '| d' + dims[0].v + ' d' + dims[1].v + ' with |\u2026| = ' + fmtS(mag));
+  const res = vcIterated(mag, dims);
+  out.answer.push(vcLine('surface area', res));
+  if (!res.S) out.notes.push('No closed form was found, so the value is numerical (Gauss-Legendre).');
+  out.value = res.S ? { S: res.S } : { num: res.num };
+  return out;
+});
+defCmd('flux surfaceintegral', (n) => {
+  needArgs(n, 8, 9, 'the field [P, Q, R], the surface, then the limits (outer first): flux([x, y, z], [sin(f)*cos(t), sin(f)*sin(t), cos(f)], f, 0, pi, t, 0, 2*pi);  the normal is r_u \u00d7 r_v for the parameters in the order listed (a graph z = f(x, y) with x first points up); a last argument -1 reverses it');
+  if (n.args[0].t !== 'list' || n.args[0].items.length !== 3) throw new MathError('the field must be written [P, Q, R]');
+  const dims = vcDims(n.args, 2, 2, 'flux');
+  const F = n.args[0].items.map(fromAst);
+  const r = vcSurface(n.args[1], dims);
+  let N = vcNormal(r, dims);
+  if (n.args[8] && constQ(n.args[8]).sign() < 0) N = N.map((c) => simp(sNeg(c)));
+  const sub = new Map([['x', r[0]], ['y', r[1]], ['z', r[2]]]);
+  const Fr = F.map((c) => simp(subsMany(c, sub)));
+  const integrand = simp(expandS(sAdd(Fr.map((c, i) => sMul([c, N[i]])))));
+  const out = newOut();
+  out.work.push('flux = \u222c F\u00b7(r_' + dims[0].v + ' \u00d7 r_' + dims[1].v + ') d' + dims[0].v + ' d' + dims[1].v + ';  F(r) = ' + vecText(Fr) + ',  r_' + dims[0].v + ' \u00d7 r_' + dims[1].v + ' = ' + vecText(N) + ';  integrand ' + fmtS(integrand));
+  const res = vcIterated(integrand, dims);
+  out.answer.push(vcLine('flux \u222c F\u00b7dS', res));
+  out.notes.push('The orientation is the one of r_' + dims[0].v + ' \u00d7 r_' + dims[1].v + ' (outward for the usual sphere parametrisation, upward for a graph); reverse the sign for the other side.');
+  out.value = res.S ? { S: res.S } : { num: res.num };
+  return out;
+});
+defCmd('green greenstheorem', (n) => {
+  needArgs(n, 8, 8, 'P, Q, then x with its limits and y with its limits (outer first): green(-y, x, x, -1, 1, y, -sqrt(1 - x^2), sqrt(1 - x^2))');
+  const P = fromAst(n.args[0]);
+  const Q = fromAst(n.args[1]);
+  const dims = vcDims(n.args, 2, 2, 'green');
+  const integrand = simp(expandS(sSub(diffS(Q, dims[0].v), diffS(P, dims[1].v))));
+  const out = newOut();
+  out.work.push('Green\'s theorem (counter-clockwise boundary): \u222e P dx + Q dy = \u222c (\u2202Q/\u2202x \u2212 \u2202P/\u2202y) dA;  \u2202Q/\u2202x \u2212 \u2202P/\u2202y = ' + fmtS(integrand) + ';  region ' + vcRegionText(dims));
+  const res = vcIterated(integrand, dims);
+  out.answer.push(vcLine('\u222e P dx + Q dy', res));
+  out.value = res.S ? { S: res.S } : { num: res.num };
+  return out;
+});
+defCmd('divtheorem divergencetheorem gauss', (n) => {
+  needArgs(n, 10, 10, 'the field [P, Q, R], then x, y, z with their limits (outer first): divtheorem([x, y, z], x, 0, 1, y, 0, 1, z, 0, 1)');
+  if (n.args[0].t !== 'list' || n.args[0].items.length !== 3) throw new MathError('the field must be written [P, Q, R]');
+  const F = n.args[0].items.map(fromAst);
+  const dims = vcDims(n.args, 1, 3, 'divtheorem');
+  const div = simp(expandS(sAdd(F.map((c, i) => diffS(c, dims[i].v)))));
+  const out = newOut();
+  out.work.push('divergence theorem: the outward flux through the closed surface = \u222d div F dV;  div F = ' + fmtS(div) + ';  region ' + vcRegionText(dims) + '  (the letters of F are matched with the variables in the order x, y, z as listed)');
+  const res = vcIterated(div, dims);
+  out.answer.push(vcLine('outward flux \u222f F\u00b7dS', res));
+  out.value = res.S ? { S: res.S } : { num: res.num };
+  return out;
+});
+defCmd('stokes stokestheorem', (n) => {
+  needArgs(n, 8, 9, 'the field [P, Q, R], the surface [x(u,v), y(u,v), z(u,v)] or a graph z = f(x, y), then the limits (outer first): stokes([-y, x, 0], [r*cos(t), r*sin(t), 1 - r^2], r, 0, 1, t, 0, 2*pi);  the normal is r_u \u00d7 r_v for the parameters in the order listed; a last argument -1 reverses it');
+  if (n.args[0].t !== 'list' || n.args[0].items.length !== 3) throw new MathError('the field must be written [P, Q, R]');
+  const F = n.args[0].items.map(fromAst);
+  const dims = vcDims(n.args, 2, 2, 'stokes');
+  const r = vcSurface(n.args[1], dims);
+  const d = (e, v) => diffS(e, v);
+  const curl = [sSub(d(F[2], 'y'), d(F[1], 'z')), sSub(d(F[0], 'z'), d(F[2], 'x')), sSub(d(F[1], 'x'), d(F[0], 'y'))].map((e) => simp(expandS(e)));
+  let N = vcNormal(r, dims);
+  if (n.args[8] && constQ(n.args[8]).sign() < 0) N = N.map((c) => simp(sNeg(c)));
+  const sub = new Map([['x', r[0]], ['y', r[1]], ['z', r[2]]]);
+  const cs = curl.map((c) => simp(subsMany(c, sub)));
+  const integrand = simp(expandS(sAdd(cs.map((c, i) => sMul([c, N[i]])))));
+  const out = newOut();
+  out.work.push('Stokes\' theorem: \u222e F\u00b7dr = \u222c curl F \u00b7 (r_' + dims[0].v + ' \u00d7 r_' + dims[1].v + ') d' + dims[0].v + ' d' + dims[1].v + ';  curl F = ' + vecText(curl) + ',  r_' + dims[0].v + ' \u00d7 r_' + dims[1].v + ' = ' + vecText(N));
+  const res = vcIterated(integrand, dims);
+  out.answer.push(vcLine('circulation \u222e F\u00b7dr = \u222c curl F\u00b7dS', res));
+  out.notes.push('The boundary is traversed counter-clockwise when seen from the side the normal r_' + dims[0].v + ' \u00d7 r_' + dims[1].v + ' points to.');
+  out.value = res.S ? { S: res.S } : { num: res.num };
+  return out;
+});
 
 // ======================================================================
 // 90. Routing of command statements (integrate(...), det(...), matrices, ODEs ...)

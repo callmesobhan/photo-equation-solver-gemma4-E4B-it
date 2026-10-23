@@ -500,6 +500,7 @@ defCmd('stemleaf stemandleaf', (n) => {
   });
   const first = Number(vs[0].n / 10n);
   const last = Number(vs[vs.length - 1].n / 10n);
+  if (last - first > 200) throw new MathError('the values span ' + (last - first + 1) + ' stems; a stem-and-leaf plot is meant for data within a few hundred (use freqtable or a histogram for wide ranges)');
   const out = newOut();
   out.answer.push('stem | leaves');
   for (let s = first; s <= last; s++) out.answer.push(String(s).padStart(4) + ' | ' + (stems.get(String(s)) || []).join(' '));
