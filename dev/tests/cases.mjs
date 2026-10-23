@@ -770,4 +770,17 @@ export const CASES = [
   ['sin(x) = 0, 0 < x < 2pi', ['x = π']],
   ['verify sin(x)^2 + cos(x)^2 = 1', ['true for every x']],
   ['prove that tan(x) = sin(x)/cos(x)', ['true for every']],
+  // ---- equilibria and phase portraits
+  ['equilibria(y*(1-y), y)', ['y = 0: unstable (source)', 'y = 1: stable (sink)']],
+  ['equilibria(y^2*(1-y), y)', ['y = 0: semi-stable', 'y = 1: stable (sink)']],
+  ["equilibrium points of y' = y(1 - y)", ['y = 0: unstable', 'y = 1: stable']],
+  ['phaseplane(x*(1-y), y*(x-1), x, y)', ['(x, y) = (0, 0): saddle point: unstable', 'linearization is a centre']],
+  ['phaseplane(x*(3-x-2*y), y*(2-x-y), x, y)', ['(x, y) = (1, 1): saddle point', '(x, y) = (3, 0): node (sink)']],
+  ['phaseplane(x*(2-x-y), y*(2-x-y), x, y)', ['a whole line of equilibria', 'x + y = 2']],
+  ['classify([[3,1],[1,3]])', ['node (source): unstable', 'eigenvalues 4, 2']],
+  ['classify([[0,1],[-1,0]])', ['centre']],
+  ['classify([[-1,2],[-2,-1]])', ['spiral (sink): asymptotically stable', '-1 ± 2i']],
+  ['classify([[1,2],[3,0]])', ['saddle point']],
+  ["x' = -x + 2y; y' = -2x - y", ['Phase portrait: the origin is a spiral (sink)']],
+  ["classify the equilibria of x' = x(1 - y), y' = y(x - 1)", ['saddle point']],
 ];

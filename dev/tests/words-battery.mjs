@@ -159,6 +159,10 @@ const TEMPLATES = [
   () => { const A = pt(); const B = pt(); const C = pt(); return [`collinear(${ptv(A)}, ${ptv(B)}, ${ptv(C)})`, [`are the points ${A}, ${B}, ${C} collinear?`]]; },
   () => { const P = Array.from({ length: R(4, 7) }, () => pt()); return [`hull(${P.map(ptv).join(', ')})`, [`convex hull of ${P.join(', ')}`]]; },
   () => { const A = pt(); const B = pt(); const C = pt(); return [`triangle2d(${ptv(A)}, ${ptv(B)}, ${ptv(C)})`, [`circumcenter of the triangle with vertices ${A}, ${B}, ${C}`, `incenter of the triangle with vertices ${A}, ${B}, ${C}`]]; },
+  // ---- equilibria
+  () => { const a = R(1, 4); const b = R(1, 4); return [`equilibria(y*(${a} - y)*(y + ${b}), y)`, [`equilibrium points of y' = y(${a} - y)(y + ${b})`, `find the equilibrium solutions of dy/dt = y(${a} - y)(y + ${b})`, `the critical points of the autonomous equation y' = y(${a} - y)(y + ${b})`]]; },
+  () => { const a = R(1, 4); const b = R(1, 4); const c = R(1, 4); const d = R(1, 4); return [`phaseplane(x*(${a} - ${b}*y), y*(${d}*x - ${c}), x, y)`, [`classify the equilibria of x' = x(${a} - ${b}y), y' = y(${d}x - ${c})`, `equilibrium points of the system x' = x(${a} - ${b}y); y' = y(${d}x - ${c})`]]; },
+  () => { const [a, b, c, d] = [R(-3, 3), R(-3, 3), R(-3, 3), R(-3, 3)]; const t = (k, u, v) => `${k}x + ${u}y`.replace(/\b0x \+ /, '').replace(/ \+ 0y/, ''); return [`phaseplane(${a}*x + ${b}*y, ${c}*x + ${d}*y, x, y)`, [`stability of the system x' = ${a}x + ${b}y; y' = ${c}x + ${d}y`.replace(/\+ -/g, '- ')]]; },
   // ---- functions
   () => { const a = R(1, 5); const b = R(-5, 5); const c = R(-6, 6); return [`${a}*(${c})^2 + ${b}`, [`f(x) = ${a}x^2 + ${b}, find f(${c})`.replace('x^2', 'x^2'), `let f(x) = ${a}x^2 + ${b}. What is f(${c})?`]]; },
 ];

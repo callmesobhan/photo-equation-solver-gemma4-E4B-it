@@ -379,6 +379,8 @@ function odeSystemSolve(sts, odes, ics, out) {
   const rootsI = polyRoots(charp);
   const q2 = (q) => sN(q);
   out.work.push('Matrix A = ' + JSON.stringify(M.map((r) => r.map((q) => q.toString()))).replace(/"/g, '') + ';  characteristic polynomial ' + polyText(charp, 'λ') + ' = 0');
+  const portrait = phPortraitNote(M);
+  if (portrait) out.notes.push(portrait);
   const evS = [];
   rootsI.real.forEach((r) => {
     const S = rootS(r) || null;

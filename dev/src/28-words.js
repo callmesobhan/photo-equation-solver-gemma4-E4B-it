@@ -480,7 +480,7 @@ function wRules(s) {
     const e = wExpr(m[1]);
     return /=/.test(e) ? wOps(e) : wOps(e) + ' = 0';
   }
-  if ((m = /^(?:(?:the|a|an)\s+)?(?:critical\s+points|stationary\s+points|turning\s+points|extrema|extreme\s+values|local\s+(?:maxima|minima|extrema)|local\s+maxima\s+and\s+minima|maxima\s+and\s+minima|maximum\s+and\s+minimum)\s+of\s+(.+)$/i.exec(s))) {
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:critical\s+points|stationary\s+points|turning\s+points|extrema|extreme\s+values|local\s+(?:maxima|minima|extrema)|local\s+maxima\s+and\s+minima|maxima\s+and\s+minima|maximum\s+and\s+minimum)\s+of\s+(.+)$/i.exec(s)) && !/['′]\s*=|\bd[a-z]\s*\/\s*d[a-z]/.test(m[1])) {
     const pe = wPeel(m[1]);
     return pe.lo != null ? wCall('critical', wE(pe.rest), pe.v || 'x', wBound(pe.lo), wBound(pe.hi)) : wCall('critical', wE(pe.rest), pe.v);
   }
@@ -537,6 +537,13 @@ function wRules(s) {
     return base ? '(' + base + ') * (1 ' + (/discount/i.test(m[3]) ? '-' : '+') + ' ' + m[2] + '/100)' : null;
   }
   if ((m = /^(?:(?:the|a|an)\s+)?ratio\s+of\s+(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)(?:\s+to\s+(\d+(?:\.\d+)?))?$/i.exec(s))) return wCall('ratio', m[1], m[2], m[3]);
+
+  // ---- equilibria and phase portraits: "equilibrium points of y' = y(1 - y)", "classify the equilibria of x' = ..., y' = ..."
+  if ((m = /^(?:(?:classify|determine|find|analy[sz]e|identify)\s+)?(?:the\s+)?(?:(?:equilibri(?:um|a)|(?:fixed|critical|stationary)\s+(?:points?|solutions?|values?|states?))(?:\s+(?:points?|solutions?|values?|states?))?|stability|phase\s+(?:line|portrait|plane)|type|nature)(?:\s+and\s+(?:their\s+)?(?:stability|classification|types?))?(?:\s+of\s+(?:the\s+)?(?:equilibri\w+|fixed\s+points?|critical\s+points?|origin))?\s+(?:of|for|in)\s+(?:the\s+)?(?:autonomous\s+)?(?:differential\s+equation|equation|ode|system(?:\s+of\s+(?:differential\s+)?equations)?|model|linear\s+system)?\s*:?\s*(.+)$/i.exec(s))) {
+    const ds = wDerivs(m[1]);
+    if (ds && ds.length === 1) return wCall('equilibria', wOps(ds[0].rhs), ds[0].v);
+    if (ds && ds.length === 2) return wCall('phaseplane', wOps(ds[0].rhs), wOps(ds[1].rhs), ds[0].v, ds[1].v);
+  }
 
   // ---- plane geometry: circles, lines, tangents, transformations
   const eqsOf = (str) => str.split(/\s+and\s+|\s*;\s*|\s*,\s+(?=[a-z0-9(-])/i).map((t) => t.replace(/^(?:the\s+)?(?:lines?|circles?)\s+/i, '').trim()).filter(Boolean);
@@ -919,4 +926,16 @@ function wWindow(line) {
   }
   if ((m = /^(.+?=[^<>≤≥]*?)\s*(?:,|;|\bfor\b|\bwhere\b|\bwith\b|\bwhen\b|\bon\b|\bin\b|\bif\b)\s*(?:the\s+interval\s+)?(.*[<>≤≥].*)$/i.exec(line)) && !/[<>≤≥]/.test(m[1]) && !/=/.test(m[2].replace(/[<>!]=/g, ''))) return m[1].trim() + '; ' + m[2].trim();
   return null;
+}
+
+/** "x' = 3x + y; y' = x + 3y", "dy/dt = y(1 - y)": the dependent letters and their right-hand sides, or null */
+function wDerivs(text) {
+  const parts = text.split(/\s*;\s*|\n|\s+and\s+|\s*,\s*(?=[a-z]\s*'|d[a-z]\s*\/)/i).map((t) => t.trim()).filter(Boolean);
+  const out = [];
+  for (const p of parts) {
+    const m = /^([a-z])\s*['′]\s*(?:\(\s*[a-z]\s*\))?\s*=\s*(.+)$/i.exec(p) || /^d\s*([a-z])\s*\/\s*d\s*[a-z]\s*=\s*(.+)$/i.exec(p);
+    if (!m) return null;
+    out.push({ v: m[1].toLowerCase(), rhs: m[2].trim() });
+  }
+  return out.length ? out : null;
 }

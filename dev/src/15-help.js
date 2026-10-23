@@ -41,6 +41,7 @@ HELP.words = [
   '  matrices   "determinant of [[1,2],[3,4]]"  "inverse of ..."  "eigenvalues of ..."  "rank / transpose / trace / rref of ..."  "dot product of [1,2,3] and [4,5,6]"  "angle between [1,0] and [1,1]"',
   '  data       "mean of 2, 4, 6, 8"  "median of ..."  "standard deviation of ..." (sample; "population standard deviation of ..." for the population)  "correlation between [1,2,3,4] and [2,4,5,9]"',
   '             "probability of exactly 3 heads in 5 coin flips"  "z-score of 85 with mean 70 and standard deviation 10"  "X is normally distributed with mean 100 and standard deviation 15, find P(X < 120)"',
+  '  ODEs       "equilibrium points of y\' = y(1 - y)"  "classify the equilibria of x\' = x(1 - y), y\' = y(x - 1)"  "stability of the system x\' = -x + 2y; y\' = -2x - y"',
   '  money      "compound interest on $1000 at 5% for 10 years compounded monthly"  "simple interest on $2000 at 4% for 3 years"  "monthly payment on a $200,000 loan at 6% for 30 years"',
 ].join('\n');
 HELP.syntax = [
@@ -119,6 +120,8 @@ HELP.ode = [
   '  laplace(f, t)   laplace(f, t, s)   ilaplace(F, s)   ilaplace(F, s, t)       e.g. laplace(t^2*e^(-3t) + sin(2t), t),  ilaplace((s+1)/(s^2+2s+5), s)',
   '  unit steps and impulses (u(t - a) = heaviside(t - a), delta(t - a) = dirac(t - a)):  laplace(t*u(t-2), t)   laplace(sin(t)*heaviside(t-pi), t)   ilaplace(e^(-2s)/(s^2+1), s)   ilaplace(e^(-3s), s)',
   '                the equation itself may have such a forcing:  y\'\' + y = u(t-pi), y(0) = 0, y\'(0) = 0    y\'\' + 4y = delta(t-pi), y(0) = 0, y\'(0) = 0    y\' + 2y = u(t-1) - u(t-2)  (solved with the Laplace transform; without initial values C1 = y(0), C2 = y\'(0))',
+  '  equilibria and stability:  equilibria(y*(1-y), y)  [phaseline]  for y\' = f(y): equilibria, sink / source / semi-stable, phase line      phaseplane(x*(1-y), y*(x-1), x, y)  [linearize]  for x\' = f, y\' = g: equilibria, Jacobian, saddle / node / spiral / centre',
+  '                classify([[3,1],[1,3]])  [phasetype]  type of the linear system x\' = A x  (2x2 or 3x3);  a solved 2x2 system also states its phase portrait;  sentences: "classify the equilibria of x\' = x(1 - y), y\' = y(x - 1)"',
   '  every solution is checked by substituting it back into the equation',
 ].join('\n');
 HELP.multivar = [
