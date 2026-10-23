@@ -336,11 +336,270 @@ const W_STAT = [
   ['max(?:imum)?|largest|greatest|biggest|highest', 'max'], ['min(?:imum)?|smallest|least|lowest', 'min'],
 ];
 
+// ---- probability sentences: "P(A|B) if P(A and B) = 0.2 and P(B) = 0.5", Bayes' theorem, unions, complements
+function wEvent(e) {
+  let t = e.trim().replace(/\s+/g, ' ');
+  let m;
+  if ((m = /^(.+?)\s*(?:\||given\s+(?:that\s+)?)\s*(.+)$/i.exec(t))) { const a = wEvent(m[1]); const b = wEvent(m[2]); return a && b ? { k: a.k + '|' + b.k, kind: 'cond', a, b } : null; }
+  if ((m = /^(.+?)\s*(?:∪|\bor\b)\s*(.+)$/i.exec(t))) { const a = wEvent(m[1]); const b = wEvent(m[2]); return a && b ? { k: [a.k, b.k].sort().join('u'), kind: 'u', a, b } : null; }
+  if ((m = /^(.+?)\s*(?:∩|\band\b|,)\s*(.+)$/i.exec(t))) { const a = wEvent(m[1]); const b = wEvent(m[2]); return a && b ? { k: [a.k, b.k].sort().join('&'), kind: 'n', a, b } : null; }
+  if ((m = /^(?:not\s+|¬|!|~)\s*([A-Za-z]\w*)$/i.exec(t)) || (m = /^([A-Za-z]\w*)\s*(?:'|′|\^c|ᶜ|\s+complement|\s+c)$/i.exec(t))) return { k: '!' + m[1], kind: 'c', a: { k: m[1], kind: 'a' } };
+  if (/^[A-Za-z]\w*$/.test(t)) return { k: t, kind: 'a' };
+  return null;
+}
+function wProbSentence(s) {
+  if (!/\bP\s*\(/.test(s) || /[<>≤≥]|\bnormal|distributed|binomial|poisson|\bz\b/i.test(s)) return null;
+  const VAL = '(\\d*\\.?\\d+(?:\\s*\\/\\s*\\d+)?\\s*%?)';
+  const known = new Map();
+  const assignRx = new RegExp('P\\s*\\(([^()]*)\\)\\s*(?:=|is|equals)\\s*' + VAL, 'gi');
+  let m;
+  while ((m = assignRx.exec(s))) {
+    const ev = wEvent(m[1]);
+    if (!ev) return null;
+    known.set(ev.k, m[2].replace(/\s+/g, ''));
+  }
+  const rest = s.replace(assignRx, ' ');
+  let query = null;
+  const qRx = /P\s*\(([^()]*)\)/gi;
+  while ((m = qRx.exec(rest))) {
+    const ev = wEvent(m[1]);
+    if (!ev) return null;
+    query = query || ev;
+  }
+  if (!query) return null;
+  const indep = /\bindependent\b/i.test(s) && !/\bnot\s+independent\b/i.test(s);
+  const exclusive = /\bmutually\s+exclusive\b|\bdisjoint\b/i.test(s);
+  const seen = new Set();
+  const wrap = (t) => '(' + t + ')';
+  const get = (ev) => {
+    if (known.has(ev.k)) return known.get(ev.k);
+    if (seen.has(ev.k) || seen.size > 12) return null;
+    seen.add(ev.k);
+    let r = null;
+    const g = (e) => get(e);
+    if (ev.kind === 'c') { const x = g(ev.a); r = x && '1-' + wrap(x); }
+    else if (ev.kind === 'n') {
+      const x = g(ev.a); const y = g(ev.b);
+      if (exclusive) r = '0';
+      else if (indep && x && y) r = wrap(x) + '*' + wrap(y);
+      if (!r) { const c1 = known.get(ev.a.k + '|' + ev.b.k); const c2 = known.get(ev.b.k + '|' + ev.a.k); if (c1 && y) r = wrap(c1) + '*' + wrap(y); else if (c2 && x) r = wrap(c2) + '*' + wrap(x); }
+      if (!r) { const u = known.get([ev.a.k, ev.b.k].sort().join('u')); if (u && x && y) r = wrap(x) + '+' + wrap(y) + '-' + wrap(u); }
+    } else if (ev.kind === 'u') {
+      const x = g(ev.a); const y = g(ev.b);
+      if (x && y) {
+        if (exclusive) r = wrap(x) + '+' + wrap(y);
+        else if (indep) r = wrap(x) + '+' + wrap(y) + '-' + wrap(x) + '*' + wrap(y);
+        else { const both = known.get([ev.a.k, ev.b.k].sort().join('&')); if (both) r = wrap(x) + '+' + wrap(y) + '-' + wrap(both); }
+      }
+    } else if (ev.kind === 'cond') {
+      const both = known.get([ev.a.k, ev.b.k].sort().join('&'));
+      const y = g(ev.b);
+      if (both && y) r = wrap(both) + '/' + wrap(y);
+      else if (indep && (ev.a.kind === 'a' || ev.a.kind === 'c')) r = g(ev.a);
+      if (!r && y) {
+        const rev = known.get(ev.b.k + '|' + ev.a.k);
+        const x = g(ev.a);
+        if (rev && x) r = wrap(rev) + '*' + wrap(x) + '/' + wrap(y);
+      }
+    } else if (ev.kind === 'a') {
+      // total probability over an event X and its complement
+      for (const k of known.keys()) {
+        const cm = /^([^|]+)\|([^|!]+)$/.exec(k);
+        if (cm && cm[1] === ev.k) {
+          const X = cm[2];
+          const c1 = known.get(ev.k + '|' + X);
+          const c2 = known.get(ev.k + '|!' + X);
+          const px = known.get(X);
+          if (c1 && c2 && px) { r = wrap(c1) + '*' + wrap(px) + '+' + wrap(c2) + '*(1-' + wrap(px) + ')'; break; }
+        }
+      }
+    }
+    seen.delete(ev.k);
+    return r;
+  };
+  const r = get(query);
+  return r ? r : null;
+}
+
+// ---- set sentences: "A = {1,2,3}, B = {2,3,4}, find A union B", "{1,2} ∪ {2,3}", "number of subsets of {1,2,3,4}"
+function wSetSentence(s) {
+  if (!/[{}∪∩∈⊂⊆×Δ]|\b(?:union|intersect(?:ion)?|subsets?|power\s+set|complement|cartesian|cardinality|elements)\b/i.test(s)) return null;
+  const defs = new Map();
+  let rest = s.replace(/\b([A-Z])\s*=\s*\{([^{}]*)\}/g, (m, name, body) => {
+    defs.set(name, '[' + body + ']');
+    return name;
+  });
+  rest = rest.replace(/\{([^{}]*)\}/g, (m, body) => '[' + body + ']');
+  const OPERAND = '(\\[[^\\]]*\\]|[A-Z](?![A-Za-z]))';
+  const sub = (t) => {
+    const r = defs.get(t);
+    if (r) return r;
+    if (/^[A-Z]$/.test(t)) throw new Error('undefined set');
+    return t;
+  };
+  try {
+    const clean = rest.replace(/[?]/g, ' ').replace(/\s+/g, ' ').trim();
+    let m;
+    // cardinality and number of subsets
+    if ((m = new RegExp('(?:number\\s+of\\s+subsets|how\\s+many\\s+subsets)\\s+(?:does\\s+|can\\s+)?(?:a\\s+set\\s+)?(?:of|with|has|have)?\\s*(?:the\\s+set\\s+)?' + OPERAND, 'i').exec(clean)) && !/\d+\s+elements/.test(clean)) return wCall('powerset', sub(m[1]));
+    if ((m = /(?:number\s+of\s+subsets|how\s+many\s+subsets)\D*?(\d+)\s+elements/i.exec(clean))) return wCall('powerset', m[1]);
+    if ((m = new RegExp('(?:subsets|power\\s+set)\\s+of\\s+(?:the\\s+set\\s+)?' + OPERAND, 'i').exec(clean))) return wCall('powerset', sub(m[1]));
+    if ((m = new RegExp('(?:cardinality|number\\s+of\\s+elements(?:\\s+in)?|size)\\s+(?:of\\s+)?(?:the\\s+set\\s+)?' + OPERAND, 'i').exec(clean)) || (m = new RegExp('(?:\\||n\\s*\\()\\s*' + OPERAND + '\\s*[|)]', 'i').exec(clean))) return wCall('cardinality', sub(m[1]));
+    // is A a subset of B
+    if ((m = new RegExp('(?:is|are)\\s+' + OPERAND + '\\s+(?:a\\s+)?(?:proper\\s+)?subset\\s+of\\s+' + OPERAND, 'i').exec(clean)) || (m = new RegExp(OPERAND + '\\s*(?:⊂|⊆)\\s*' + OPERAND).exec(clean))) return wCall('issubset', sub(m[1]), sub(m[2]));
+    // complement
+    if ((m = new RegExp('complement\\s+of\\s+' + OPERAND + '(?:.*?\\b(?:in|within|relative\\s+to|with\\s+respect\\s+to)\\s+(?:the\\s+)?(?:universal\\s+set\\s+|universe\\s+)?' + OPERAND + ')?', 'i').exec(clean)) || (m = /\b([A-Z])(?:'|′|\^c|ᶜ)(?![A-Za-z])/.exec(clean))) {
+      const U = m[2] ? sub(m[2]) : defs.get('U');
+      if (U) return wCall('setcomplement', sub(m[1]), U);
+    }
+    // binary operations, also chained: A ∪ B ∪ C, union of A and B, A ∩ B
+    const OPS = [
+      ['union', '(?:∪|\\bunion\\b|\\bcup\\b)'], ['intersection', '(?:∩|\\bintersect(?:ion)?\\b|\\bcap\\b)'], ['symdiff', '(?:Δ|△|\\bsymmetric\\s+difference\\b)'], ['setdiff', '(?:\\\\|\\bminus\\b|\\bwithout\\b|∖)'], ['cartesian', '(?:×|\\bcross\\b|\\bcartesian\\s+product\\b)'],
+    ];
+    const dm = /\b([A-Z])\s*[-−]\s*([A-Z])\b(?!\s*=)/.exec(clean);
+    if (dm && defs.has(dm[1]) && defs.has(dm[2])) return wCall('setdiff', sub(dm[1]), sub(dm[2]));
+    for (const [cmd, op] of OPS) {
+      const word = new RegExp('(?:the\\s+)?' + (cmd === 'setdiff' ? '(?<!symmetric\\s)difference' : cmd === 'cartesian' ? 'cartesian\\s+product' : cmd === 'symdiff' ? 'symmetric\\s+difference' : cmd) + '\\s+of\\s+(?:the\\s+sets?\\s+)?' + OPERAND + '(?:\\s*,\\s*|\\s+and\\s+|\\s*,\\s*and\\s+)' + OPERAND + '(?:(?:\\s*,\\s*|\\s+and\\s+)' + OPERAND + ')?', 'i').exec(clean);
+      if (word) return wCall(cmd, sub(word[1]), sub(word[2]), word[3] ? sub(word[3]) : null);
+      const chain = new RegExp(OPERAND + '(?:\\s*' + op + '\\s*' + OPERAND + ')+', 'i').exec(clean);
+      if (chain) {
+        const ops = clean.slice(chain.index, chain.index + chain[0].length).split(new RegExp('\\s*' + op + '\\s*', 'i'));
+        if (ops.length >= 2 && ops.every((x) => new RegExp('^' + OPERAND + '$').test(x.trim()))) return wCall(cmd, ...ops.map((x) => sub(x.trim())));
+      }
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
 /** One line, whole-line patterns. Returns the replacement text or null. */
 function wRules(s) {
   let m;
   const T = (x) => x.replace(/^\s*(?:(?:the|a|an)\s+)?/i, '');
+  const pr = wProbSentence(s);
+  if (pr) return pr;
+  const st = wSetSentence(s);
+  if (st) return st;
 
+  // ---- arc length of a circle sector given the radius and the angle
+  if ((m = /^(?:(?:the|a|an)\s+)?arc\s+length\s+(?:with|for|if|when|given)\s+(.*\bradius\b.*\bangle\b.*)$/i.exec(s))) return wRules('arc length of a sector with ' + m[1]);
+  // ---- linear approximation
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:linear\s+approximation|linearization)\s+(?:of|for|to)\s+(.+)$/i.exec(s)) || (m = /^linearize\s+(.+)$/i.exec(s))) {
+    let body = m[1];
+    let est = null;
+    const em = /^(.*?)(?:\s*,?\s*(?:and\s+)?(?:then\s+)?(?:use\s+it\s+to\s+)?(?:estimate|approximate)s?\s+(.+))$/i.exec(body);
+    if (em) { body = em[1]; est = em[2]; }
+    const pe = wPeel(body);
+    if (pe.at != null && /[a-z]/i.test(pe.rest)) {
+      let x0 = null;
+      if (est) {
+        const cm = /^[a-z]*\(\s*([^()]+?)\s*\)$/i.exec(est.trim());
+        x0 = wBound(cm ? cm[1] : est);
+      }
+      return wCall('linapprox', wE(pe.rest.replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '')), pe.atVar || pe.v || 'x', wBound(pe.at), x0);
+    }
+  }
+  // ---- mean value, Rolle and intermediate value theorems
+  if ((m = /(mean\s+value\s+theorem|rolle'?s?\s+theorem|intermediate\s+value\s+theorem)\b.*?\b(?:for|to|on|with|of|applied\s+to)\s+(.+)$/i.exec(s)) && /[\[(]\s*-?[\d.]+\s*[,;]|\bfrom\b|\bbetween\b|\bon\b/i.test(m[2])) {
+    const pe = wPeel(m[2]);
+    if (pe.lo != null && /[a-z]/i.test(pe.rest)) {
+      const kind = /^mean/i.test(m[1]) ? 'mvt' : /^rolle/i.test(m[1]) ? 'rolle' : 'ivt';
+      return wCall(kind, wE(pe.rest.replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '')), pe.v || 'x', wBound(pe.lo), wBound(pe.hi));
+    }
+  }
+  if ((m = /^(?:show|prove|verify|explain|justify)\s+that\s+(.+?)\s+has\s+(?:a|at\s+least\s+one|a\s+real)\s+(?:root|zero|solution)\s+(?:in|on|between)\s+(.+)$/i.exec(s))) {
+    const pe = wPeel('x ' + m[2].replace(/^the\s+interval\s+/i, 'in '));
+    const pe2 = pe.lo != null ? pe : wPeel(m[2].replace(/^(?:the\s+interval\s+)?/i, 'on '));
+    if (pe2.lo != null) return wCall('ivt', wE(m[1].replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '').replace(/\s*=\s*0$/, '')), 'x', wBound(pe2.lo), wBound(pe2.hi));
+  }
+  // ---- sums of patterned series: "1 + 2 + 3 + ... + 100", "sum of the geometric series 1 + 1/2 + 1/4 + ..."
+  if (/(?:\.{3}|…)/.test(s) && /\d/.test(s)) {
+    const body = s.replace(/^(?:(?:find|calculate|compute|evaluate)\s+)?(?:(?:the|a)\s+)?(?:sum|total)\s+(?:of\s+)?(?:(?:the|a)\s+)?(?:(?:infinite|finite)\s+)?(?:(?:arithmetic|geometric)\s+)?(?:series|sequence)?\s*:?\s*/i, '');
+    const parts = body.split(/\s*(?:\.{3}|…)\s*/);
+    if (parts.length === 2) {
+      const head = parts[0].replace(/[+,\s]+$/, '').replace(/\s-\s/g, ' + -');
+      const tail = parts[1].replace(/^[+,\s]+/, '').replace(/[.?\s]+$/, '');
+      const terms = head.split(/\s*[+,]\s*/).filter(Boolean);
+      if (terms.length >= 2 && terms.length <= 6 && terms.every((t) => /^[-−]?\s*\(?\d[\d./^()*\s]*\)?$/.test(t.trim()) || /^[-−]?[\d.]+(?:\s*\/\s*[\d.]+)?$/.test(t.trim())) && (/\bsum\b|\bseries\b/i.test(s) || /\+/.test(head))) {
+        return wCall('seriessum', '[' + terms.map((t) => wE(t.replace(/−/g, '-'))).join(', ') + ']', tail ? wE(tail.replace(/^\+\s*/, '')) : 'oo');
+      }
+    }
+  }
+  // ---- means and variances of standard distributions
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:expected\s+value|expectation|mean|average|variance|standard\s+deviation)(?:\s*(?:,|and)\s*(?:the\s+)?(?:variance|standard\s+deviation|mean|expected\s+value))*\s+(?:of|for)\s+(?:(?:the|a|an)\s+)?(.+)$/i.exec(s))) {
+    const d = m[1];
+    let q;
+    if (/\b(?:die|dice)\b/i.test(d) && !/\bdice\b.*\bsum\b/i.test(d)) {
+      const f = /(\d+)[- ]sided/i.exec(d);
+      return wCall('diestats', f ? f[1] : null);
+    }
+    if (/\bbinomial\b/i.test(d) && (q = [/\bn\s*=\s*(\d+)/i.exec(d) || /(\d+)\s+trials/i.exec(d), /\bp\s*=\s*([\d.]+(?:\s*\/\s*\d+)?)/i.exec(d) || /probability\s+(?:of\s+success\s+)?(?:of\s+)?([\d.]+)/i.exec(d)]) && q[0] && q[1]) return wCall('binomstats', q[0][1], q[1][1].replace(/\s+/g, ''));
+    if (/\bpoisson\b/i.test(d) && (q = /(?:λ|lambda|rate|mean|average)\s*(?:=|of|is)?\s*([\d.]+)/i.exec(d))) return wCall('poissonstats', q[1]);
+    if (/\bgeometric\b/i.test(d) && (q = /\bp\s*=\s*([\d.]+(?:\s*\/\s*\d+)?)|probability\s+(?:of\s+success\s+)?(?:of\s+)?([\d.]+)/i.exec(d))) return wCall('geomstats', (q[1] || q[2]).replace(/\s+/g, ''));
+  }
+  // ---- how many ways: arranging and choosing
+  if ((m = /^how\s+many\s+(?:different\s+|distinct\s+)?(?:ways|orders|arrangements|seatings)\s+(?:are\s+there\s+)?(?:can|to|for)?\s*(?:are\s+there\s+)?(?:for\s+)?(\d+)\s+(?:\w+\s+){0,3}?(?:to\s+)?(?:sit|be\s+seated|be\s+arranged|be\s+lined\s+up|line\s+up|stand|queue|finish|be\s+ordered|be\s+placed|arrange\s+themselves)\b(.*)$/i.exec(s))) {
+    const n = parseInt(m[1], 10);
+    return /\b(?:circle|circular|round\s+table|around)\b/i.test(m[2]) ? wCall('factorial', String(Math.max(n - 1, 0))) : wCall('factorial', String(n));
+  }
+  if ((m = /^how\s+many\s+(?:different\s+|distinct\s+)?(?:ways|committees|teams|groups|combinations|subsets|samples|hands)\b.*?\b(?:choose|chosen|select|selected|pick|picked|form|formed|draw|drawn)\s+(?:a\s+(?:committee|team|group|subset)\s+of\s+)?(\d+)\s+(?:\w+\s+){0,3}?(?:from|out\s+of|of)\s+(?:a\s+(?:group|set|class|team|club|school|deck)\s+of\s+)?(\d+)\b(.*)$/i.exec(s))) {
+    return /\b(?:in\s+order|ordered|rank|ranked|arrange|arrangement|different\s+order|president|prizes?|positions?|officers?)\b/i.test(s) ? wCall('npr', m[2], m[1]) : wCall('ncr', m[2], m[1]);
+  }
+  if ((m = /^how\s+many\s+(?:different\s+)?ways\s+(?:can|could|are\s+there\s+to)\s+(?:be\s+)?(?:a|the)?\s*((?:[a-z-]+\s+)*?(?:president|chair|captain|treasurer|secretary|vice|officer|winner|prize|leader|manager)[a-z\s,-]*?)\s+(?:be\s+)?(?:chosen|elected|selected|picked|appointed|awarded)\s+from\s+(?:a\s+(?:group|class|club|team)\s+of\s+)?(\d+)/i.exec(s))) {
+    const roles = m[1].split(/\s*,\s*|\s+and\s+/i).filter((x) => /[a-z]/i.test(x));
+    return wCall('npr', m[2], String(Math.max(roles.length, 1)));
+  }
+  if ((m = /^how\s+many\s+(?:different\s+)?ways\s+(?:can|could)\s+(?:a|the)?\s*(?:committee|team|group|subset|panel|jury)\s+of\s+(\d+)\s+(?:\w+\s+){0,2}?be\s+(?:chosen|selected|picked|formed|drawn)\s+from\s+(?:a\s+(?:group|class|club|team)\s+of\s+)?(\d+)/i.exec(s))) return wCall('ncr', m[2], m[1]);
+  if ((m = /^how\s+many\s+(?:different\s+)?(?:committees|teams|groups|subsets)\s+of\s+(?:size\s+)?(\d+)\s+can\s+be\s+(?:formed|chosen|selected|made)\s+from\s+(?:a\s+(?:group|set|class|team|club)\s+of\s+)?(\d+)\b/i.exec(s))) return wCall('ncr', m[2], m[1]);
+  // ---- combining fractions
+  if (!/\b(?:log|ln)\s*[_(]/i.test(s) && ((m = /^(?:combine|(?:write|express|rewrite)\s+as\s+a\s+single\s+fraction)\s*(?:the\s+)?(?:fractions?\s+|expressions?\s+|terms\s+)?(.+?)(?:\s+(?:as|into)\s+a\s+single\s+(?:fraction|expression|term))?$/i.exec(s)) || (m = /^(?:write|express|rewrite)\s+(.+?)\s+as\s+a\s+single\s+(?:fraction|rational\s+expression)$/i.exec(s)))) return wCall('simplify', wE(m[1]));
+  // ---- quadratics: discriminant, completing the square, vertex; conic features
+  if ((m = /^(?:the\s+)?discriminant\s+(?:of|for)\s+(?:the\s+)?(?:quadratic\s+)?(?:equation\s+|expression\s+|polynomial\s+)?(.+)$/i.exec(s))) return wCall('discriminant', wE(m[1].replace(/\s*=\s*0$/, '').replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '')));
+  if ((m = /^(?:complete|completing)\s+the\s+square\s*(?:for|of|in|on|:)?\s*(?:the\s+)?(?:quadratic\s+|expression\s+|equation\s+)?(.+)$/i.exec(s))) return wCall('completesquare', wE(m[1].replace(/\s*=\s*0$/, '').replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '')));
+  if ((m = /^(?:the\s+)?(?:vertex|turning\s+point|axis\s+of\s+symmetry|minimum\s+value|maximum\s+value|min(?:imum)?\s+or\s+max(?:imum)?)(?:\s*(?:,|and)\s*(?:the\s+)?(?:axis\s+of\s+symmetry|vertex|y-?intercept|minimum|maximum))*\s+of\s+(?:the\s+)?(?:parabola\s+|quadratic\s+(?:function\s+)?|function\s+)?(.+)$/i.exec(s))) {
+    const e = m[1].replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '');
+    if (/^[^=]*x\^?2|x²|x\s*\*\*\s*2/.test(e) && !/[y]/.test(e) && !/=/.test(e)) return wCall('vertex', wE(e));
+    if (/=/.test(m[1])) return wOps(wExpr(m[1]));
+  }
+  if ((m = /^(?:the\s+)?(?:foci|focus|vertices|vertex|center|centre|directrix|asymptotes?|eccentricity|axes|axis(?:\s+of\s+symmetry)?|latus\s+rectum|semi-?axes)(?:\s*(?:,|and)\s*(?:the\s+)?(?:foci|focus|vertices|vertex|center|centre|directrix|asymptotes?|eccentricity|axes|axis(?:\s+of\s+symmetry)?|latus\s+rectum))*\s+of\s+(?:the\s+)?(?:(?:ellipse|parabola|hyperbola|circle|conic(?:\s+section)?)\s*:?\s*)?(.+=.+)$/i.exec(s))) return wOps(wExpr(m[1]));
+  // ---- logarithm laws
+  if (/\b(?:log|ln)\s*[_(]|\blog\d/i.test(s)) {
+    if ((m = /^(?:condense|combine|collapse|write\s+as\s+a\s+single\s+logarithm|express\s+as\s+a\s+single\s+logarithm)\s*(?:the\s+)?(?:logarithms?\s+|logs\s+|expression\s+)?(?:into\s+a\s+single\s+(?:logarithm|log)\s*:?\s*)?(.+?)(?:\s+(?:as|into)\s+a\s+single\s+(?:logarithm|log))?$/i.exec(s)) || (m = /^(?:write|express|rewrite)\s+(.+?)\s+as\s+a\s+single\s+(?:logarithm|log)$/i.exec(s))) return wCall('logcondense', wE(m[1]));
+    if ((m = /^expand\s+(?:the\s+)?(?:logarithm\s+|log\s+|expression\s+)?(.+)$/i.exec(s)) || (m = /^(?:use\s+(?:the\s+)?(?:laws\s+of\s+logarithms|log(?:arithm)?\s+(?:laws|rules|properties))\s+to\s+)?expand\s+(.+)$/i.exec(s)) || (m = /^(?:write|express|rewrite)\s+(.+?)\s+as\s+(?:a\s+)?sum\s+(?:and\s+difference\s+)?of\s+logarithms?$/i.exec(s))) return wCall('logexpand', wE(m[1]));
+  }
+  // ---- the k-th term of a binomial expansion
+  if ((m = /^(?:the\s+)?(\d+)(?:st|nd|rd|th)\s+term\s+(?:of|in)\s+(?:the\s+(?:binomial\s+)?expansion\s+of\s+)?\(\s*(.+)\s*\)\s*(?:\^|\*\*)\s*\(?(\d+)\)?$/i.exec(s))) {
+    const inner = m[2];
+    let depth = 0;
+    for (let i = 1; i < inner.length; i++) {
+      const c = inner[i];
+      if (c === '(') depth++;
+      else if (c === ')') depth--;
+      else if (depth === 0 && (c === '+' || c === '-')) {
+        const rt = inner.slice(i + 1).trim();
+        return wCall('binomterm', wE(inner.slice(0, i)), c === '-' ? '-(' + wE(rt) + ')' : wE(rt), m[3], m[1]);
+      }
+    }
+  }
+  // ---- ratios and scientific notation
+  if ((m = /^(?:simplify\s+|reduce\s+)?(?:the\s+)?ratio\s+(?:of\s+)?(\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:to|:)\s*(\d+(?:\.\d+)?(?:\/\d+)?)(?:\s*(?:to|:)\s*(\d+(?:\.\d+)?(?:\/\d+)?))?$/i.exec(s))) return wCall('ratio', m[1], m[2], m[3]);
+  if ((m = /^(?:write|express|convert|put|give|change)?\s*(.+?)\s+(?:in|as|into|to|using)\s+scientific\s+notation$/i.exec(s)) || (m = /^scientific\s+notation\s+(?:of|for)\s+(.+)$/i.exec(s))) return wCall('sci', wE(m[1].replace(/(\d)\s*[x×]\s*10\s*\^/g, '$1*10^')));
+  if ((m = /^(?:write|express|convert|put|give|change)?\s*(.+?)\s+(?:in|as|into|to)\s+(?:standard|decimal|ordinary|expanded|normal)\s+(?:form|notation)$/i.exec(s)) && /\d/.test(m[1])) return wOps(m[1].replace(/(\d)\s*[x×]\s*10\s*\^/g, '$1*10^'));
+  // ---- confidence intervals for a mean or a proportion from summary numbers
+  if (/confidence\s+interval/i.test(s) && !/\bslope\b|\bregression\b/i.test(s)) {
+    const lvl = /(\d+(?:\.\d+)?)\s*%/.exec(s);
+    const level = lvl ? String(Number(lvl[1]) / 100) : (/\b(0\.\d+)\b\s*(?:confidence|level)/i.exec(s) || [])[1];
+    const num = '(-?\\d+(?:\\.\\d+)?)';
+    const nM = new RegExp('\\bn\\s*=\\s*(\\d+)|sample\\s+(?:size|of)\\s*(?:is\\s*)?(\\d+)|out\\s+of\\s+(\\d+)|(\\d+)\\s+(?:observations|samples|people|students|subjects|participants|trials|customers)', 'i').exec(s);
+    const nn = nM && (nM[1] || nM[2] || nM[3] || nM[4]);
+    const pr = /(?:proportion|percentage|fraction)/i.test(s) && new RegExp('(\\d+)\\s+(?:successes?|out\\s+of|of|favou?rable|yes|positive)', 'i').exec(s);
+    if (level && nn && pr) return wCall('propinterval', pr[1], nn, level);
+    const mean = new RegExp('(?:sample\\s+)?mean\\s*(?:of|is|=|:)?\\s*' + num, 'i').exec(s) || new RegExp('x[̄bar]*\\s*=\\s*' + num, 'i').exec(s);
+    const sigma = new RegExp('(?:population\\s+standard\\s+deviation|known\\s+standard\\s+deviation|σ|sigma)\\s*(?:of|is|=|:)?\\s*' + num, 'i').exec(s);
+    const sd = new RegExp('(?:sample\\s+)?(?:standard\\s+deviation|std\\.?\\s*dev\\.?|sd|\\bs)\\s*(?:of|is|=|:)?\\s*' + num, 'i').exec(s);
+    if (level && nn && mean && (sigma || sd)) return sigma ? wCall('zinterval', mean[1], sigma[1], nn, level) : wCall('tinterval', mean[1], sd[1], nn, level);
+  }
   // ---- equation with an interval for the unknown
   if (/[<>≤≥]|\[|\(/.test(s) && /=/.test(s) && !/\b(?:fourier|series|integral|integrate|derivative|limit|laplace|average|area|volume|length|taylor|maclaurin|sum|plot|graph|domain|tangent)\b/i.test(s)) {
     const win = wWindow(s.replace(/^solve\s+(?:the\s+equation\s+)?/i, ''));
@@ -529,7 +788,8 @@ function wRules(s) {
   if ((m = /^(?:(?:the|a|an)\s+)?(?:number\s+of\s+)?(?:distinct\s+)?(?:permutations|arrangements|anagrams|rearrangements)\s+of\s+(?:(?:the|a|an)\s+)?(?:letters\s+(?:in|of)\s+)?(?:the\s+word\s+)?["']?([A-Za-z]{3,})["']?$/i.exec(s))) return 'anagrams of ' + m[1].toUpperCase();
   if ((m = /^(?:convert\s+)?(\d+)\s+(?:to|in|into|as)\s+(binary|octal|hex(?:adecimal)?|base\s*(\d+))$/i.exec(s)) && !/^\d+\s+(?:in)\s+base/i.test(s)) return wCall('tobase', m[1], /binary/i.test(m[2]) ? '2' : /octal/i.test(m[2]) ? '8' : /hex/i.test(m[2]) ? '16' : m[3]);
   if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:binary|base\s*2)\s+(?:number\s+)?([01]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', m[1], '2');
-  if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:hex(?:adecimal)?|base\s*16)\s+(?:number\s+)?([0-9a-f]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', m[1], '16');
+  if ((m = /^(?:convert\s+)?0x([0-9a-f]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', '[' + m[1].toUpperCase().split('').map((c) => parseInt(c, 16)).join(', ') + ']', '16');
+  if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:hex(?:adecimal)?|base\s*16)\s+(?:number\s+)?(?:0x)?([0-9a-f]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s)) || (m = /^(?:convert\s+)?(?:0x)?([0-9a-f]+)\s*(?:\(\s*)?(?:in\s+)?(?:hex(?:adecimal)?|base\s*16)\s*\)?\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', '[' + m[1].toUpperCase().split('').map((c) => parseInt(c, 16)).join(', ') + ']', '16');
   if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:octal|base\s*8)\s+(?:number\s+)?([0-7]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', m[1], '8');
   if ((m = /^(?:(?:the|a|an)\s+)?sum\s+of\s+(?:(?:the|a|an)\s+)?digits\s+of\s+(\d+)$/i.exec(s))) return wCall('digitsum', m[1]);
   if ((m = /^(?:(?:the|a|an)\s+)?(?:euler'?s?\s+)?(?:totient|phi)\s+of\s+(\d+)$/i.exec(s))) return wCall('totient', m[1]);
@@ -788,8 +1048,9 @@ function wRules(s) {
   if ((m = /^(?:(?:the|a|an)\s+)?(correlation|covariance|spearman(?:\s+correlation)?|kendall(?:\s+tau)?)(?:\s+coefficient)?\s+(?:of|between|for)\s+(.+)$/i.exec(s)) && wBrackets(m[2]).length === 2) return wCall(/corr/i.test(m[1]) ? 'correlation' : /cov/i.test(m[1]) ? 'covariance' : /spear/i.test(m[1]) ? 'spearman' : 'kendall', ...wBrackets(m[2]));
   if ((m = /^(?:(?:the|a|an)\s+)?(?:linear\s+regression|regression\s+line|line\s+of\s+best\s+fit|least[- ]squares\s+line)\s+(?:of|for|to|through)?\s*(.+)$/i.exec(s)) && wBrackets(m[1]).length === 2) return wCall('linreg', ...wBrackets(m[1]));
   if ((m = /^(?:(?:the|a|an)\s+)?z-?score\s+(?:of|for)\s+(-?[\d.]+)\s*,?\s*(?:with|given|when|if|where)?\s*(?:a\s+)?mean\s*(?:of|=)?\s*(-?[\d.]+)\s*(?:,|and)?\s*(?:a\s+)?(?:standard\s+deviation|sd|std)\s*(?:of|=)?\s*([\d.]+)$/i.exec(s))) return wCall('zscore', m[1], m[2], m[3]);
-  if ((m = /^(?:(?:the|a|an)\s+)?probability\s+(?:of\s+)?(?:getting\s+|obtaining\s+|having\s+|seeing\s+)?(exactly|at\s+least|at\s+most|more\s+than|fewer\s+than|less\s+than)?\s*(\d+)\s+(?:heads?|tails?|successes?|hits?|sixes|\w+s?)\s+(?:in|out\s+of|from|when)\s+(?:flipping\s+|tossing\s+|rolling\s+)?(?:a\s+(?:fair\s+)?coin\s+)?(\d+)\s*(?:coin\s+|die\s+|dice\s+)?(?:times?|trials?|tosses|flips|attempts|tries|rolls)?(?:\s+of\s+a\s+(?:fair\s+)?coin)?(?:\s+(?:with|if|when|where|and)\s+(?:(?:the|a|an)\s+)?(?:success\s+)?probability\s*(?:of\s+success\s*)?(?:is\s+|of\s+|=\s*)?(0?\.\d+|\d+\/\d+|\d+%))?$/i.exec(s))) {
-    const k = m[2];
+  if ((m = /^(?:(?:the|a|an)\s+)?probability\s+(?:of\s+)?(?:getting\s+|obtaining\s+|having\s+|seeing\s+)?(exactly|at\s+least|at\s+most|more\s+than|fewer\s+than|less\s+than)?\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten|an?)\s+(?:heads?|tails?|successes?|hits?|sixes|\w+s?)\s+(?:in|out\s+of|from|when)\s+(?:flipping\s+|tossing\s+|rolling\s+)?(?:a\s+(?:fair\s+)?coin\s+)?(\d+)\s*(?:coin\s+|die\s+|dice\s+)?(?:times?|trials?|tosses|flips|attempts|tries|rolls)?(?:\s+of\s+a\s+(?:fair\s+)?coin)?(?:\s+(?:with|if|when|where|and)\s+(?:(?:the|a|an)\s+)?(?:success\s+)?(?:probability\s*(?:of\s+success\s*)?|p\s*)(?:is\s+|of\s+|=\s*)?(0?\.\d+|\d+\/\d+|\d+%))?$/i.exec(s))) {
+    const WORDN = { one: 1, a: 1, an: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+    const k = /^\d+$/.test(m[2]) ? m[2] : String(WORDN[m[2].toLowerCase()]);
     const n = m[3];
     const p = m[4] ? (m[4].endsWith('%') ? '(' + m[4].slice(0, -1) + '/100)' : m[4]) : '1/2';
     const how = (m[1] || 'exactly').toLowerCase().replace(/\s+/g, ' ');
@@ -950,8 +1211,8 @@ function wFunctions(s) {
 const W_WORDY = /\b(?:plus|minus|times|multiplied|divided|over|squared|cubed|power|root|equals?|percent|per\s*cent|less\s+than|greater\s+than|at\s+least|at\s+most|twice|half|negative|sum\s+of|product\s+of|difference)\b/i;
 function convertWordLine(line) {
   const s0 = line.trim().replace(/\s+/g, ' ');
-  if (s0.length < 4 || s0.length > 400 || !/[A-Za-z]{3}|\b(?:of|on|in)\b/.test(s0)) return line;
-  const s = s0.replace(/\s*[?!]+$/, '').replace(/\s*\.$/, '');
+  if (s0.length < 4 || s0.length > 400 || !/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|…|[∪∩⊂⊆×Δ]/.test(s0)) return line;
+  const s = s0.replace(/\s*[?!]+$/, '').replace(/\s*(?<!\.)\.$/, '');
   const lead = s.replace(W_LEAD, '');
   WORDS_ASK.v = null;
   let hit = null;
@@ -970,7 +1231,7 @@ function convertWordLine(line) {
   return line;
 }
 function convertWords(raw) {
-  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b/.test(raw)) return raw;
+  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|…|[∪∩⊂⊆×Δ]/.test(raw)) return raw;
   return raw.split('\n').map(convertWordLine).join('\n');
 }
 

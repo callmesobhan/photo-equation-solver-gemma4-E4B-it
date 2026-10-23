@@ -762,6 +762,7 @@ defCmd('chisqtest chitest', (n) => {
     const tot = sumQ(obs);
     const exp = n.args[1] ? dataOf([n.args[1]], 'chisqtest') : obs.map(() => tot.div(qInt(obs.length)));
     if (exp.length !== obs.length) throw new MathError('the observed and expected lists must have the same length');
+    if (obs.length < 2) throw new MathError('a goodness-of-fit test needs at least 2 categories');
     if (exp.some((e) => !(e.sign() > 0))) throw new MathError('every expected count must be positive');
     obs.forEach((o, i) => { chi += (o.toNumber() - exp[i].toNumber()) ** 2 / exp[i].toNumber(); });
     df = obs.length - 1;

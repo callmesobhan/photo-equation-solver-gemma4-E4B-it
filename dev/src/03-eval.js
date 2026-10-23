@@ -114,7 +114,8 @@ function powNum(a, b) {
   return Math.pow(a, b);
 }
 function factorial(x) {
-  if (!Number.isInteger(x) || x < 0 || x > 170) return NaN;
+  if (Number.isInteger(x) && x > 170) return Infinity;
+  if (!Number.isInteger(x) || x < 0) return NaN;
   let r = 1;
   for (let k = 2; k <= x; k++) r *= k;
   return r;
@@ -156,7 +157,9 @@ function callNum(fn, a) {
     case 'heaviside': return x > 0 ? 1 : x < 0 ? 0 : 0.5;
     case 'dirac': return x === 0 ? Infinity : 0;
     case 'dirac1': case 'dirac2': case 'dirac3': return x === 0 ? Infinity : 0;
-    default: throw new MathError('unknown function ' + fn);
+    default:
+      if (/^logb\d+$/.test(fn)) return Math.log(x) / Math.log(Number(fn.slice(4)));
+      throw new MathError('unknown function ' + fn);
   }
 }
 function evalNum(n, env) {

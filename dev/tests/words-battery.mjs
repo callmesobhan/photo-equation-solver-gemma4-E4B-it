@@ -182,6 +182,30 @@ const TEMPLATES = [
   () => { const a = R(3, 9); const b = R(3, 9); const C = R(20, 100); return [`triangle(a=${a}, b=${b}, C=${C})`, [`solve the triangle with a = ${a}, b = ${b}, C = ${C} degrees`, `law of cosines a=${a} b=${b} C=${C}`]]; },
   // ---- functions
   () => { const a = R(1, 5); const b = R(-5, 5); const c = R(-6, 6); return [`${a}*(${c})^2 + ${b}`, [`f(x) = ${a}x^2 + ${b}, find f(${c})`.replace('x^2', 'x^2'), `let f(x) = ${a}x^2 + ${b}. What is f(${c})?`]]; },
+  // ---- surds, trigonometry, textbook theorems, series, probability, counting, algebra 2
+  () => { const a = R(1, 9); const b = R(2, 9); const c = pick([2, 3, 5, 6, 7]); return [`rationalize(${a}/(sqrt(${c})+${b}))`, [`rationalize the denominator of ${a}/(sqrt(${c})+${b})`, `rationalise ${a}/(sqrt(${c})+${b})`]]; },
+  () => { const r = pick(['sin(2x)/sin(x)', '1 - cos(x)^2', 'tan(x)*cos(x)', 'sec(x)^2 - tan(x)^2', '(sin(x)+cos(x))^2']); return [`simplify(${r})`, [`simplify ${r}`, `simplify the trig expression ${r}`]]; },
+  () => { const a = pick(['x', 'y', 'a']); const b = pick(['b', 'z']); const fn = pick(['sin', 'cos']); return [`trigexpand(${fn}(${a}+${b}))`, [`use the sum formula to expand ${fn}(${a}+${b})`, `the sum formula for ${fn}(${a}+${b})`]]; },
+  () => { const a = pick(['x', 'y', 'a']); const b = pick(['b', 'z']); const fn = pick(['sin', 'cos']); return [`expand(${fn}(${a}+${b}))`, [`expand ${fn}(${a}+${b})`]]; },
+  () => { const k = R(2, 4); const fn = pick(['sin', 'cos']); return [`trigexpand(${fn}(${k}x))`, [`express ${fn} ${k}x in terms of ${fn} x`, `the ${['', '', 'double', 'triple', 'multiple'][k]} angle identity for ${fn}(${k}x)`]]; },
+  () => { const k = R(1, 4); const l = R(1, 4); return [`tosum(sin(${k}x)*cos(${l}x))`, [`product to sum sin(${k}x)cos(${l}x)`, `write sin(${k}x)*cos(${l}x) as a sum`]]; },
+  () => { const f = pick(['sqrt(x)', 'sin(x)', 'exp(x)', 'ln(x)']); const a = f === 'sin(x)' ? 0 : pick([1, 4, 9]); return [`linapprox(${f}, x, ${a})`, [`linear approximation of ${f} at x = ${a}`, `the linearization of ${f} at x = ${a}`]]; },
+  () => { const f = pick(['x^2', 'x^3 - x', 'x^3 - 3*x']); const a = R(0, 2); const b = a + R(1, 3); return [`mvt(${f}, x, ${a}, ${b})`, [`mean value theorem for f(x) = ${f} on [${a}, ${b}]`, `mean value theorem for ${f} on [${a}, ${b}]`]]; },
+  () => { const a = R(1, 6); const b = R(1, 6); const n = R(3, 9); return [`seriessum([${a}, ${a + b}, ${a + 2 * b}], ${a + (n - 1) * b})`, [`${a} + ${a + b} + ${a + 2 * b} + ... + ${a + (n - 1) * b}`, `sum of ${a} + ${a + b} + ${a + 2 * b} + ... + ${a + (n - 1) * b}`]]; },
+  () => { const n = R(2, 30); const p = pick([0.1, 0.2, 0.25, 0.3, 0.5]); return [`binomstats(${n}, ${p})`, [`the mean and variance of a binomial distribution with n = ${n} and p = ${p}`, `expected value of a binomial distribution with ${n} trials and probability ${p}`]]; },
+  () => { const ab = pick([0.1, 0.2, 0.3]); const b = pick([0.4, 0.5, 0.6]); return [`${ab}/${b}`, [`P(A|B) if P(A and B) = ${ab} and P(B) = ${b}`, `find P(A|B) given P(A and B) = ${ab} and P(B) = ${b}`]]; },
+  () => { const n = R(3, 9); return [`factorial(${n})`, [`how many ways can ${n} people sit in a row`, `how many ways can ${n} people line up`]]; },
+  () => { const n = R(6, 12); const k = R(2, 5); return [`ncr(${n}, ${k})`, [`how many ways can a committee of ${k} be chosen from ${n} people`, `how many ways to choose ${k} from ${n}`]]; },
+  () => { const a = pick([1, 2, -1, 3]); const b = R(-9, 9); const c = R(-9, 9); const f = `${a}x^2 + ${b}x + ${c}`.replace('+ -', '- '); return [`discriminant(${f})`, [`discriminant of ${f}`, `the discriminant of ${f} = 0`]]; },
+  () => { const b = R(-9, 9); const c = R(-9, 9); const f = `x^2 + ${b}x + ${c}`.replace('+ -', '- '); return [`completesquare(${f})`, [`complete the square for ${f}`, `complete the square: ${f}`]]; },
+  () => { const f = pick(['x^2*y', 'x*y^3', 'x^3/y', 'sqrt(x)*y^2']); return [`logexpand(log(${f}))`, [`expand log(${f})`]]; },
+  () => { const n = R(5, 10); const k = R(1, n + 1); return [`binomterm(x, y, ${n}, ${k})`, [`the ${k}${{ 1: 'st', 2: 'nd', 3: 'rd' }[k] || 'th'} term of (x+y)^${n}`]]; },
+  () => { const A = [1, 2, 3, 4].slice(0, R(2, 4)); const B = [3, 4, 5, 6].slice(0, R(2, 4)); return [`union([${A}], [${B}])`, [`A = {${A}}, B = {${B}}, find A union B`, `{${A}} ∪ {${B}}`, `union of {${A}} and {${B}}`]]; },
+  () => { const A = [1, 2, 3, 4].slice(0, R(2, 4)); const B = [3, 4, 5, 6].slice(0, R(2, 4)); return [`intersection([${A}], [${B}])`, [`A = {${A}}, B = {${B}}, find A ∩ B`, `intersection of {${A}} and {${B}}`]]; },
+  () => { const a = R(2, 30); const b = R(2, 30); return [`ratio(${a}, ${b})`, [`simplify the ratio ${a}:${b}`, `ratio of ${a} to ${b}`]]; },
+  () => { const m = pick(['0.00045', '0.0302', '123456', '5200']); return [`sci(${m})`, [`write ${m} in scientific notation`, `express ${m} as scientific notation`]]; },
+  () => { const m = R(30, 90); const s = R(3, 12); const n = pick([16, 25, 36, 49]); return [`tinterval(${m}, ${s}, ${n}, 0.95)`, [`confidence interval for the mean with sample mean ${m}, standard deviation ${s}, n = ${n} at 95%`]]; },
+  () => { const n = R(4, 12); const k = R(2, 3); return [`1 - binomcdf(${n}, 0.3, ${k - 1})`.replace(/^.*$/, `binomcdf(${n}, 0.3, ${k}, ${n})`), [`probability of at least ${k} successes in ${n} trials with p = 0.3`]]; },
 ];
 
 let total = 0;
@@ -214,7 +238,7 @@ for (let round = 0; round < ROUNDS; round++) {
         if (bad <= 25) console.log('MISMATCH\n  phrase: ' + ph + '\n  direct: ' + direct + '\n  phrase result: ' + rp.slice(0, 300).replace(/\n/g, ' | ') + '\n  direct result: ' + rd.slice(0, 300).replace(/\n/g, ' | '));
       }
     }
-    if (/^ERROR/.test(rd)) notWords++;
+    if (/^ERROR/.test(rd)) { notWords++; if (process.env.SHOWERR) console.log('direct error: ' + direct + ' -> ' + rd.slice(0, 150)); }
   }
 }
 console.log(total + ' phrasings, ' + bad + ' differ from the command they stand for (' + notWords + ' of the direct commands themselves reported a polite error for the random numbers)');

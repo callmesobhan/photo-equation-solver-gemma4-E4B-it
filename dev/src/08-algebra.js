@@ -412,6 +412,7 @@ function simplifyTrigS(e) {
 defCmd('expand', (n) => {
   needArgs(n, 1, 1, 'one expression');
   const out = newOut();
+  if (astHasLogCall(n.args[0])) return COMMANDS.logexpand(n);
   const S = fromAst(n.args[0]);
   let T = expandS(S);
   if (trigArgsToExpand(T)) {
@@ -422,6 +423,12 @@ defCmd('expand', (n) => {
   return out;
 });
 
+/** log(...) or ln(...) somewhere in the expression tree */
+function astHasLogCall(n) {
+  if (!n || typeof n !== 'object') return false;
+  if (n.t === 'call' && !n.cmd && /^(?:log|ln|log10|log2|lg)$/.test(n.fn)) return true;
+  return astHasLogCall(n.a) || astHasLogCall(n.b) || (Array.isArray(n.args) && n.args.some(astHasLogCall)) || (Array.isArray(n.items) && n.items.some(astHasLogCall));
+}
 /** Does the expression have sin / cos / tan of a sum or of a multiple (something expand can open up)? */
 function trigArgsToExpand(S) {
   if (S.k === 'f' && TR_FNS.has(S.fn)) {

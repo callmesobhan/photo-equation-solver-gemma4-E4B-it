@@ -364,7 +364,7 @@ defCmd('weakacid', (n) => {
   needArgs(n, 2, 2, 'Ka and the concentration in mol/L, e.g. weakacid(1.8e-5, 0.10)');
   const ka = numArg(n.args[0]);
   const c = numArg(n.args[1]);
-  if (!(ka > 0) || !(c > 0)) throw new MathError('Ka and the concentration must be positive');
+  if (!(ka > 0) || !(c > 0) || !isFinite(ka) || !isFinite(c)) throw new MathError('Ka and the concentration must be positive numbers');
   const x = (-ka + Math.sqrt(ka * ka + 4 * ka * c)) / 2;
   const out = newOut();
   out.answer.push('[H⁺] = ' + fmtNum(x) + ' mol/L,  pH = ' + fmtNum(-Math.log10(x)));

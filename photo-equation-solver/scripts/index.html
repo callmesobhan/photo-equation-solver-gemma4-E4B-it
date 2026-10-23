@@ -1229,7 +1229,8 @@ function powNum(a, b) {
   return Math.pow(a, b);
 }
 function factorial(x) {
-  if (!Number.isInteger(x) || x < 0 || x > 170) return NaN;
+  if (Number.isInteger(x) && x > 170) return Infinity;
+  if (!Number.isInteger(x) || x < 0) return NaN;
   let r = 1;
   for (let k = 2; k <= x; k++) r *= k;
   return r;
@@ -1271,7 +1272,9 @@ function callNum(fn, a) {
     case 'heaviside': return x > 0 ? 1 : x < 0 ? 0 : 0.5;
     case 'dirac': return x === 0 ? Infinity : 0;
     case 'dirac1': case 'dirac2': case 'dirac3': return x === 0 ? Infinity : 0;
-    default: throw new MathError('unknown function ' + fn);
+    default:
+      if (/^logb\d+$/.test(fn)) return Math.log(x) / Math.log(Number(fn.slice(4)));
+      throw new MathError('unknown function ' + fn);
   }
 }
 function evalNum(n, env) {
@@ -3985,6 +3988,7 @@ function simplifyTrigS(e) {
 defCmd('expand', (n) => {
   needArgs(n, 1, 1, 'one expression');
   const out = newOut();
+  if (astHasLogCall(n.args[0])) return COMMANDS.logexpand(n);
   const S = fromAst(n.args[0]);
   let T = expandS(S);
   if (trigArgsToExpand(T)) {
@@ -3995,6 +3999,12 @@ defCmd('expand', (n) => {
   return out;
 });
 
+/** log(...) or ln(...) somewhere in the expression tree */
+function astHasLogCall(n) {
+  if (!n || typeof n !== 'object') return false;
+  if (n.t === 'call' && !n.cmd && /^(?:log|ln|log10|log2|lg)$/.test(n.fn)) return true;
+  return astHasLogCall(n.a) || astHasLogCall(n.b) || (Array.isArray(n.args) && n.args.some(astHasLogCall)) || (Array.isArray(n.items) && n.items.some(astHasLogCall));
+}
 /** Does the expression have sin / cos / tan of a sum or of a multiple (something expand can open up)? */
 function trigArgsToExpand(S) {
   if (S.k === 'f' && TR_FNS.has(S.fn)) {
@@ -6635,6 +6645,21 @@ function telescopeTerms(body, k) {
 }
 function seriesNumeric(body, k, a) {
   const f = (i) => numS(body, { [k]: i });
+  // terms that die out at once (factorials, powers): add them up and stop when they have vanished
+  {
+    let s0 = 0;
+    let small = 0;
+    for (let i = a; i < a + 400; i++) {
+      const t = f(i);
+      if (!isFinite(t)) {
+        if (small >= 3) return { value: s0 };
+        break;
+      }
+      small = Math.abs(t) <= 1e-17 * Math.max(1, Math.abs(s0)) ? small + 1 : 0;
+      s0 += t;
+      if (small >= 12) return { value: s0 };
+    }
+  }
   // convergence: tail blocks must shrink
   const blk = (from, len) => { let s = 0; for (let i = from; i < from + len; i++) s += Math.abs(f(i)); return s; };
   const b1 = blk(a + 1000, 1000);
@@ -10186,16 +10211,20 @@ defCmd('tobase', (n) => {
   });
 });
 defCmd('frombase', (n) => {
-  const [digits, b] = ints(n, 2, 2, 'the digits and the base');
-  if (b < 2n || b > 10n) throw new MathError('frombase reads digits 0-9, so the base must be from 2 to 10');
-  const s = digits.toString();
+  needArgs(n, 2, 2, 'the digits and the base');
+  const b = intArg(n.args[1]);
+  if (b < 2n || b > 36n) throw new MathError('the base must be from 2 to 36');
+  // digits as a number (1011) or, for letters, as a list of digit values ([15, 15] for FF)
+  const digs = n.args[0].t === 'list' ? n.args[0].items.map((it) => Number(intArg(it))) : intArg(n.args[0]).toString().split('').map(Number);
+  const sym = (d) => d.toString(36).toUpperCase();
   let v = 0n;
-  for (const c of s) {
-    if (BigInt(c) >= b) throw new MathError('the digit ' + c + ' is not allowed in base ' + b);
-    v = v * b + BigInt(c);
+  for (const d of digs) {
+    if (d < 0 || BigInt(d) >= b) throw new MathError('the digit ' + sym(d) + ' is not allowed in base ' + b);
+    v = v * b + BigInt(d);
   }
+  const s = digs.map(sym).join('');
   const out = newOut();
-  out.work.push(s + subscript(b) + ' = ' + s.split('').map((c, i) => c + '\u00b7' + b + (s.length - 1 - i > 0 ? toSup(String(s.length - 1 - i)) : '')).join(' + '));
+  out.work.push(s + subscript(b) + ' = ' + digs.map((d, i) => sym(d) + (d > 9 ? ' (= ' + d + ')' : '') + '\u00b7' + b + (digs.length - 1 - i > 0 ? toSup(String(digs.length - 1 - i)) : '')).join(' + '));
   return intOut(out, v);
 });
 
@@ -10345,14 +10374,17 @@ function setOf(node) {
 const setText = (m) => '{' + Array.from(m.keys()).sort((a, b) => (isNaN(+a) || isNaN(+b) ? (a < b ? -1 : 1) : +a - +b)).join(', ') + '}';
 function setCmd(names, label, combine) {
   defCmd(names, (n) => {
-    needArgs(n, 2, 2, 'two sets, e.g. ' + n.fn + '([1, 2, 3], [2, 3, 4])');
-    const A = setOf(n.args[0]);
-    const B = setOf(n.args[1]);
-    const R = new Map();
-    combine(A, B, R);
+    needArgs(n, 2, 8, 'two or more sets, e.g. ' + n.fn + '([1, 2, 3], [2, 3, 4])');
+    const sets = n.args.map(setOf);
+    let R = sets[0];
+    for (let i = 1; i < sets.length; i++) {
+      const next = new Map();
+      combine(R, sets[i], next);
+      R = next;
+    }
     const out = newOut();
     out.answer.push(setText(R) + '   (' + R.size + ' element' + (R.size === 1 ? '' : 's') + ')');
-    out.work.push('A = ' + setText(A) + ',  B = ' + setText(B) + ';  ' + label);
+    out.work.push(sets.map((S, i) => String.fromCharCode(65 + i) + ' = ' + setText(S)).join(',  ') + ';  ' + label);
     out.value = { q: qInt(R.size) };
     return out;
   });
@@ -10361,14 +10393,6 @@ setCmd('union', 'A \u222a B: everything in A or B', (A, B, R) => { A.forEach((v,
 setCmd('intersection intersect', 'A \u2229 B: elements in both', (A, B, R) => { A.forEach((v, k) => B.has(k) && R.set(k, v)); });
 setCmd('setdiff setminus', 'A \\ B: elements of A that are not in B', (A, B, R) => { A.forEach((v, k) => !B.has(k) && R.set(k, v)); });
 setCmd('symdiff', 'A \u25b3 B: elements in exactly one of them', (A, B, R) => { A.forEach((v, k) => !B.has(k) && R.set(k, v)); B.forEach((v, k) => !A.has(k) && R.set(k, v)); });
-defCmd('powerset subsets', (n) => {
-  needArgs(n, 1, 1, 'a set or its size');
-  const out = newOut();
-  const sz = n.args[0].t === 'list' ? BigInt(setOf(n.args[0]).size) : intArg(n.args[0]);
-  if (sz < 0n || sz > 5000n) throw new MathError('the size must be between 0 and 5000');
-  out.work.push('A set with ' + sz + ' elements has 2^' + sz + ' subsets');
-  return intOut(out, 2n ** sz);
-});
 
 // ---- text patterns: mod, congruences, bases, choose -----------------------------------------------------------------
 /** Called by normalizeText: turns "17 mod 5", "3x \u2261 4 (mod 7)", "255 to binary", "5 choose 2" into commands. */
@@ -11308,6 +11332,7 @@ defCmd('chisqtest chitest', (n) => {
     const tot = sumQ(obs);
     const exp = n.args[1] ? dataOf([n.args[1]], 'chisqtest') : obs.map(() => tot.div(qInt(obs.length)));
     if (exp.length !== obs.length) throw new MathError('the observed and expected lists must have the same length');
+    if (obs.length < 2) throw new MathError('a goodness-of-fit test needs at least 2 categories');
     if (exp.some((e) => !(e.sign() > 0))) throw new MathError('every expected count must be positive');
     obs.forEach((o, i) => { chi += (o.toNumber() - exp[i].toNumber()) ** 2 / exp[i].toNumber(); });
     df = obs.length - 1;
@@ -12617,7 +12642,7 @@ defCmd('freefall', (n) => {
 });
 
 // ---- text patterns for units and chemistry (run before the text is lowercased) -------------------------------------------
-const NUMBER_RE = '(-?\\d[\\d,]*(?:\\.\\d+)?(?:e[+-]?\\d+)?(?:\\s*\\/\\s*\\d+)?)';
+const NUMBER_RE = '(-?(?:\\d[\\d,]*(?:\\.\\d+)?(?:e[+-]?\\d+)?(?:\\s*\\*?\\s*(?:pi|\u03c0))?|(?:pi|\u03c0))(?:\\s*\\/\\s*\\d+)?)';
 const UNIT_RE = '([A-Za-z\u00b0\u00b5\u03bc][A-Za-z\u00b0\u00b5\u03bc0-9\u00b2\u00b3^*\\/\u00b7.]*)';
 function isUnitWord(u) {
   const t = u.replace(/^\u00b0/, '');
@@ -12652,8 +12677,18 @@ function trimFormula(f) {
   }
   return f;
 }
+/** "12:18" and "2:3:5" are ratios; in an equation "3:4 = x:12" the colons are divisions. */
+function convertRatios(s) {
+  if (!/\d\s*:\s*[\dA-Za-z]/.test(s)) return s;
+  const NUM = '\\d+(?:\\.\\d+)?(?:\\/\\d+)?';
+  const m = new RegExp('^\\s*(?:(?:simplify|reduce)\\s+)?(?:the\\s+)?(?:ratio\\s+)?(' + NUM + '(?:\\s*:\\s*' + NUM + ')+)\\s*[.?]?\\s*$', 'i').exec(s);
+  if (m) return 'ratio(' + m[1].split(/\s*:\s*/).join(', ') + ')';
+  if (s.includes('=')) s = s.replace(/(?<![A-Za-z0-9_.)])(\d+(?:\.\d+)?|[A-Za-z])\s*:\s*(\d+(?:\.\d+)?|[A-Za-z])(?![A-Za-z0-9_(])/g, '($1)/($2)');
+  return s;
+}
 function convertApplied(s) {
-  if (!/[A-Za-z]/.test(s)) return s;
+  s = convertRatios(s);
+  if (!/[A-Za-z]/.test(s)) return /(?:\.{3}|\u2026)|[\u222a\u2229\u2282\u2286\u00d7\u0394]/.test(s) ? convertWords(s) : s;
   s = convertPlotWords(s);
   s = convertWords(s);
   // balancing chemical equations and formula commands
@@ -13118,6 +13153,12 @@ HELP.words = [
   '             "tangent line to x^2 at x = 3"  "critical points of x^3 - 3x"  "area under the curve x^2 from 0 to 2"  "area between x^2 and x from 0 to 1"  "average value of x^2 on [0, 3]"',
   '             "length of the curve y = x^2 from 0 to 1"  "volume of the solid generated by revolving y = x^2 about the x-axis from 0 to 1"  "laplace transform of t*e^(-2t)"',
   '  algebra    "factor x^2 - 5x + 6"  "expand (x+1)^3"  "simplify (x^2-1)/(x-1)"  "partial fractions of ..."  "roots of x^2 - 5x + 6"  "find x if 3x = 12"  "evaluate x^2 + 1 at x = 3"',
+  '  algebra 2  "discriminant of x^2 - 4x + 7"  "complete the square for x^2 + 6x + 2"  "vertex of y = 2x^2 - 8x + 5"  "foci of the ellipse x^2/25 + y^2/9 = 1"  "expand log(x^2 * y)"  "condense 2*log(x) + log(y)"  "the 4th term of (x+y)^9"',
+  '             "simplify the ratio 12:18"  "3:4 = x:12"  "write 0.00045 in scientific notation"  "A = {1,2,3}, B = {2,3,4}, find A union B"  "{1,2,3} \u2229 {2,3,4}"  "number of subsets of {1,2,3,4}"  "hexadecimal FF to decimal"',
+  '             "95% confidence interval for the mean with sample mean 50, standard deviation 8, n = 36"  "probability of at least 2 successes in 5 trials with p = 0.3"  "probability of at least one head in 3 coin flips"',
+  '  textbook   "linear approximation of sqrt(x) at x = 4"  "mean value theorem for f(x) = x^2 on [1, 3]"  "show that x^3 + x - 1 has a root in [0, 1]"  "1 + 2 + 3 + ... + 100"  "sum of the geometric series 1 + 1/2 + 1/4 + ..."',
+  '             "expected value of a fair die"  "the mean and variance of a binomial distribution with n = 10 and p = 0.3"  "P(A|B) if P(A and B) = 0.2 and P(B) = 0.5"  "how many ways can 5 people sit in a row"  "how many ways can a committee of 3 be chosen from 10 people"',
+  '             "convert 3pi/5 radians to degrees"  "combine 1/(x-1) + 2/(x+1)"  "arc length with radius 5 and angle 60 degrees"',
   '  radicals   "rationalize the denominator of 1/(sqrt(3)+1)"  "simplify the radical sqrt(72)"  "denest sqrt(5+2*sqrt(6))"  "exact value of tan 22.5 degrees"',
   '  trig       "simplify sin(2x)/sin(x)"  "expand sin(a+b)"  "express cos 3x in terms of cos x"  "double angle formula for sin(2x)"  "write sin(x)cos(3x) as a sum"  "power reduction sin(x)^4"  "verify the identity tan(x) = sin(x)/cos(x)"',
   '             "f(x) = 2x + 1 and g(x) = x^2, find f(g(3))"  "x squared plus 3 equals 7"  "the square root of 144"  "2 to the power of 10"  "12 plus 8 times 2"  "15 percent of 80"',
@@ -13172,6 +13213,9 @@ HELP.calculus = [
   '  taylor(f, x, a, n)                 Taylor polynomial of order n around a  (maclaurin for a = 0)',
   '  sum(f, k, a, b)  product(f, k, a, b)   finite and infinite sums (convergence is reported)',
   '  tangent(f, x, a)                   tangent and normal line at x = a',
+  '  linapprox(f, x, a)  linapprox(f, x, a, x0)  [linearapprox, linearization]  L(x) = f(a) + f\'(a)(x - a); with x0 also the estimate, the actual value and the error',
+  '  mvt(f, x, a, b)  [meanvaluethm]  rolle(f, x, a, b)  ivt(f, x, a, b)  ivt(f, x, a, b, k)  [intermediatevalue]   the mean value, Rolle and intermediate value theorems: conditions checked, every c found',
+  '  seriessum([1, 2, 3], 100)  [patternsum]  sum of an arithmetic or geometric pattern from its first terms and the last term (oo for infinite): seriessum([1, 1/2, 1/4], oo); also 1/n\u00b2, 1/n!, alternating ... patterns; written "1 + 2 + 3 + ... + 100"',
   '  critical(f, x)  critical(f, x, a, b)   critical points with max/min classification; with [a, b] also the absolute max and min',
   '  inflection(f, x)   analyze(f, x)       full study: domain, intercepts, asymptotes, increasing/decreasing, extrema, inflection, concavity',
   '  domain(f, x)   inversefunction(f, x)   compose(f, g, x)   implicit(x^2 + y^2 - 25)  (dy/dx and d2y/dx2)   newton(f, x, x0)',
@@ -13251,6 +13295,8 @@ HELP.algebra = [
   '  ratroots(2x^3 - 3x^2 - 8x - 3)  [rationalroots]  rational zeros with the candidates \u00b1p/q      endbehavior(-2x^3 + x)  as x \u2192 \u00b1\u221e (limits, degree and leading coefficient)      evenodd(x^3 - x)  [parity]  even, odd or neither',
   '  rangeof(x/(x^2+1))  [functionrange]  range as intervals (e.g. [-1/2, 1/2], (-\u221e, 0) \u222a (0, \u221e)), from the extrema, end values and limits      coeff((1 + 2x)^6, x, 3)  [coefficient]  coefficient of x^3 in an expansion (k = 0: the constant term)',
   '  sinusoid(3*sin(2x - pi) + 1)  [trigprops]  amplitude, period, frequency, phase shift, vertical shift, midline, maximum and minimum (sin, cos; tan, cot, sec, csc give period and asymptotes)',
+  '  quadratics: discriminant(x^2 - 4x + 7)  [disc]   completesquare(x^2 + 6x + 2)   vertex(2x^2 - 8x + 5)  (vertex, axis, minimum / maximum, y-intercept)      a term of a binomial expansion: binomterm(x, y, 9, 4)  (the 4th term of (x + y)^9)',
+  '  logarithms: expand(log(x^2*y)) [logexpand]  ->  2 log(x) + log(y);   logcondense(2*log(x) + log(y)) [condenselog]  ->  log(x\u00b2y);  log is base 10, also ln, log2, log(x, 5)',
   '  radicals: rationalize(1/(sqrt(3)+1))  [rationalise, radsimp, denest]  exact a + b\u221ac form with no root in a denominator; also expands (2+sqrt(3))^2 and denests sqrt(5+2*sqrt(6)); with letters: rationalize(x/(sqrt(x)+1))',
   '  trigonometry: simplify(sin(2x)/sin(x))  [trigsimp]  the shortest equivalent form (Pythagorean and double-angle identities, tan / cot / sec / csc ratios; one variable)',
   '                trigexpand(cos(3x))  [expandtrig]  sum and multiple-angle formulas, also expand(sin(a+b)), trigexpand(tan(x+y))      tosum(sin(x)*cos(3x))  [powerreduce]  product-to-sum and power reduction, e.g. sin(x)^4',
@@ -13284,7 +13330,8 @@ HELP.number = [
   '  dice(2, 6)  dice(3, 6, 10)  (distribution / P(sum = 10) of 3 six-sided dice)   anagrams of MISSISSIPPI  (distinct arrangements of the letters)   birthday(23)   pascal(6)   circular(8)',
   '  sequence(2, 6, 12, 20)   next terms + general term (arithmetic, geometric, polynomial, Fibonacci-type)',
   '  arith(a1, d, n)  nth term and sum;   geom(a1, r, n)  nth term and sum (infinite sum when |r| < 1)',
-  '  union([1,2],[2,3]) intersection(A, B) setdiff(A, B) symdiff(A, B) powerset(n)',
+  '  sets (lists in brackets): union([1,2,3],[2,3,4]) intersection(A, B) setdiff(A, B) symdiff(A, B) setcomplement(A, U) cardinality(A) issubset(A, B) powerset(A) [subsets, lists them; powerset(5) = 32] cartesian(A, B); also written "A = {1,2,3}, B = {2,3,4}, find A \u222a B"',
+  '  digits in any base up to 36: frombase(1011, 2)  frombase([15, 15], 16) = FF;  "hexadecimal FF to decimal", "0xFF to decimal"',
   '  euclid(252, 105) [bezout]  gcd steps and B\u00e9zout coefficients   cfrac(355/113), cfrac(sqrt(7)), cfrac(pi, 8) [continuedfraction]   pell(61) pell(13, -1)   collatz(27)   egyptian(4/13)   sum2sq(65)   farey(5)   hanoi(4)   josephus(7, 3)   polygonal(5, 10) [figurate, triangular]',
   '  recurrences:  a_n = 5a_(n-1) - 6a_(n-2), a_0 = 1, a_1 = 0   (closed form + first terms)   or  linrec([5, -6], 0, [1, 0], 10)  for a(n) = 5a(n\u22121) \u2212 6a(n\u22122) + f(n) [recurrence]',
   '  binary(10) octal(64) hex(255) tobase(n, b) frombase(1011, 2);   0xFF, 0b101, 1011_2, (ff)_16 are understood',
@@ -13293,7 +13340,9 @@ HELP.stats = [
   'STATISTICS (data as a list: mean([2,4,4,5]) or mean(2,4,4,5))',
   '  mean median mode variance (sample) popvariance stdev (sample) popstdev iqr quartiles percentile(list, p) summary(list) datarange(list) [spread] zscore(x, mean, sd) max min',
   '  correlation(xs, ys)   covariance(xs, ys)   linreg(xs, ys)   linreg(xs, ys, x0) predicts y at x0',
-  '  expect([values], [probabilities])   bayes(P(A), P(B|A), P(B|not A))',
+  '  expect([values], [probabilities])   bayes(P(A), P(B|A), P(B|not A))   condprob(P(A and B), P(B))  [conditional]',
+  '  P(...) sentences: "P(A|B) if P(A and B) = 0.2 and P(B) = 0.5", "Bayes theorem: P(A) = 0.3, P(B|A) = 0.8, P(B|not A) = 0.1, find P(A|B)", "P(A or B) for independent events with P(A) = 0.5 and P(B) = 0.4", "P(not A) if P(A) = 0.35"',
+  '  moments: binomstats(n, p) [binomialstats]  poissonstats(lambda)  geomstats(p) [geometricstats]  diestats(sides) [fairdie]: mean, variance and standard deviation',
   '  binompdf(n, p, k) binomcdf(n, p, k)  (binomcdf(n, p, a, b) = P(a <= X <= b))   poissonpdf(lambda, k) poissoncdf   geometpdf(p, k) geometcdf   hyperpdf(N, K, n, k)',
   '  normalcdf(x)  normalcdf(x, mean, sd)  normalcdf(a, b, mean, sd)  (use oo for infinity)   normalpdf   invnorm(p, mean, sd)   zcrit(95)',
   '  tcdf(t, df) invt(p, df) tcrit(0.95, df)   chi2cdf(x, df) invchi2(p, df)   fcdf(f, d1, d2)   expcdf(rate, x) [exponentialcdf]',
@@ -17605,7 +17654,7 @@ defCmd('weakacid', (n) => {
   needArgs(n, 2, 2, 'Ka and the concentration in mol/L, e.g. weakacid(1.8e-5, 0.10)');
   const ka = numArg(n.args[0]);
   const c = numArg(n.args[1]);
-  if (!(ka > 0) || !(c > 0)) throw new MathError('Ka and the concentration must be positive');
+  if (!(ka > 0) || !(c > 0) || !isFinite(ka) || !isFinite(c)) throw new MathError('Ka and the concentration must be positive numbers');
   const x = (-ka + Math.sqrt(ka * ka + 4 * ka * c)) / 2;
   const out = newOut();
   out.answer.push('[H\u207a] = ' + fmtNum(x) + ' mol/L,  pH = ' + fmtNum(-Math.log10(x)));
@@ -20306,11 +20355,270 @@ const W_STAT = [
   ['max(?:imum)?|largest|greatest|biggest|highest', 'max'], ['min(?:imum)?|smallest|least|lowest', 'min'],
 ];
 
+// ---- probability sentences: "P(A|B) if P(A and B) = 0.2 and P(B) = 0.5", Bayes' theorem, unions, complements
+function wEvent(e) {
+  let t = e.trim().replace(/\s+/g, ' ');
+  let m;
+  if ((m = /^(.+?)\s*(?:\||given\s+(?:that\s+)?)\s*(.+)$/i.exec(t))) { const a = wEvent(m[1]); const b = wEvent(m[2]); return a && b ? { k: a.k + '|' + b.k, kind: 'cond', a, b } : null; }
+  if ((m = /^(.+?)\s*(?:\u222a|\bor\b)\s*(.+)$/i.exec(t))) { const a = wEvent(m[1]); const b = wEvent(m[2]); return a && b ? { k: [a.k, b.k].sort().join('u'), kind: 'u', a, b } : null; }
+  if ((m = /^(.+?)\s*(?:\u2229|\band\b|,)\s*(.+)$/i.exec(t))) { const a = wEvent(m[1]); const b = wEvent(m[2]); return a && b ? { k: [a.k, b.k].sort().join('&'), kind: 'n', a, b } : null; }
+  if ((m = /^(?:not\s+|\u00ac|!|~)\s*([A-Za-z]\w*)$/i.exec(t)) || (m = /^([A-Za-z]\w*)\s*(?:'|\u2032|\^c|\u1d9c|\s+complement|\s+c)$/i.exec(t))) return { k: '!' + m[1], kind: 'c', a: { k: m[1], kind: 'a' } };
+  if (/^[A-Za-z]\w*$/.test(t)) return { k: t, kind: 'a' };
+  return null;
+}
+function wProbSentence(s) {
+  if (!/\bP\s*\(/.test(s) || /[<>\u2264\u2265]|\bnormal|distributed|binomial|poisson|\bz\b/i.test(s)) return null;
+  const VAL = '(\\d*\\.?\\d+(?:\\s*\\/\\s*\\d+)?\\s*%?)';
+  const known = new Map();
+  const assignRx = new RegExp('P\\s*\\(([^()]*)\\)\\s*(?:=|is|equals)\\s*' + VAL, 'gi');
+  let m;
+  while ((m = assignRx.exec(s))) {
+    const ev = wEvent(m[1]);
+    if (!ev) return null;
+    known.set(ev.k, m[2].replace(/\s+/g, ''));
+  }
+  const rest = s.replace(assignRx, ' ');
+  let query = null;
+  const qRx = /P\s*\(([^()]*)\)/gi;
+  while ((m = qRx.exec(rest))) {
+    const ev = wEvent(m[1]);
+    if (!ev) return null;
+    query = query || ev;
+  }
+  if (!query) return null;
+  const indep = /\bindependent\b/i.test(s) && !/\bnot\s+independent\b/i.test(s);
+  const exclusive = /\bmutually\s+exclusive\b|\bdisjoint\b/i.test(s);
+  const seen = new Set();
+  const wrap = (t) => '(' + t + ')';
+  const get = (ev) => {
+    if (known.has(ev.k)) return known.get(ev.k);
+    if (seen.has(ev.k) || seen.size > 12) return null;
+    seen.add(ev.k);
+    let r = null;
+    const g = (e) => get(e);
+    if (ev.kind === 'c') { const x = g(ev.a); r = x && '1-' + wrap(x); }
+    else if (ev.kind === 'n') {
+      const x = g(ev.a); const y = g(ev.b);
+      if (exclusive) r = '0';
+      else if (indep && x && y) r = wrap(x) + '*' + wrap(y);
+      if (!r) { const c1 = known.get(ev.a.k + '|' + ev.b.k); const c2 = known.get(ev.b.k + '|' + ev.a.k); if (c1 && y) r = wrap(c1) + '*' + wrap(y); else if (c2 && x) r = wrap(c2) + '*' + wrap(x); }
+      if (!r) { const u = known.get([ev.a.k, ev.b.k].sort().join('u')); if (u && x && y) r = wrap(x) + '+' + wrap(y) + '-' + wrap(u); }
+    } else if (ev.kind === 'u') {
+      const x = g(ev.a); const y = g(ev.b);
+      if (x && y) {
+        if (exclusive) r = wrap(x) + '+' + wrap(y);
+        else if (indep) r = wrap(x) + '+' + wrap(y) + '-' + wrap(x) + '*' + wrap(y);
+        else { const both = known.get([ev.a.k, ev.b.k].sort().join('&')); if (both) r = wrap(x) + '+' + wrap(y) + '-' + wrap(both); }
+      }
+    } else if (ev.kind === 'cond') {
+      const both = known.get([ev.a.k, ev.b.k].sort().join('&'));
+      const y = g(ev.b);
+      if (both && y) r = wrap(both) + '/' + wrap(y);
+      else if (indep && (ev.a.kind === 'a' || ev.a.kind === 'c')) r = g(ev.a);
+      if (!r && y) {
+        const rev = known.get(ev.b.k + '|' + ev.a.k);
+        const x = g(ev.a);
+        if (rev && x) r = wrap(rev) + '*' + wrap(x) + '/' + wrap(y);
+      }
+    } else if (ev.kind === 'a') {
+      // total probability over an event X and its complement
+      for (const k of known.keys()) {
+        const cm = /^([^|]+)\|([^|!]+)$/.exec(k);
+        if (cm && cm[1] === ev.k) {
+          const X = cm[2];
+          const c1 = known.get(ev.k + '|' + X);
+          const c2 = known.get(ev.k + '|!' + X);
+          const px = known.get(X);
+          if (c1 && c2 && px) { r = wrap(c1) + '*' + wrap(px) + '+' + wrap(c2) + '*(1-' + wrap(px) + ')'; break; }
+        }
+      }
+    }
+    seen.delete(ev.k);
+    return r;
+  };
+  const r = get(query);
+  return r ? r : null;
+}
+
+// ---- set sentences: "A = {1,2,3}, B = {2,3,4}, find A union B", "{1,2} \u222a {2,3}", "number of subsets of {1,2,3,4}"
+function wSetSentence(s) {
+  if (!/[{}\u222a\u2229\u2208\u2282\u2286\u00d7\u0394]|\b(?:union|intersect(?:ion)?|subsets?|power\s+set|complement|cartesian|cardinality|elements)\b/i.test(s)) return null;
+  const defs = new Map();
+  let rest = s.replace(/\b([A-Z])\s*=\s*\{([^{}]*)\}/g, (m, name, body) => {
+    defs.set(name, '[' + body + ']');
+    return name;
+  });
+  rest = rest.replace(/\{([^{}]*)\}/g, (m, body) => '[' + body + ']');
+  const OPERAND = '(\\[[^\\]]*\\]|[A-Z](?![A-Za-z]))';
+  const sub = (t) => {
+    const r = defs.get(t);
+    if (r) return r;
+    if (/^[A-Z]$/.test(t)) throw new Error('undefined set');
+    return t;
+  };
+  try {
+    const clean = rest.replace(/[?]/g, ' ').replace(/\s+/g, ' ').trim();
+    let m;
+    // cardinality and number of subsets
+    if ((m = new RegExp('(?:number\\s+of\\s+subsets|how\\s+many\\s+subsets)\\s+(?:does\\s+|can\\s+)?(?:a\\s+set\\s+)?(?:of|with|has|have)?\\s*(?:the\\s+set\\s+)?' + OPERAND, 'i').exec(clean)) && !/\d+\s+elements/.test(clean)) return wCall('powerset', sub(m[1]));
+    if ((m = /(?:number\s+of\s+subsets|how\s+many\s+subsets)\D*?(\d+)\s+elements/i.exec(clean))) return wCall('powerset', m[1]);
+    if ((m = new RegExp('(?:subsets|power\\s+set)\\s+of\\s+(?:the\\s+set\\s+)?' + OPERAND, 'i').exec(clean))) return wCall('powerset', sub(m[1]));
+    if ((m = new RegExp('(?:cardinality|number\\s+of\\s+elements(?:\\s+in)?|size)\\s+(?:of\\s+)?(?:the\\s+set\\s+)?' + OPERAND, 'i').exec(clean)) || (m = new RegExp('(?:\\||n\\s*\\()\\s*' + OPERAND + '\\s*[|)]', 'i').exec(clean))) return wCall('cardinality', sub(m[1]));
+    // is A a subset of B
+    if ((m = new RegExp('(?:is|are)\\s+' + OPERAND + '\\s+(?:a\\s+)?(?:proper\\s+)?subset\\s+of\\s+' + OPERAND, 'i').exec(clean)) || (m = new RegExp(OPERAND + '\\s*(?:\u2282|\u2286)\\s*' + OPERAND).exec(clean))) return wCall('issubset', sub(m[1]), sub(m[2]));
+    // complement
+    if ((m = new RegExp('complement\\s+of\\s+' + OPERAND + '(?:.*?\\b(?:in|within|relative\\s+to|with\\s+respect\\s+to)\\s+(?:the\\s+)?(?:universal\\s+set\\s+|universe\\s+)?' + OPERAND + ')?', 'i').exec(clean)) || (m = /\b([A-Z])(?:'|\u2032|\^c|\u1d9c)(?![A-Za-z])/.exec(clean))) {
+      const U = m[2] ? sub(m[2]) : defs.get('U');
+      if (U) return wCall('setcomplement', sub(m[1]), U);
+    }
+    // binary operations, also chained: A \u222a B \u222a C, union of A and B, A \u2229 B
+    const OPS = [
+      ['union', '(?:\u222a|\\bunion\\b|\\bcup\\b)'], ['intersection', '(?:\u2229|\\bintersect(?:ion)?\\b|\\bcap\\b)'], ['symdiff', '(?:\u0394|\u25b3|\\bsymmetric\\s+difference\\b)'], ['setdiff', '(?:\\\\|\\bminus\\b|\\bwithout\\b|\u2216)'], ['cartesian', '(?:\u00d7|\\bcross\\b|\\bcartesian\\s+product\\b)'],
+    ];
+    const dm = /\b([A-Z])\s*[-\u2212]\s*([A-Z])\b(?!\s*=)/.exec(clean);
+    if (dm && defs.has(dm[1]) && defs.has(dm[2])) return wCall('setdiff', sub(dm[1]), sub(dm[2]));
+    for (const [cmd, op] of OPS) {
+      const word = new RegExp('(?:the\\s+)?' + (cmd === 'setdiff' ? '(?<!symmetric\\s)difference' : cmd === 'cartesian' ? 'cartesian\\s+product' : cmd === 'symdiff' ? 'symmetric\\s+difference' : cmd) + '\\s+of\\s+(?:the\\s+sets?\\s+)?' + OPERAND + '(?:\\s*,\\s*|\\s+and\\s+|\\s*,\\s*and\\s+)' + OPERAND + '(?:(?:\\s*,\\s*|\\s+and\\s+)' + OPERAND + ')?', 'i').exec(clean);
+      if (word) return wCall(cmd, sub(word[1]), sub(word[2]), word[3] ? sub(word[3]) : null);
+      const chain = new RegExp(OPERAND + '(?:\\s*' + op + '\\s*' + OPERAND + ')+', 'i').exec(clean);
+      if (chain) {
+        const ops = clean.slice(chain.index, chain.index + chain[0].length).split(new RegExp('\\s*' + op + '\\s*', 'i'));
+        if (ops.length >= 2 && ops.every((x) => new RegExp('^' + OPERAND + '$').test(x.trim()))) return wCall(cmd, ...ops.map((x) => sub(x.trim())));
+      }
+    }
+  } catch (e) {
+    return null;
+  }
+  return null;
+}
+
 /** One line, whole-line patterns. Returns the replacement text or null. */
 function wRules(s) {
   let m;
   const T = (x) => x.replace(/^\s*(?:(?:the|a|an)\s+)?/i, '');
+  const pr = wProbSentence(s);
+  if (pr) return pr;
+  const st = wSetSentence(s);
+  if (st) return st;
 
+  // ---- arc length of a circle sector given the radius and the angle
+  if ((m = /^(?:(?:the|a|an)\s+)?arc\s+length\s+(?:with|for|if|when|given)\s+(.*\bradius\b.*\bangle\b.*)$/i.exec(s))) return wRules('arc length of a sector with ' + m[1]);
+  // ---- linear approximation
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:linear\s+approximation|linearization)\s+(?:of|for|to)\s+(.+)$/i.exec(s)) || (m = /^linearize\s+(.+)$/i.exec(s))) {
+    let body = m[1];
+    let est = null;
+    const em = /^(.*?)(?:\s*,?\s*(?:and\s+)?(?:then\s+)?(?:use\s+it\s+to\s+)?(?:estimate|approximate)s?\s+(.+))$/i.exec(body);
+    if (em) { body = em[1]; est = em[2]; }
+    const pe = wPeel(body);
+    if (pe.at != null && /[a-z]/i.test(pe.rest)) {
+      let x0 = null;
+      if (est) {
+        const cm = /^[a-z]*\(\s*([^()]+?)\s*\)$/i.exec(est.trim());
+        x0 = wBound(cm ? cm[1] : est);
+      }
+      return wCall('linapprox', wE(pe.rest.replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '')), pe.atVar || pe.v || 'x', wBound(pe.at), x0);
+    }
+  }
+  // ---- mean value, Rolle and intermediate value theorems
+  if ((m = /(mean\s+value\s+theorem|rolle'?s?\s+theorem|intermediate\s+value\s+theorem)\b.*?\b(?:for|to|on|with|of|applied\s+to)\s+(.+)$/i.exec(s)) && /[\[(]\s*-?[\d.]+\s*[,;]|\bfrom\b|\bbetween\b|\bon\b/i.test(m[2])) {
+    const pe = wPeel(m[2]);
+    if (pe.lo != null && /[a-z]/i.test(pe.rest)) {
+      const kind = /^mean/i.test(m[1]) ? 'mvt' : /^rolle/i.test(m[1]) ? 'rolle' : 'ivt';
+      return wCall(kind, wE(pe.rest.replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '')), pe.v || 'x', wBound(pe.lo), wBound(pe.hi));
+    }
+  }
+  if ((m = /^(?:show|prove|verify|explain|justify)\s+that\s+(.+?)\s+has\s+(?:a|at\s+least\s+one|a\s+real)\s+(?:root|zero|solution)\s+(?:in|on|between)\s+(.+)$/i.exec(s))) {
+    const pe = wPeel('x ' + m[2].replace(/^the\s+interval\s+/i, 'in '));
+    const pe2 = pe.lo != null ? pe : wPeel(m[2].replace(/^(?:the\s+interval\s+)?/i, 'on '));
+    if (pe2.lo != null) return wCall('ivt', wE(m[1].replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '').replace(/\s*=\s*0$/, '')), 'x', wBound(pe2.lo), wBound(pe2.hi));
+  }
+  // ---- sums of patterned series: "1 + 2 + 3 + ... + 100", "sum of the geometric series 1 + 1/2 + 1/4 + ..."
+  if (/(?:\.{3}|\u2026)/.test(s) && /\d/.test(s)) {
+    const body = s.replace(/^(?:(?:find|calculate|compute|evaluate)\s+)?(?:(?:the|a)\s+)?(?:sum|total)\s+(?:of\s+)?(?:(?:the|a)\s+)?(?:(?:infinite|finite)\s+)?(?:(?:arithmetic|geometric)\s+)?(?:series|sequence)?\s*:?\s*/i, '');
+    const parts = body.split(/\s*(?:\.{3}|\u2026)\s*/);
+    if (parts.length === 2) {
+      const head = parts[0].replace(/[+,\s]+$/, '').replace(/\s-\s/g, ' + -');
+      const tail = parts[1].replace(/^[+,\s]+/, '').replace(/[.?\s]+$/, '');
+      const terms = head.split(/\s*[+,]\s*/).filter(Boolean);
+      if (terms.length >= 2 && terms.length <= 6 && terms.every((t) => /^[-\u2212]?\s*\(?\d[\d./^()*\s]*\)?$/.test(t.trim()) || /^[-\u2212]?[\d.]+(?:\s*\/\s*[\d.]+)?$/.test(t.trim())) && (/\bsum\b|\bseries\b/i.test(s) || /\+/.test(head))) {
+        return wCall('seriessum', '[' + terms.map((t) => wE(t.replace(/\u2212/g, '-'))).join(', ') + ']', tail ? wE(tail.replace(/^\+\s*/, '')) : 'oo');
+      }
+    }
+  }
+  // ---- means and variances of standard distributions
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:expected\s+value|expectation|mean|average|variance|standard\s+deviation)(?:\s*(?:,|and)\s*(?:the\s+)?(?:variance|standard\s+deviation|mean|expected\s+value))*\s+(?:of|for)\s+(?:(?:the|a|an)\s+)?(.+)$/i.exec(s))) {
+    const d = m[1];
+    let q;
+    if (/\b(?:die|dice)\b/i.test(d) && !/\bdice\b.*\bsum\b/i.test(d)) {
+      const f = /(\d+)[- ]sided/i.exec(d);
+      return wCall('diestats', f ? f[1] : null);
+    }
+    if (/\bbinomial\b/i.test(d) && (q = [/\bn\s*=\s*(\d+)/i.exec(d) || /(\d+)\s+trials/i.exec(d), /\bp\s*=\s*([\d.]+(?:\s*\/\s*\d+)?)/i.exec(d) || /probability\s+(?:of\s+success\s+)?(?:of\s+)?([\d.]+)/i.exec(d)]) && q[0] && q[1]) return wCall('binomstats', q[0][1], q[1][1].replace(/\s+/g, ''));
+    if (/\bpoisson\b/i.test(d) && (q = /(?:\u03bb|lambda|rate|mean|average)\s*(?:=|of|is)?\s*([\d.]+)/i.exec(d))) return wCall('poissonstats', q[1]);
+    if (/\bgeometric\b/i.test(d) && (q = /\bp\s*=\s*([\d.]+(?:\s*\/\s*\d+)?)|probability\s+(?:of\s+success\s+)?(?:of\s+)?([\d.]+)/i.exec(d))) return wCall('geomstats', (q[1] || q[2]).replace(/\s+/g, ''));
+  }
+  // ---- how many ways: arranging and choosing
+  if ((m = /^how\s+many\s+(?:different\s+|distinct\s+)?(?:ways|orders|arrangements|seatings)\s+(?:are\s+there\s+)?(?:can|to|for)?\s*(?:are\s+there\s+)?(?:for\s+)?(\d+)\s+(?:\w+\s+){0,3}?(?:to\s+)?(?:sit|be\s+seated|be\s+arranged|be\s+lined\s+up|line\s+up|stand|queue|finish|be\s+ordered|be\s+placed|arrange\s+themselves)\b(.*)$/i.exec(s))) {
+    const n = parseInt(m[1], 10);
+    return /\b(?:circle|circular|round\s+table|around)\b/i.test(m[2]) ? wCall('factorial', String(Math.max(n - 1, 0))) : wCall('factorial', String(n));
+  }
+  if ((m = /^how\s+many\s+(?:different\s+|distinct\s+)?(?:ways|committees|teams|groups|combinations|subsets|samples|hands)\b.*?\b(?:choose|chosen|select|selected|pick|picked|form|formed|draw|drawn)\s+(?:a\s+(?:committee|team|group|subset)\s+of\s+)?(\d+)\s+(?:\w+\s+){0,3}?(?:from|out\s+of|of)\s+(?:a\s+(?:group|set|class|team|club|school|deck)\s+of\s+)?(\d+)\b(.*)$/i.exec(s))) {
+    return /\b(?:in\s+order|ordered|rank|ranked|arrange|arrangement|different\s+order|president|prizes?|positions?|officers?)\b/i.test(s) ? wCall('npr', m[2], m[1]) : wCall('ncr', m[2], m[1]);
+  }
+  if ((m = /^how\s+many\s+(?:different\s+)?ways\s+(?:can|could|are\s+there\s+to)\s+(?:be\s+)?(?:a|the)?\s*((?:[a-z-]+\s+)*?(?:president|chair|captain|treasurer|secretary|vice|officer|winner|prize|leader|manager)[a-z\s,-]*?)\s+(?:be\s+)?(?:chosen|elected|selected|picked|appointed|awarded)\s+from\s+(?:a\s+(?:group|class|club|team)\s+of\s+)?(\d+)/i.exec(s))) {
+    const roles = m[1].split(/\s*,\s*|\s+and\s+/i).filter((x) => /[a-z]/i.test(x));
+    return wCall('npr', m[2], String(Math.max(roles.length, 1)));
+  }
+  if ((m = /^how\s+many\s+(?:different\s+)?ways\s+(?:can|could)\s+(?:a|the)?\s*(?:committee|team|group|subset|panel|jury)\s+of\s+(\d+)\s+(?:\w+\s+){0,2}?be\s+(?:chosen|selected|picked|formed|drawn)\s+from\s+(?:a\s+(?:group|class|club|team)\s+of\s+)?(\d+)/i.exec(s))) return wCall('ncr', m[2], m[1]);
+  if ((m = /^how\s+many\s+(?:different\s+)?(?:committees|teams|groups|subsets)\s+of\s+(?:size\s+)?(\d+)\s+can\s+be\s+(?:formed|chosen|selected|made)\s+from\s+(?:a\s+(?:group|set|class|team|club)\s+of\s+)?(\d+)\b/i.exec(s))) return wCall('ncr', m[2], m[1]);
+  // ---- combining fractions
+  if (!/\b(?:log|ln)\s*[_(]/i.test(s) && ((m = /^(?:combine|(?:write|express|rewrite)\s+as\s+a\s+single\s+fraction)\s*(?:the\s+)?(?:fractions?\s+|expressions?\s+|terms\s+)?(.+?)(?:\s+(?:as|into)\s+a\s+single\s+(?:fraction|expression|term))?$/i.exec(s)) || (m = /^(?:write|express|rewrite)\s+(.+?)\s+as\s+a\s+single\s+(?:fraction|rational\s+expression)$/i.exec(s)))) return wCall('simplify', wE(m[1]));
+  // ---- quadratics: discriminant, completing the square, vertex; conic features
+  if ((m = /^(?:the\s+)?discriminant\s+(?:of|for)\s+(?:the\s+)?(?:quadratic\s+)?(?:equation\s+|expression\s+|polynomial\s+)?(.+)$/i.exec(s))) return wCall('discriminant', wE(m[1].replace(/\s*=\s*0$/, '').replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '')));
+  if ((m = /^(?:complete|completing)\s+the\s+square\s*(?:for|of|in|on|:)?\s*(?:the\s+)?(?:quadratic\s+|expression\s+|equation\s+)?(.+)$/i.exec(s))) return wCall('completesquare', wE(m[1].replace(/\s*=\s*0$/, '').replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '')));
+  if ((m = /^(?:the\s+)?(?:vertex|turning\s+point|axis\s+of\s+symmetry|minimum\s+value|maximum\s+value|min(?:imum)?\s+or\s+max(?:imum)?)(?:\s*(?:,|and)\s*(?:the\s+)?(?:axis\s+of\s+symmetry|vertex|y-?intercept|minimum|maximum))*\s+of\s+(?:the\s+)?(?:parabola\s+|quadratic\s+(?:function\s+)?|function\s+)?(.+)$/i.exec(s))) {
+    const e = m[1].replace(/^[a-z]\s*(?:\([a-z]\))?\s*=\s*/i, '');
+    if (/^[^=]*x\^?2|x\u00b2|x\s*\*\*\s*2/.test(e) && !/[y]/.test(e) && !/=/.test(e)) return wCall('vertex', wE(e));
+    if (/=/.test(m[1])) return wOps(wExpr(m[1]));
+  }
+  if ((m = /^(?:the\s+)?(?:foci|focus|vertices|vertex|center|centre|directrix|asymptotes?|eccentricity|axes|axis(?:\s+of\s+symmetry)?|latus\s+rectum|semi-?axes)(?:\s*(?:,|and)\s*(?:the\s+)?(?:foci|focus|vertices|vertex|center|centre|directrix|asymptotes?|eccentricity|axes|axis(?:\s+of\s+symmetry)?|latus\s+rectum))*\s+of\s+(?:the\s+)?(?:(?:ellipse|parabola|hyperbola|circle|conic(?:\s+section)?)\s*:?\s*)?(.+=.+)$/i.exec(s))) return wOps(wExpr(m[1]));
+  // ---- logarithm laws
+  if (/\b(?:log|ln)\s*[_(]|\blog\d/i.test(s)) {
+    if ((m = /^(?:condense|combine|collapse|write\s+as\s+a\s+single\s+logarithm|express\s+as\s+a\s+single\s+logarithm)\s*(?:the\s+)?(?:logarithms?\s+|logs\s+|expression\s+)?(?:into\s+a\s+single\s+(?:logarithm|log)\s*:?\s*)?(.+?)(?:\s+(?:as|into)\s+a\s+single\s+(?:logarithm|log))?$/i.exec(s)) || (m = /^(?:write|express|rewrite)\s+(.+?)\s+as\s+a\s+single\s+(?:logarithm|log)$/i.exec(s))) return wCall('logcondense', wE(m[1]));
+    if ((m = /^expand\s+(?:the\s+)?(?:logarithm\s+|log\s+|expression\s+)?(.+)$/i.exec(s)) || (m = /^(?:use\s+(?:the\s+)?(?:laws\s+of\s+logarithms|log(?:arithm)?\s+(?:laws|rules|properties))\s+to\s+)?expand\s+(.+)$/i.exec(s)) || (m = /^(?:write|express|rewrite)\s+(.+?)\s+as\s+(?:a\s+)?sum\s+(?:and\s+difference\s+)?of\s+logarithms?$/i.exec(s))) return wCall('logexpand', wE(m[1]));
+  }
+  // ---- the k-th term of a binomial expansion
+  if ((m = /^(?:the\s+)?(\d+)(?:st|nd|rd|th)\s+term\s+(?:of|in)\s+(?:the\s+(?:binomial\s+)?expansion\s+of\s+)?\(\s*(.+)\s*\)\s*(?:\^|\*\*)\s*\(?(\d+)\)?$/i.exec(s))) {
+    const inner = m[2];
+    let depth = 0;
+    for (let i = 1; i < inner.length; i++) {
+      const c = inner[i];
+      if (c === '(') depth++;
+      else if (c === ')') depth--;
+      else if (depth === 0 && (c === '+' || c === '-')) {
+        const rt = inner.slice(i + 1).trim();
+        return wCall('binomterm', wE(inner.slice(0, i)), c === '-' ? '-(' + wE(rt) + ')' : wE(rt), m[3], m[1]);
+      }
+    }
+  }
+  // ---- ratios and scientific notation
+  if ((m = /^(?:simplify\s+|reduce\s+)?(?:the\s+)?ratio\s+(?:of\s+)?(\d+(?:\.\d+)?(?:\/\d+)?)\s*(?:to|:)\s*(\d+(?:\.\d+)?(?:\/\d+)?)(?:\s*(?:to|:)\s*(\d+(?:\.\d+)?(?:\/\d+)?))?$/i.exec(s))) return wCall('ratio', m[1], m[2], m[3]);
+  if ((m = /^(?:write|express|convert|put|give|change)?\s*(.+?)\s+(?:in|as|into|to|using)\s+scientific\s+notation$/i.exec(s)) || (m = /^scientific\s+notation\s+(?:of|for)\s+(.+)$/i.exec(s))) return wCall('sci', wE(m[1].replace(/(\d)\s*[x\u00d7]\s*10\s*\^/g, '$1*10^')));
+  if ((m = /^(?:write|express|convert|put|give|change)?\s*(.+?)\s+(?:in|as|into|to)\s+(?:standard|decimal|ordinary|expanded|normal)\s+(?:form|notation)$/i.exec(s)) && /\d/.test(m[1])) return wOps(m[1].replace(/(\d)\s*[x\u00d7]\s*10\s*\^/g, '$1*10^'));
+  // ---- confidence intervals for a mean or a proportion from summary numbers
+  if (/confidence\s+interval/i.test(s) && !/\bslope\b|\bregression\b/i.test(s)) {
+    const lvl = /(\d+(?:\.\d+)?)\s*%/.exec(s);
+    const level = lvl ? String(Number(lvl[1]) / 100) : (/\b(0\.\d+)\b\s*(?:confidence|level)/i.exec(s) || [])[1];
+    const num = '(-?\\d+(?:\\.\\d+)?)';
+    const nM = new RegExp('\\bn\\s*=\\s*(\\d+)|sample\\s+(?:size|of)\\s*(?:is\\s*)?(\\d+)|out\\s+of\\s+(\\d+)|(\\d+)\\s+(?:observations|samples|people|students|subjects|participants|trials|customers)', 'i').exec(s);
+    const nn = nM && (nM[1] || nM[2] || nM[3] || nM[4]);
+    const pr = /(?:proportion|percentage|fraction)/i.test(s) && new RegExp('(\\d+)\\s+(?:successes?|out\\s+of|of|favou?rable|yes|positive)', 'i').exec(s);
+    if (level && nn && pr) return wCall('propinterval', pr[1], nn, level);
+    const mean = new RegExp('(?:sample\\s+)?mean\\s*(?:of|is|=|:)?\\s*' + num, 'i').exec(s) || new RegExp('x[\u0304bar]*\\s*=\\s*' + num, 'i').exec(s);
+    const sigma = new RegExp('(?:population\\s+standard\\s+deviation|known\\s+standard\\s+deviation|\u03c3|sigma)\\s*(?:of|is|=|:)?\\s*' + num, 'i').exec(s);
+    const sd = new RegExp('(?:sample\\s+)?(?:standard\\s+deviation|std\\.?\\s*dev\\.?|sd|\\bs)\\s*(?:of|is|=|:)?\\s*' + num, 'i').exec(s);
+    if (level && nn && mean && (sigma || sd)) return sigma ? wCall('zinterval', mean[1], sigma[1], nn, level) : wCall('tinterval', mean[1], sd[1], nn, level);
+  }
   // ---- equation with an interval for the unknown
   if (/[<>\u2264\u2265]|\[|\(/.test(s) && /=/.test(s) && !/\b(?:fourier|series|integral|integrate|derivative|limit|laplace|average|area|volume|length|taylor|maclaurin|sum|plot|graph|domain|tangent)\b/i.test(s)) {
     const win = wWindow(s.replace(/^solve\s+(?:the\s+equation\s+)?/i, ''));
@@ -20499,7 +20807,8 @@ function wRules(s) {
   if ((m = /^(?:(?:the|a|an)\s+)?(?:number\s+of\s+)?(?:distinct\s+)?(?:permutations|arrangements|anagrams|rearrangements)\s+of\s+(?:(?:the|a|an)\s+)?(?:letters\s+(?:in|of)\s+)?(?:the\s+word\s+)?["']?([A-Za-z]{3,})["']?$/i.exec(s))) return 'anagrams of ' + m[1].toUpperCase();
   if ((m = /^(?:convert\s+)?(\d+)\s+(?:to|in|into|as)\s+(binary|octal|hex(?:adecimal)?|base\s*(\d+))$/i.exec(s)) && !/^\d+\s+(?:in)\s+base/i.test(s)) return wCall('tobase', m[1], /binary/i.test(m[2]) ? '2' : /octal/i.test(m[2]) ? '8' : /hex/i.test(m[2]) ? '16' : m[3]);
   if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:binary|base\s*2)\s+(?:number\s+)?([01]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', m[1], '2');
-  if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:hex(?:adecimal)?|base\s*16)\s+(?:number\s+)?([0-9a-f]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', m[1], '16');
+  if ((m = /^(?:convert\s+)?0x([0-9a-f]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', '[' + m[1].toUpperCase().split('').map((c) => parseInt(c, 16)).join(', ') + ']', '16');
+  if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:hex(?:adecimal)?|base\s*16)\s+(?:number\s+)?(?:0x)?([0-9a-f]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s)) || (m = /^(?:convert\s+)?(?:0x)?([0-9a-f]+)\s*(?:\(\s*)?(?:in\s+)?(?:hex(?:adecimal)?|base\s*16)\s*\)?\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', '[' + m[1].toUpperCase().split('').map((c) => parseInt(c, 16)).join(', ') + ']', '16');
   if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:octal|base\s*8)\s+(?:number\s+)?([0-7]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', m[1], '8');
   if ((m = /^(?:(?:the|a|an)\s+)?sum\s+of\s+(?:(?:the|a|an)\s+)?digits\s+of\s+(\d+)$/i.exec(s))) return wCall('digitsum', m[1]);
   if ((m = /^(?:(?:the|a|an)\s+)?(?:euler'?s?\s+)?(?:totient|phi)\s+of\s+(\d+)$/i.exec(s))) return wCall('totient', m[1]);
@@ -20758,8 +21067,9 @@ function wRules(s) {
   if ((m = /^(?:(?:the|a|an)\s+)?(correlation|covariance|spearman(?:\s+correlation)?|kendall(?:\s+tau)?)(?:\s+coefficient)?\s+(?:of|between|for)\s+(.+)$/i.exec(s)) && wBrackets(m[2]).length === 2) return wCall(/corr/i.test(m[1]) ? 'correlation' : /cov/i.test(m[1]) ? 'covariance' : /spear/i.test(m[1]) ? 'spearman' : 'kendall', ...wBrackets(m[2]));
   if ((m = /^(?:(?:the|a|an)\s+)?(?:linear\s+regression|regression\s+line|line\s+of\s+best\s+fit|least[- ]squares\s+line)\s+(?:of|for|to|through)?\s*(.+)$/i.exec(s)) && wBrackets(m[1]).length === 2) return wCall('linreg', ...wBrackets(m[1]));
   if ((m = /^(?:(?:the|a|an)\s+)?z-?score\s+(?:of|for)\s+(-?[\d.]+)\s*,?\s*(?:with|given|when|if|where)?\s*(?:a\s+)?mean\s*(?:of|=)?\s*(-?[\d.]+)\s*(?:,|and)?\s*(?:a\s+)?(?:standard\s+deviation|sd|std)\s*(?:of|=)?\s*([\d.]+)$/i.exec(s))) return wCall('zscore', m[1], m[2], m[3]);
-  if ((m = /^(?:(?:the|a|an)\s+)?probability\s+(?:of\s+)?(?:getting\s+|obtaining\s+|having\s+|seeing\s+)?(exactly|at\s+least|at\s+most|more\s+than|fewer\s+than|less\s+than)?\s*(\d+)\s+(?:heads?|tails?|successes?|hits?|sixes|\w+s?)\s+(?:in|out\s+of|from|when)\s+(?:flipping\s+|tossing\s+|rolling\s+)?(?:a\s+(?:fair\s+)?coin\s+)?(\d+)\s*(?:coin\s+|die\s+|dice\s+)?(?:times?|trials?|tosses|flips|attempts|tries|rolls)?(?:\s+of\s+a\s+(?:fair\s+)?coin)?(?:\s+(?:with|if|when|where|and)\s+(?:(?:the|a|an)\s+)?(?:success\s+)?probability\s*(?:of\s+success\s*)?(?:is\s+|of\s+|=\s*)?(0?\.\d+|\d+\/\d+|\d+%))?$/i.exec(s))) {
-    const k = m[2];
+  if ((m = /^(?:(?:the|a|an)\s+)?probability\s+(?:of\s+)?(?:getting\s+|obtaining\s+|having\s+|seeing\s+)?(exactly|at\s+least|at\s+most|more\s+than|fewer\s+than|less\s+than)?\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten|an?)\s+(?:heads?|tails?|successes?|hits?|sixes|\w+s?)\s+(?:in|out\s+of|from|when)\s+(?:flipping\s+|tossing\s+|rolling\s+)?(?:a\s+(?:fair\s+)?coin\s+)?(\d+)\s*(?:coin\s+|die\s+|dice\s+)?(?:times?|trials?|tosses|flips|attempts|tries|rolls)?(?:\s+of\s+a\s+(?:fair\s+)?coin)?(?:\s+(?:with|if|when|where|and)\s+(?:(?:the|a|an)\s+)?(?:success\s+)?(?:probability\s*(?:of\s+success\s*)?|p\s*)(?:is\s+|of\s+|=\s*)?(0?\.\d+|\d+\/\d+|\d+%))?$/i.exec(s))) {
+    const WORDN = { one: 1, a: 1, an: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+    const k = /^\d+$/.test(m[2]) ? m[2] : String(WORDN[m[2].toLowerCase()]);
     const n = m[3];
     const p = m[4] ? (m[4].endsWith('%') ? '(' + m[4].slice(0, -1) + '/100)' : m[4]) : '1/2';
     const how = (m[1] || 'exactly').toLowerCase().replace(/\s+/g, ' ');
@@ -20920,8 +21230,8 @@ function wFunctions(s) {
 const W_WORDY = /\b(?:plus|minus|times|multiplied|divided|over|squared|cubed|power|root|equals?|percent|per\s*cent|less\s+than|greater\s+than|at\s+least|at\s+most|twice|half|negative|sum\s+of|product\s+of|difference)\b/i;
 function convertWordLine(line) {
   const s0 = line.trim().replace(/\s+/g, ' ');
-  if (s0.length < 4 || s0.length > 400 || !/[A-Za-z]{3}|\b(?:of|on|in)\b/.test(s0)) return line;
-  const s = s0.replace(/\s*[?!]+$/, '').replace(/\s*\.$/, '');
+  if (s0.length < 4 || s0.length > 400 || !/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|\u2026|[\u222a\u2229\u2282\u2286\u00d7\u0394]/.test(s0)) return line;
+  const s = s0.replace(/\s*[?!]+$/, '').replace(/\s*(?<!\.)\.$/, '');
   const lead = s.replace(W_LEAD, '');
   WORDS_ASK.v = null;
   let hit = null;
@@ -20940,7 +21250,7 @@ function convertWordLine(line) {
   return line;
 }
 function convertWords(raw) {
-  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b/.test(raw)) return raw;
+  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|\u2026|[\u222a\u2229\u2282\u2286\u00d7\u0394]/.test(raw)) return raw;
   return raw.split('\n').map(convertWordLine).join('\n');
 }
 
@@ -24101,6 +24411,593 @@ function trExpandS(S) {
   };
   return go(S);
 }
+// ======================================================================
+// 37. Textbook calculus and probability helpers
+//     linear approximation, the mean value / Rolle / intermediate value theorems, sums of patterned series
+//     (1 + 2 + 3 + ... + 100, 1 + 1/2 + 1/4 + ...), means and variances of the standard distributions, conditional probability
+// ======================================================================
+const tbNum = (S) => numS(S, {});
+function tbFinite(S, x, t) {
+  const v = evalAt(S, x, t);
+  return isFinite(v) && Math.abs(v) < 1e12;
+}
+/** f and f' finite at 400 sample points strictly inside (a, b) and f finite at both ends. */
+function tbSmooth(S, d, x, a, b) {
+  if (!tbFinite(S, x, a) || !tbFinite(S, x, b)) return false;
+  for (let i = 1; i < 400; i++) {
+    const t = a + ((b - a) * i) / 400;
+    if (!tbFinite(S, x, t) || !tbFinite(d, x, t)) return false;
+  }
+  return true;
+}
+/** (f, [x], a, b, [k]): the function, its variable and the numbers after it. */
+function tbArgs(n, lo, hi, usage) {
+  needArgs(n, lo, hi, usage);
+  const S = fromAst(n.args[0]);
+  const hasVar = n.args[1].t === 'var';
+  const v = hasVar ? varOfArg(n.args[1]) : singleVarOf(S);
+  const nodes = n.args.slice(hasVar ? 2 : 1);
+  const rest = nodes.map(geoVal);
+  return { S, v, rest, nodes };
+}
+const tbVal = (S) => symText(simp(S));
+
+defCmd('linapprox linearapprox linearization', (n) => {
+  const { S, v, rest, nodes } = tbArgs(n, 2, 4, 'f, the point a (and optionally the x to estimate)');
+  if (rest.length < 1 || rest.length > 2) throw new MathError('linapprox(f, x, a) or linapprox(f, x, a, x0)');
+  const aS = rest[0];
+  const d = diffS(S, v);
+  const fa = simp(subsS(S, v, aS));
+  const da = simp(subsS(d, v, aS));
+  if (!isFinite(tbNum(fa)) || !isFinite(tbNum(da))) throw new MathError('the function or its derivative is not defined at that point');
+  const out = newOut();
+  const L = expandS(simp(sAdd([fa, sMul([da, sSub(sV(v), aS)])])));
+  out.answer.push('L(' + v + ') = ' + fmtS(L));
+  out.work.push('L(' + v + ') = f(a) + f\'(a)(' + v + ' \u2212 a) with a = ' + fmtS(aS) + ',  f(a) = ' + tbVal(fa) + ',  f\'(a) = ' + tbVal(da));
+  if (rest[1]) {
+    const x0 = rest[1];
+    const x0t = showRaw(nodes[1]);
+    const est = simp(subsS(L, v, x0));
+    const exact = evalAt(S, v, tbNum(x0));
+    out.answer.push('estimate: f(' + x0t + ') \u2248 L(' + x0t + ') = ' + tbVal(est));
+    if (isFinite(exact)) {
+      const err = Math.abs(exact - tbNum(est));
+      out.answer.push('actual f(' + x0t + ') = ' + fmtNum(exact) + ',  error \u2248 ' + fmtNum(err));
+    }
+  }
+  out.value = { S: L };
+  return out;
+});
+
+/** c in (a, b) with f'(c) = target (target is S). */
+function tbSolveDerivative(d, v, target, a, b) {
+  const roots = realRootsOf(simp(sSub(d, target)), v, a, b).filter((r) => r.val > a + 1e-9 && r.val < b - 1e-9);
+  return roots;
+}
+function tbTheorem(n, rolle) {
+  const { S, v, rest } = tbArgs(n, 3, 4, 'f, the variable and the interval a, b');
+  if (rest.length !== 2) throw new MathError(n.fn + '(f, x, a, b)');
+  const [aS, bS] = rest;
+  const a = tbNum(aS);
+  const b = tbNum(bS);
+  if (!(a < b)) throw new MathError('the interval needs a < b');
+  const d = diffS(S, v);
+  const out = newOut();
+  if (!tbSmooth(S, d, v, a, b)) {
+    out.answer.push('the theorem does not apply: f is not continuous on [' + fmtS(aS) + ', ' + fmtS(bS) + '] or not differentiable on (' + fmtS(aS) + ', ' + fmtS(bS) + ')');
+    return out;
+  }
+  const fa = simp(subsS(S, v, aS));
+  const fb = simp(subsS(S, v, bS));
+  const rate = simp(sDiv(sSub(fb, fa), sSub(bS, aS)));
+  out.work.push('f is continuous on [' + fmtS(aS) + ', ' + fmtS(bS) + '] and differentiable on (' + fmtS(aS) + ', ' + fmtS(bS) + ')');
+  out.work.push('f(' + fmtS(aS) + ') = ' + tbVal(fa) + ',  f(' + fmtS(bS) + ') = ' + tbVal(fb));
+  if (rolle) {
+    if (Math.abs(tbNum(fa) - tbNum(fb)) > 1e-12 * (1 + Math.abs(tbNum(fa)))) {
+      out.answer.push("Rolle's theorem does not apply: f(a) \u2260 f(b)");
+      out.notes.push('The mean value theorem still holds: f\'(c) = ' + tbVal(rate) + ' for the values of c below.');
+    } else out.answer.push("Rolle's theorem applies: f(a) = f(b) = " + tbVal(fa));
+  } else out.answer.push('average rate of change (f(b) \u2212 f(a))/(b \u2212 a) = ' + tbVal(rate));
+  const cs = tbSolveDerivative(d, v, rate, a, b);
+  if (!cs.length) out.answer.push('no c in (' + fmtS(aS) + ', ' + fmtS(bS) + ') with f\'(c) = ' + tbVal(rate) + ' was found');
+  cs.forEach((c) => out.answer.push('c = ' + bpText(c) + (c.S && c.S.k !== 'n' ? ' (\u2248 ' + fmtNum(c.val) + ')' : '') + ',  f\'(c) = ' + tbVal(rate)));
+  out.work.push("f'(" + v + ') = ' + fmtS(simp(d)) + ',  solved f\'(c) = ' + tbVal(rate));
+  return out;
+}
+defCmd('mvt meanvaluethm', (n) => tbTheorem(n, false));
+defCmd('rolle', (n) => tbTheorem(n, true));
+
+defCmd('ivt intermediatevalue', (n) => {
+  const { S, v, rest } = tbArgs(n, 3, 5, 'f, the variable, the interval a, b (and optionally the value k)');
+  if (rest.length < 2 || rest.length > 3) throw new MathError('ivt(f, x, a, b) or ivt(f, x, a, b, k)');
+  const [aS, bS] = rest;
+  const k = rest[2] || S0;
+  const a = tbNum(aS);
+  const b = tbNum(bS);
+  if (!(a < b)) throw new MathError('the interval needs a < b');
+  const out = newOut();
+  const d = diffS(S, v);
+  if (!tbSmooth(S, d, v, a, b)) {
+    out.answer.push('the theorem does not apply: f is not continuous on [' + fmtS(aS) + ', ' + fmtS(bS) + ']');
+    return out;
+  }
+  const fa = simp(subsS(S, v, aS));
+  const fb = simp(subsS(S, v, bS));
+  const lo = Math.min(tbNum(fa), tbNum(fb));
+  const hi = Math.max(tbNum(fa), tbNum(fb));
+  const kv = tbNum(k);
+  out.work.push('f is continuous on [' + fmtS(aS) + ', ' + fmtS(bS) + ']');
+  out.work.push('f(' + fmtS(aS) + ') = ' + tbVal(fa) + ',  f(' + fmtS(bS) + ') = ' + tbVal(fb));
+  if (kv < lo - 1e-12 || kv > hi + 1e-12) {
+    out.answer.push(fmtS(k) + ' is not between f(a) and f(b), so the theorem does not guarantee a solution of f(x) = ' + fmtS(k) + ' in the interval');
+    return out;
+  }
+  out.answer.push(fmtS(k) + ' lies between f(a) and f(b), so there is at least one c in [' + fmtS(aS) + ', ' + fmtS(bS) + '] with f(c) = ' + fmtS(k));
+  const roots = realRootsOf(simp(sSub(S, k)), v, a, b).filter((r) => r.val >= a - 1e-9 && r.val <= b + 1e-9);
+  roots.forEach((c) => out.answer.push('c = ' + bpText(c) + (c.S && c.S.k !== 'n' ? ' (\u2248 ' + fmtNum(c.val) + ')' : '')));
+  return out;
+});
+
+const TB_TERMS = ['1/n', '1/n^2', '1/n^3', '1/n^4', '1/(n*(n+1))', '1/(n*(n+2))', '1/(2*n-1)', '1/(2*n-1)^2', '1/(2*n)', '1/(2*n+1)', '(-1)^(n+1)/n', '(-1)^n/n', '(-1)^(n+1)/n^2', '(-1)^(n+1)/(2*n-1)', '(-1)^n/(2*n+1)',
+  '1/n!', '(-1)^n/n!', 'n/n!', 'n/2^n', 'n^2/2^n', 'n/3^n', 'n^2', 'n^3', 'n*(n+1)', '2^n/n!'];
+/** { text, start }: a general term (in n) that reproduces the listed terms exactly, else null. */
+function tbGuessSeries(t) {
+  for (const text of TB_TERMS) {
+    let S;
+    try {
+      S = fromAst(parseExpression(text));
+    } catch (e) {
+      continue;
+    }
+    for (const start of [1, 0]) {
+      let ok = true;
+      for (let i = 0; i < t.length && ok; i++) {
+        try {
+          const v = numS(S, { n: start + i });
+          ok = isFinite(v) && Math.abs(v - t[i].toNumber()) <= 1e-12 * Math.max(1, Math.abs(v));
+        } catch (e) {
+          ok = false;
+        }
+      }
+      if (ok) return { text, start };
+    }
+  }
+  return null;
+}
+
+// ---- sums of patterned series -------------------------------------------------------------------------------------------------
+defCmd('seriessum patternsum', (n) => {
+  needArgs(n, 1, 2, 'the first terms as a list [a, b, c, ...] and optionally the last term (or oo)');
+  const list = n.args[0].t === 'list' ? n.args[0].items : null;
+  if (!list || list.length < 2) throw new MathError('give at least the first two terms, e.g. seriessum([1, 2, 3], 100)');
+  const t = list.map(constQ);
+  const out = newOut();
+  const d = t[1].sub(t[0]);
+  const isArith = t.every((x, i) => i === 0 || x.sub(t[i - 1]).eq(d));
+  const isGeom = !t[0].isZero() && t.every((x, i) => i === 0 || x.div(t[0]).eq(t[1].div(t[0]).pow(i)));
+  const lastNode = n.args[1];
+  const infinite = lastNode && lastNode.t === 'const' && lastNode.name === 'oo';
+  const last = lastNode && !infinite ? constQ(lastNode) : null;
+  if (!isArith && !isGeom) {
+    const g = tbGuessSeries(t);
+    if (!g) throw new MathError('the terms are neither an arithmetic sequence (constant difference) nor a geometric sequence (constant ratio), nor one of the common patterns (1/n, 1/n\u00b2, 1/n!, n/2\u207f, alternating ...); write the sum(...) yourself');
+    let upper = 'oo';
+    if (!infinite) {
+      if (last === null) upper = String(g.start + t.length - 1);
+      else {
+        const S = fromAst(parseExpression(g.text));
+        let idx = -1;
+        for (let i = g.start; i < g.start + 3000 && idx < 0; i++) {
+          const v = numS(S, { n: i });
+          if (isFinite(v) && Math.abs(v - last.toNumber()) <= 1e-12 * Math.max(1, Math.abs(v))) idx = i;
+        }
+        if (idx < 0) throw new MathError('the last term ' + last.toString() + ' is not in the sequence');
+        upper = String(idx);
+      }
+    }
+    const res = runCommandCall(parseExpression('sum(' + g.text + ', n, ' + g.start + ', ' + upper + ')'));
+    res.work.unshift('General term guessed from the listed terms: ' + g.text + ', n from ' + g.start);
+    return res;
+  }
+  if (isArith) {
+    out.work.push('Arithmetic sequence: first term a = ' + t[0].toString() + ', common difference d = ' + d.toString());
+    if (infinite) {
+      out.answer.push(d.isZero() && t[0].isZero() ? 'sum = 0' : 'the series diverges (the terms do not tend to 0)');
+      return out;
+    }
+    let cnt;
+    if (last === null) cnt = BigInt(t.length);
+    else {
+      if (d.isZero()) throw new MathError('the difference is 0, so the number of terms cannot be found from the last term');
+      const m = last.sub(t[0]).div(d).add(Q1);
+      if (!m.isInt() || m.sign() <= 0) throw new MathError('the last term ' + last.toString() + ' is not in the sequence');
+      cnt = m.n;
+    }
+    const an = t[0].add(d.mul(new Q(cnt - 1n)));
+    const sum = t[0].add(an).mul(new Q(cnt)).div(qInt(2));
+    out.work.push('n = ' + cnt + ' terms,  last term a\u2099 = a + (n \u2212 1)d = ' + an.toString());
+    out.work.push('S\u2099 = n(a + a\u2099)/2');
+    out.answer.push('sum = ' + qText(sum));
+    out.value = { q: sum };
+    return out;
+  }
+  const r = t[1].div(t[0]);
+  out.work.push('Geometric sequence: first term a = ' + t[0].toString() + ', common ratio r = ' + r.toString());
+  if (infinite) {
+    if (r.abs().cmp(Q1) >= 0) {
+      out.answer.push('the series diverges (|r| \u2265 1)');
+      return out;
+    }
+    const sum = t[0].div(Q1.sub(r));
+    out.work.push('S = a/(1 \u2212 r) because |r| < 1');
+    out.answer.push('sum = ' + qText(sum));
+    out.value = { q: sum };
+    return out;
+  }
+  let cnt = BigInt(t.length);
+  if (last !== null) {
+    let cur = t[0];
+    cnt = 1n;
+    while (cnt < 200n && !cur.eq(last)) {
+      cur = cur.mul(r);
+      cnt++;
+    }
+    if (!cur.eq(last)) throw new MathError('the last term ' + last.toString() + ' is not in the sequence');
+  }
+  const sum = r.eq(Q1) ? t[0].mul(new Q(cnt)) : t[0].mul(Q1.sub(r.pow(Number(cnt)))).div(Q1.sub(r));
+  out.work.push('n = ' + cnt + ' terms,  S\u2099 = a(1 \u2212 r\u207f)/(1 \u2212 r)');
+  out.answer.push('sum = ' + qText(sum));
+  out.value = { q: sum };
+  return out;
+});
+
+// ---- means and variances of the standard distributions -----------------------------------------------------------------
+function tbMoments(out, label, mean, variance) {
+  out.answer.push(label + ': mean = ' + qText(mean) + ',  variance = ' + qText(variance) + ',  standard deviation = ' + sqrtQText(variance));
+  out.value = { q: mean };
+  return out;
+}
+defCmd('diestats fairdie', (n) => {
+  needArgs(n, 0, 1, 'the number of faces (6 if omitted)');
+  const s = n.args[0] ? constQ(n.args[0]) : qInt(6);
+  if (!s.isInt() || s.cmp(qInt(2)) < 0) throw new MathError('a die has a whole number of faces, at least 2');
+  const out = newOut();
+  out.work.push('Uniform on 1, 2, ..., ' + s + ':  E[X] = (n + 1)/2,  Var(X) = (n\u00b2 \u2212 1)/12');
+  return tbMoments(out, 'fair ' + s + '-sided die', s.add(Q1).div(qInt(2)), s.mul(s).sub(Q1).div(qInt(12)));
+});
+defCmd('binomstats binomialstats', (n) => {
+  needArgs(n, 2, 2, 'n and p');
+  const N = constQ(n.args[0]);
+  const p = constQ(n.args[1]);
+  if (!N.isInt() || N.sign() < 0 || p.sign() < 0 || p.cmp(Q1) > 0) throw new MathError('n must be a whole number and p a probability between 0 and 1');
+  const out = newOut();
+  out.work.push('Binomial: E[X] = np,  Var(X) = np(1 \u2212 p)');
+  return tbMoments(out, 'binomial(n = ' + N + ', p = ' + p + ')', N.mul(p), N.mul(p).mul(Q1.sub(p)));
+});
+defCmd('poissonstats', (n) => {
+  needArgs(n, 1, 1, 'the rate \u03bb');
+  const l = constQ(n.args[0]);
+  if (l.sign() <= 0) throw new MathError('\u03bb must be positive');
+  const out = newOut();
+  out.work.push('Poisson: E[X] = Var(X) = \u03bb');
+  return tbMoments(out, 'Poisson(\u03bb = ' + l + ')', l, l);
+});
+defCmd('geomstats geometricstats', (n) => {
+  needArgs(n, 1, 1, 'the success probability p');
+  const p = constQ(n.args[0]);
+  if (p.sign() <= 0 || p.cmp(Q1) > 0) throw new MathError('p must be between 0 and 1 (not 0)');
+  const out = newOut();
+  out.work.push('Geometric (number of trials up to and including the first success): E[X] = 1/p,  Var(X) = (1 \u2212 p)/p\u00b2');
+  return tbMoments(out, 'geometric(p = ' + p + ')', p.inv(), Q1.sub(p).div(p.mul(p)));
+});
+
+// ---- conditional probability ------------------------------------------------------------------------------------------------
+defCmd('condprob conditional', (n) => {
+  needArgs(n, 2, 2, 'P(A and B) and P(B)');
+  const pab = constQ(n.args[0]);
+  const pb = constQ(n.args[1]);
+  if (pb.sign() <= 0) throw new MathError('P(B) must be positive');
+  if (pab.sign() < 0 || pab.cmp(pb) > 0) throw new MathError('P(A and B) cannot be negative or larger than P(B)');
+  const out = newOut();
+  out.work.push('P(A|B) = P(A and B)/P(B)');
+  return qvOut(out, pab.div(pb));
+});
+// ======================================================================
+// 38. More algebra: quadratics (discriminant, completing the square, vertex), logarithm laws, more set commands,
+//     a term of a binomial expansion
+// ======================================================================
+
+// ---- quadratics ------------------------------------------------------------------------------------------------
+function quadParts(n, usage) {
+  needArgs(n, 1, 2, usage);
+  const S = fromAst(n.args[0]);
+  const v = n.args[1] ? varOfArg(n.args[1]) : singleVarOf(S);
+  const co = polyCoeffsS(expandS(S), v);
+  if (!co || co.length !== 3 || co[2].k === 'n' && co[2].q.isZero()) throw new MathError('a quadratic expression in ' + v + ' is needed, e.g. x^2 - 4x + 7');
+  return { S, v, a: co[2], b: co[1], c: co[0] };
+}
+const q2 = (S) => simp(expandS(S));
+defCmd('discriminant disc', (n) => {
+  const { v, a, b, c } = quadParts(n, 'a quadratic expression');
+  const out = newOut();
+  const D = q2(sSub(sPow(b, sI(2)), sMul([sI(4), a, c])));
+  out.answer.push(varsOfS(D).size ? 'D = ' + fmtS(D) : 'D = b\u00b2 \u2212 4ac = ' + symText(D));
+  if (D.k === 'n' || !varsOfS(D).size) {
+    const d = numS(D, {});
+    out.answer.push(d > 0 ? 'D > 0: two distinct real roots' : d === 0 ? 'D = 0: one repeated real root (the parabola touches the ' + v + '-axis)' : 'D < 0: no real roots, two complex conjugate roots');
+  }
+  out.work.push('a = ' + fmtS(a) + ',  b = ' + fmtS(b) + ',  c = ' + fmtS(c));
+  out.value = { S: D };
+  return out;
+});
+defCmd('completesquare completethesquare', (n) => {
+  const { v, a, b, c } = quadParts(n, 'a quadratic expression');
+  const out = newOut();
+  const h = q2(sDiv(sNeg(b), sMul([sI(2), a])));
+  const k = q2(sSub(c, sDiv(sPow(b, sI(2)), sMul([sI(4), a]))));
+  const X = sV(v);
+  const form = sAdd([sMul([a, sPow(sSub(X, h), sI(2))]), k]);
+  out.answer.push(fmtS(q2(sAdd([sMul([a, sPow(X, sI(2))]), sMul([b, X]), c]))) + ' = ' + fmtS(form));
+  out.answer.push('vertex (h, k) = (' + symText(h) + ', ' + symText(k) + ')');
+  out.work.push('a(' + v + ' \u2212 h)\u00b2 + k with h = \u2212b/(2a) and k = c \u2212 b\u00b2/(4a)');
+  if (!varsOfS(sAdd([a, b, c])).size) {
+    const kk = numS(k, {});
+    const aa = numS(a, {});
+    // roots of a(x - h)^2 + k = 0:  x = h \u00b1 sqrt(-k/a)
+    const r = q2(sDiv(sNeg(k), a));
+    if (numS(r, {}) >= 0) out.work.push('Setting it to 0: ' + v + ' = ' + fmtS(h) + ' \u00b1 ' + fmtS(simp(sSqrt(r))));
+    else out.work.push('Setting it to 0 gives ' + v + ' = ' + fmtS(h) + ' \u00b1 ' + fmtS(simp(sSqrt(sNeg(r)))) + ' i (no real roots)');
+    void kk; void aa;
+  }
+  return out;
+});
+defCmd('vertex quadvertex', (n) => {
+  const { v, a, b, c } = quadParts(n, 'a quadratic expression');
+  const out = newOut();
+  const h = q2(sDiv(sNeg(b), sMul([sI(2), a])));
+  const k = q2(sSub(c, sDiv(sPow(b, sI(2)), sMul([sI(4), a]))));
+  out.answer.push('vertex = (' + symText(h) + ', ' + symText(k) + ')');
+  out.answer.push('axis of symmetry: ' + v + ' = ' + fmtS(h));
+  if (!varsOfS(a).size) out.answer.push(numS(a, {}) > 0 ? 'opens upward: minimum value ' + symText(k) + ' at ' + v + ' = ' + fmtS(h) : 'opens downward: maximum value ' + symText(k) + ' at ' + v + ' = ' + fmtS(h));
+  out.answer.push('y-intercept: (0, ' + fmtS(c) + ')');
+  out.work.push('h = \u2212b/(2a), k = f(h)');
+  return out;
+});
+
+// ---- logarithm laws -----------------------------------------------------------------------------------------------
+function mapAst(n, f) {
+  switch (n.t) {
+    case 'neg': case 'pct': case 'fact': return { ...n, a: f(n.a) };
+    case 'bin': return { ...n, a: f(n.a), b: f(n.b) };
+    case 'call': return { ...n, args: n.args.map(f) };
+    case 'list': return { ...n, items: n.items.map(f) };
+    case 'named': return { ...n, a: f(n.a) };
+    default: return n;
+  }
+}
+/** log(u), log10, lg, log2, log(u, b) become the S functions logbB (B = the base); ln stays ln. */
+function rewriteLogs(n) {
+  n = mapAst(n, rewriteLogs);
+  if (n.t !== 'call' || n.cmd) return n;
+  let base = null;
+  let args = n.args;
+  if ((n.fn === 'log' || n.fn === 'log10' || n.fn === 'lg') && args.length === 1) base = 10;
+  else if (n.fn === 'log2') base = 2;
+  else if (n.fn === 'log' && args.length === 2) {
+    try {
+      const b = constQ(args[1]);
+      if (b.isInt() && b.n >= 2n && b.n <= 99n) {
+        base = Number(b.n);
+        args = [args[0]];
+      }
+    } catch (e) {
+      return n;
+    }
+  }
+  if (base === null) return n;
+  const name = 'logb' + base;
+  AST_FN[name] = name;
+  FN_LABEL[name] = base === 10 ? 'log' : 'log' + String(base).split('').map((d) => '\u2080\u2081\u2082\u2083\u2084\u2085\u2086\u2087\u2088\u2089'[+d]).join('');
+  return { ...n, fn: name, args };
+}
+const isLogS = (t) => t.k === 'f' && t.a.length === 1 && (t.fn === 'ln' || /^logb\d+$/.test(t.fn));
+const logBase = (fn) => (fn === 'ln' ? null : Number(fn.slice(4)));
+function logOfNumber(q, fn) {
+  const base = logBase(fn);
+  if (base !== null && q.isInt() && q.sign() > 0) {
+    let e = 0;
+    let m = q.n;
+    const B = BigInt(base);
+    while (m > 1n && m % B === 0n) {
+      m /= B;
+      e++;
+    }
+    if (m === 1n) return sI(e);
+  }
+  return sFn(fn, [sN(q)]);
+}
+function logExpandArg(u, fn) {
+  u = simp(u);
+  if (u.k === '*') return sAdd(u.a.map((f) => logExpandArg(f, fn)));
+  if (u.k === '^' && !isConstE(u.b)) return sMul([u.e, logExpandArg(u.b, fn)]);
+  if (u.k === 'n') {
+    if (u.q.sign() <= 0) return sFn(fn, [u]);
+    if (u.q.isInt()) return logOfNumber(u.q, fn);
+    return sSub(logOfNumber(new Q(u.q.n), fn), logOfNumber(new Q(u.q.d), fn));
+  }
+  return sFn(fn, [u]);
+}
+function logExpandS(S) {
+  const go = (t) => (isLogS(t) ? logExpandArg(go(t.a[0]), t.fn) : mapS(t, go));
+  return go(S);
+}
+function hasLogS(S) {
+  if (isLogS(S)) return true;
+  if (S.k === '+' || S.k === '*' || S.k === 'f') return S.a.some(hasLogS);
+  return S.k === '^' ? hasLogS(S.b) || hasLogS(S.e) : false;
+}
+/** Sum of c * log(u) terms with the same base -> one log of a product / quotient of powers. */
+function logCondenseS(S) {
+  const groups = new Map();
+  const rest = [];
+  for (const t of termsOf(expandS(S))) {
+    const fs = t.k === '*' ? t.a : [t];
+    const logs = fs.filter(isLogS);
+    if (logs.length !== 1) {
+      rest.push(t);
+      continue;
+    }
+    const lg = logs[0];
+    const coef = sMul(fs.filter((f) => f !== lg));
+    if (!groups.has(lg.fn)) groups.set(lg.fn, []);
+    groups.get(lg.fn).push(sPow(lg.a[0], coef));
+  }
+  const out = rest.slice();
+  for (const [fn, factors] of groups) out.push(sFn(fn, [simp(sMul(factors))]));
+  return sAdd(out);
+}
+function logCmd(condense) {
+  return (n) => {
+    needArgs(n, 1, 1, 'one expression with logarithms');
+    const S = fromAst(rewriteLogs(n.args[0]));
+    const out = newOut();
+    if (!hasLogS(S)) throw new MathError('there is no logarithm (log, ln) in this expression');
+    const T = condense ? logCondenseS(S) : simp(expandS(logExpandS(S)));
+    if (!sameFunctionPositive(S, T)) throw new MathError('I could not ' + (condense ? 'condense' : 'expand') + ' this logarithmic expression');
+    out.answer.push(fmtS(T));
+    out.work.push(condense ? 'Used c\u00b7log(u) = log(u\u1d9c), log(u) + log(v) = log(uv) and log(u) \u2212 log(v) = log(u/v)' : 'Used log(uv) = log(u) + log(v), log(u/v) = log(u) \u2212 log(v) and log(u\u1d9c) = c\u00b7log(u)');
+    out.notes.push('The variables are taken to be positive.');
+    return out;
+  };
+}
+/** Same function at random positive points (logarithms need them). */
+function sameFunctionPositive(a, b) {
+  const vs = Array.from(new Set([...varsOfS(a), ...varsOfS(b)]));
+  let good = 0;
+  let seed = 4242;
+  const rnd = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  for (let t = 0; t < 40 && good < 8; t++) {
+    const env = {};
+    vs.forEach((v) => { env[v] = 0.3 + rnd() * 6; });
+    let x;
+    let y;
+    try {
+      x = numS(a, env);
+      y = numS(b, env);
+    } catch (e) {
+      continue;
+    }
+    if (!isFinite(x) || !isFinite(y)) continue;
+    if (Math.abs(x - y) > 1e-9 * (1 + Math.abs(x))) return false;
+    good++;
+  }
+  return good > 0;
+}
+defCmd('logexpand expandlog', logCmd(false));
+defCmd('logcondense condenselog', logCmd(true));
+
+// ---- sets ------------------------------------------------------------------------------------------------------------------
+function setItemsOf(node) {
+  if (node.t !== 'list') throw new MathError('give each set as a list in brackets, e.g. [1, 2, 3]');
+  const seen = new Set();
+  const items = [];
+  for (const it of node.items) {
+    const S = simp(fromAst(it));
+    const k = key(S);
+    if (!seen.has(k)) {
+      seen.add(k);
+      items.push({ k, S });
+    }
+  }
+  return items;
+}
+const numericSetItems = (items) => items.every((i) => !varsOfS(i.S).size && isFinite(numS(i.S, {})));
+function sortSetItems(items) {
+  return numericSetItems(items) ? items.slice().sort((x, y) => numS(x.S, {}) - numS(y.S, {})) : items;
+}
+const setShow = (items) => (items.length ? '{' + items.map((i) => fmtS(i.S)).join(', ') + '}' : '\u2205 (the empty set)');
+function setArgs(n, lo, hi, usage) {
+  needArgs(n, lo, hi, usage);
+  return n.args.map(setItemsOf);
+}
+function setAnswerOut(out, items, label) {
+  const s = sortSetItems(items);
+  out.answer.push((label ? label + ' = ' : '') + setShow(s) + '   (' + s.length + ' element' + (s.length === 1 ? '' : 's') + ')');
+  out.value = { q: qInt(s.length) };
+  return out;
+}
+defCmd('setcomplement', (n) => {
+  const [A, U] = setArgs(n, 2, 2, 'the set and the universal set');
+  if (!A.every((i) => U.some((j) => j.k === i.k))) throw new MathError('the set is not inside the universal set');
+  return setAnswerOut(newOut(), U.filter((i) => !A.some((j) => j.k === i.k)), "A'");
+});
+defCmd('cardinality setsize', (n) => {
+  const [A] = setArgs(n, 1, 1, 'one set');
+  const out = newOut();
+  out.answer.push('|A| = ' + A.length);
+  out.value = { q: qInt(A.length) };
+  return out;
+});
+defCmd('issubset subsetof', (n) => {
+  const [A, B] = setArgs(n, 2, 2, 'two sets');
+  const sub = A.every((i) => B.some((j) => j.k === i.k));
+  const out = newOut();
+  out.answer.push(sub ? 'A \u2286 B: every element of A is in B' + (A.length < B.length ? ' (a proper subset)' : ' (the sets are equal)') : 'A is not a subset of B: ' + setShow(A.filter((i) => !B.some((j) => j.k === i.k))) + ' not in B');
+  out.value = { q: sub ? Q1 : Q0 };
+  return out;
+});
+defCmd('powerset subsets', (n) => {
+  needArgs(n, 1, 1, 'a set or its size');
+  const out = newOut();
+  if (n.args[0].t !== 'list') {
+    const sz = intArg(n.args[0]);
+    if (sz < 0n || sz > 5000n) throw new MathError('the size must be between 0 and 5000');
+    out.work.push('A set with ' + sz + ' elements has 2^' + sz + ' subsets');
+    return intOut(out, 2n ** sz);
+  }
+  const [A] = setArgs(n, 1, 1, 'one set');
+  const s = sortSetItems(A);
+  out.answer.push('number of subsets = 2^' + s.length + ' = ' + (2n ** BigInt(s.length)).toString() + (s.length ? '  (' + (2n ** BigInt(s.length) - 1n) + ' non-empty, ' + (2n ** BigInt(s.length) - 2n) + ' proper non-empty)' : ''));
+  if (s.length <= 5) {
+    const subsets = [];
+    for (let m = 0; m < 1 << s.length; m++) subsets.push(s.filter((_, i) => m & (1 << i)));
+    subsets.sort((x, y) => x.length - y.length);
+    out.answer.push(subsets.map((x) => (x.length ? '{' + x.map((i) => fmtS(i.S)).join(', ') + '}' : '\u2205')).join(', '));
+  }
+  out.value = { q: qInt(2).pow(s.length) };
+  return out;
+});
+defCmd('cartesian cartesianproduct', (n) => {
+  const [A, B] = setArgs(n, 2, 2, 'two sets');
+  const out = newOut();
+  const a = sortSetItems(A);
+  const b = sortSetItems(B);
+  out.answer.push('|A \u00d7 B| = ' + a.length * b.length);
+  if (a.length * b.length <= 40) out.answer.push('{' + a.flatMap((x) => b.map((y) => '(' + fmtS(x.S) + ', ' + fmtS(y.S) + ')')).join(', ') + '}');
+  out.value = { q: qInt(a.length * b.length) };
+  return out;
+});
+
+// ---- a term of a binomial expansion ----------------------------------------------------------------------------------------
+defCmd('binomterm', (n) => {
+  needArgs(n, 4, 4, 'a, b, the exponent n and the term number k (counting from 1)');
+  const A = fromAst(n.args[0]);
+  const B = fromAst(n.args[1]);
+  const N = Number(intArg(n.args[2]));
+  const K = Number(intArg(n.args[3]));
+  if (N < 0 || N > 200 || K < 1 || K > N + 1) throw new MathError('the term number must be between 1 and n + 1');
+  let c = 1n;
+  for (let i = 0; i < K - 1; i++) c = (c * BigInt(N - i)) / BigInt(i + 1);
+  const T = simp(expandS(sMul([sN(new Q(c)), sPow(A, sI(N - K + 1)), sPow(B, sI(K - 1))])));
+  const out = newOut();
+  out.answer.push('term ' + K + ' = ' + fmtS(T));
+  out.work.push('T(k+1) = C(n, k) a\u207f\u207b\u1d4f b\u1d4f with n = ' + N + ', k = ' + (K - 1) + ': C(' + N + ', ' + (K - 1) + ') = ' + c);
+  out.value = { S: T };
+  return out;
+});
 
 // ======================================================================
 // 90. Routing of command statements (integrate(...), det(...), matrices, ODEs ...)

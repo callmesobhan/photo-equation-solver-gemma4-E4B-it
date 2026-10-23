@@ -333,6 +333,21 @@ function telescopeTerms(body, k) {
 }
 function seriesNumeric(body, k, a) {
   const f = (i) => numS(body, { [k]: i });
+  // terms that die out at once (factorials, powers): add them up and stop when they have vanished
+  {
+    let s0 = 0;
+    let small = 0;
+    for (let i = a; i < a + 400; i++) {
+      const t = f(i);
+      if (!isFinite(t)) {
+        if (small >= 3) return { value: s0 };
+        break;
+      }
+      small = Math.abs(t) <= 1e-17 * Math.max(1, Math.abs(s0)) ? small + 1 : 0;
+      s0 += t;
+      if (small >= 12) return { value: s0 };
+    }
+  }
   // convergence: tail blocks must shrink
   const blk = (from, len) => { let s = 0; for (let i = from; i < from + len; i++) s += Math.abs(f(i)); return s; };
   const b1 = blk(a + 1000, 1000);

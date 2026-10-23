@@ -726,7 +726,7 @@ defCmd('freefall', (n) => {
 });
 
 // ---- text patterns for units and chemistry (run before the text is lowercased) -------------------------------------------
-const NUMBER_RE = '(-?\\d[\\d,]*(?:\\.\\d+)?(?:e[+-]?\\d+)?(?:\\s*\\/\\s*\\d+)?)';
+const NUMBER_RE = '(-?(?:\\d[\\d,]*(?:\\.\\d+)?(?:e[+-]?\\d+)?(?:\\s*\\*?\\s*(?:pi|π))?|(?:pi|π))(?:\\s*\\/\\s*\\d+)?)';
 const UNIT_RE = '([A-Za-z°µμ][A-Za-z°µμ0-9²³^*\\/·.]*)';
 function isUnitWord(u) {
   const t = u.replace(/^°/, '');
@@ -761,8 +761,18 @@ function trimFormula(f) {
   }
   return f;
 }
+/** "12:18" and "2:3:5" are ratios; in an equation "3:4 = x:12" the colons are divisions. */
+function convertRatios(s) {
+  if (!/\d\s*:\s*[\dA-Za-z]/.test(s)) return s;
+  const NUM = '\\d+(?:\\.\\d+)?(?:\\/\\d+)?';
+  const m = new RegExp('^\\s*(?:(?:simplify|reduce)\\s+)?(?:the\\s+)?(?:ratio\\s+)?(' + NUM + '(?:\\s*:\\s*' + NUM + ')+)\\s*[.?]?\\s*$', 'i').exec(s);
+  if (m) return 'ratio(' + m[1].split(/\s*:\s*/).join(', ') + ')';
+  if (s.includes('=')) s = s.replace(/(?<![A-Za-z0-9_.)])(\d+(?:\.\d+)?|[A-Za-z])\s*:\s*(\d+(?:\.\d+)?|[A-Za-z])(?![A-Za-z0-9_(])/g, '($1)/($2)');
+  return s;
+}
 function convertApplied(s) {
-  if (!/[A-Za-z]/.test(s)) return s;
+  s = convertRatios(s);
+  if (!/[A-Za-z]/.test(s)) return /(?:\.{3}|…)|[∪∩⊂⊆×Δ]/.test(s) ? convertWords(s) : s;
   s = convertPlotWords(s);
   s = convertWords(s);
   // balancing chemical equations and formula commands

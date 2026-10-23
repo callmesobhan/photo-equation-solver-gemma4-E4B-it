@@ -538,16 +538,20 @@ defCmd('tobase', (n) => {
   });
 });
 defCmd('frombase', (n) => {
-  const [digits, b] = ints(n, 2, 2, 'the digits and the base');
-  if (b < 2n || b > 10n) throw new MathError('frombase reads digits 0-9, so the base must be from 2 to 10');
-  const s = digits.toString();
+  needArgs(n, 2, 2, 'the digits and the base');
+  const b = intArg(n.args[1]);
+  if (b < 2n || b > 36n) throw new MathError('the base must be from 2 to 36');
+  // digits as a number (1011) or, for letters, as a list of digit values ([15, 15] for FF)
+  const digs = n.args[0].t === 'list' ? n.args[0].items.map((it) => Number(intArg(it))) : intArg(n.args[0]).toString().split('').map(Number);
+  const sym = (d) => d.toString(36).toUpperCase();
   let v = 0n;
-  for (const c of s) {
-    if (BigInt(c) >= b) throw new MathError('the digit ' + c + ' is not allowed in base ' + b);
-    v = v * b + BigInt(c);
+  for (const d of digs) {
+    if (d < 0 || BigInt(d) >= b) throw new MathError('the digit ' + sym(d) + ' is not allowed in base ' + b);
+    v = v * b + BigInt(d);
   }
+  const s = digs.map(sym).join('');
   const out = newOut();
-  out.work.push(s + subscript(b) + ' = ' + s.split('').map((c, i) => c + '·' + b + (s.length - 1 - i > 0 ? toSup(String(s.length - 1 - i)) : '')).join(' + '));
+  out.work.push(s + subscript(b) + ' = ' + digs.map((d, i) => sym(d) + (d > 9 ? ' (= ' + d + ')' : '') + '·' + b + (digs.length - 1 - i > 0 ? toSup(String(digs.length - 1 - i)) : '')).join(' + '));
   return intOut(out, v);
 });
 
@@ -697,14 +701,17 @@ function setOf(node) {
 const setText = (m) => '{' + Array.from(m.keys()).sort((a, b) => (isNaN(+a) || isNaN(+b) ? (a < b ? -1 : 1) : +a - +b)).join(', ') + '}';
 function setCmd(names, label, combine) {
   defCmd(names, (n) => {
-    needArgs(n, 2, 2, 'two sets, e.g. ' + n.fn + '([1, 2, 3], [2, 3, 4])');
-    const A = setOf(n.args[0]);
-    const B = setOf(n.args[1]);
-    const R = new Map();
-    combine(A, B, R);
+    needArgs(n, 2, 8, 'two or more sets, e.g. ' + n.fn + '([1, 2, 3], [2, 3, 4])');
+    const sets = n.args.map(setOf);
+    let R = sets[0];
+    for (let i = 1; i < sets.length; i++) {
+      const next = new Map();
+      combine(R, sets[i], next);
+      R = next;
+    }
     const out = newOut();
     out.answer.push(setText(R) + '   (' + R.size + ' element' + (R.size === 1 ? '' : 's') + ')');
-    out.work.push('A = ' + setText(A) + ',  B = ' + setText(B) + ';  ' + label);
+    out.work.push(sets.map((S, i) => String.fromCharCode(65 + i) + ' = ' + setText(S)).join(',  ') + ';  ' + label);
     out.value = { q: qInt(R.size) };
     return out;
   });
@@ -713,14 +720,6 @@ setCmd('union', 'A ∪ B: everything in A or B', (A, B, R) => { A.forEach((v, k)
 setCmd('intersection intersect', 'A ∩ B: elements in both', (A, B, R) => { A.forEach((v, k) => B.has(k) && R.set(k, v)); });
 setCmd('setdiff setminus', 'A \\ B: elements of A that are not in B', (A, B, R) => { A.forEach((v, k) => !B.has(k) && R.set(k, v)); });
 setCmd('symdiff', 'A △ B: elements in exactly one of them', (A, B, R) => { A.forEach((v, k) => !B.has(k) && R.set(k, v)); B.forEach((v, k) => !A.has(k) && R.set(k, v)); });
-defCmd('powerset subsets', (n) => {
-  needArgs(n, 1, 1, 'a set or its size');
-  const out = newOut();
-  const sz = n.args[0].t === 'list' ? BigInt(setOf(n.args[0]).size) : intArg(n.args[0]);
-  if (sz < 0n || sz > 5000n) throw new MathError('the size must be between 0 and 5000');
-  out.work.push('A set with ' + sz + ' elements has 2^' + sz + ' subsets');
-  return intOut(out, 2n ** sz);
-});
 
 // ---- text patterns: mod, congruences, bases, choose -----------------------------------------------------------------
 /** Called by normalizeText: turns "17 mod 5", "3x ≡ 4 (mod 7)", "255 to binary", "5 choose 2" into commands. */
