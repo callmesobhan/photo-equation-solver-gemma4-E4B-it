@@ -75,6 +75,35 @@ for (const c of cases) {
     if (!m) { fail('format'); continue; }
     const e = Number(m[2].replace('⁻', '-').replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]/g, (d) => '⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(d)));
     if (!near(Number(m[1]) * Math.pow(10, e), c.val, 1e-9) || Math.abs(Number(m[1])) < 1 || Math.abs(Number(m[1])) >= 10) fail('mantissa/exponent ' + answer);
+  } else if (c.kind === 'perfect') {
+    const w = /is (a perfect|an abundant|a deficient) number/.exec(answer);
+    if (!w || !w[1].includes(c.word.slice(0, 5))) fail('classification ' + (w && w[1]) + ' vs ' + c.word);
+  } else if (c.kind === 'perfectsq') {
+    const root = Math.sqrt(c.n);
+    const yes = Number.isInteger(Math.sqrt(Number(/is (\d+) a/.exec(c.cmd)[1])));
+    if (/is a perfect square/.test(answer) !== yes) fail('perfect square verdict');
+  } else if (c.kind === 'numval') {
+    const v = num(answer.split('\n')[0].replace(/\s*\(.*$/, '').replace(/^(?:term|area|volume)[^=]*=\s*/, ''));
+    if (!near(v, c.val, 1e-6)) fail('value ' + v + ' vs ' + c.val);
+  } else if (c.kind === 'fracval') {
+    if (c.dec) {
+      const m = /^(-?\d+)(?:\.(\d*))?(?:\((\d+)\))?/.exec(answer.trim());
+      if (!m) { fail('decimal format'); continue; }
+      const v = Number(m[1] + '.' + (m[2] || '') + (m[3] ? m[3].repeat(12) : '') + (m[2] || m[3] ? '' : '0'));
+      if (!near(v, c.val, 1e-7)) fail('decimal ' + answer + ' vs ' + c.val);
+    } else {
+      const v = num(answer.split('\n')[0].replace(/\s*\(.*$/, ''));
+      if (!near(v, c.val, 1e-9)) fail('fraction ' + answer + ' vs ' + c.val);
+    }
+  } else if (c.kind === 'lineslope') {
+    const m = /^(.*)$/m.exec(answer);
+    const yy = /y = (.*)/.exec(answer);
+    const f = yy ? compile(yy[1]) : null;
+    if (!f) { fail('no y = ...'); continue; }
+    if (!near(f({ x: c.x0 }), c.y0, 1e-9) || !near(f({ x: c.x0 + 1 }) - f({ x: c.x0 }), c.m, 1e-9)) fail('line ' + yy[0]);
+  } else if (c.kind === 'system') {
+    const mx = /x = (-?[\d./]+)/.exec(answer); const my = /y = (-?[\d./]+)/.exec(answer);
+    if (!mx || !my || !near(num(mx[1]), c.x) || !near(num(my[1]), c.y)) fail('solution ' + answer);
   } else if (c.kind === 'ci') {
     const m = /\((-?[\d.]+), (-?[\d.]+)\)/.exec(answer);
     if (!m || !near(Number(m[1]), c.lo, 1e-5) || !near(Number(m[2]), c.hi, 1e-5)) fail('interval ' + (m && m[0]) + ' vs ' + c.lo.toFixed(4) + ', ' + c.hi.toFixed(4));

@@ -206,6 +206,20 @@ const TEMPLATES = [
   () => { const m = pick(['0.00045', '0.0302', '123456', '5200']); return [`sci(${m})`, [`write ${m} in scientific notation`, `express ${m} as scientific notation`]]; },
   () => { const m = R(30, 90); const s = R(3, 12); const n = pick([16, 25, 36, 49]); return [`tinterval(${m}, ${s}, ${n}, 0.95)`, [`confidence interval for the mean with sample mean ${m}, standard deviation ${s}, n = ${n} at 95%`]]; },
   () => { const n = R(4, 12); const k = R(2, 3); return [`1 - binomcdf(${n}, 0.3, ${k - 1})`.replace(/^.*$/, `binomcdf(${n}, 0.3, ${k}, ${n})`), [`probability of at least ${k} successes in ${n} trials with p = 0.3`]]; },
+  () => { const v = pick([6, 28, 12, 20, 496, 100]); return [`perfect(${v})`, [`is ${v} a perfect number`]]; },
+  () => { const a = R(2, 20); const b = R(10, 100); const m = R(3, 50); return [`mod(${a}^${b}, ${m})`, [`the remainder when ${a}^${b} is divided by ${m}`]]; },
+  () => { const v = (rng() * 100).toFixed(4); const k = R(1, 3); return [`round(${v}, ${k})`, [`round ${v} to ${k} decimal places`]]; },
+  () => { const a = R(1, 9); const b = R(2, 9); return [`todecimal(${a}/${b})`, [`convert ${a}/${b} to a decimal`, `write ${a}/${b} as a decimal`]]; },
+  () => { const d = pick(['0.75', '0.125', '0.6', '2.5', '0.04']); return [`tofraction(${d})`, [`express ${d} as a fraction`, `write ${d} as a fraction`]]; },
+  () => { const x0 = R(-5, 5); const y0 = R(-5, 5); const m = R(-4, 4); return [`line([${x0}, ${y0}], [${x0 + 1}, ${y0 + m}])`, [`equation of the line through (${x0},${y0}) with slope ${m}`]]; },
+  () => { const u = `[${R(-5, 5)}, ${R(-5, 5)}]`; const v = `[${R(-5, 5)}, ${R(-5, 5)}]`; return [`abs(det([${u}, ${v}]))`, [`the area of the parallelogram spanned by ${u} and ${v}`]]; },
+  () => { const n = R(3, 12); return [`sum(k^2, k, 1, ${n})`, [`sum of the squares of the first ${n} positive integers`]]; },
+  () => { const a = R(1, 9); const d = R(1, 6); const k = R(5, 30); return [`nthterm([${a}, ${a + d}, ${a + 2 * d}], ${k})`, [`the ${k}th term of ${a}, ${a + d}, ${a + 2 * d}, ...`]]; },
+  () => { const z = pick(['1.5', '-0.5', '2.1', '0.8']); return [`normalcdf(${z})`, [`P(Z < ${z})`]]; },
+  () => { const df = R(5, 40); return [`tcrit(95, ${df})`, [`t critical value for 95% confidence with ${df} degrees of freedom`]]; },
+  () => { const sd = R(5, 20); const n = pick([16, 25, 36, 49]); return [`${sd}/sqrt(${n})`, [`standard error of the mean with sd ${sd} and n = ${n}`]]; },
+  () => { const n = R(2, 6); return [`binomcdf(${n}, 1/6, 1, ${n})`, [`probability of at least one six in ${n} rolls of a die`]]; },
+  () => { const c = pick(['0.1', '0.01', '0.05', '0.001']); return [`ph(${c})`, [`pH of ${c} M HCl`]]; },
 ];
 
 let total = 0;

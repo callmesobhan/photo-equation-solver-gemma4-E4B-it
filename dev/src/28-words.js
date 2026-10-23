@@ -473,6 +473,33 @@ function wSetSentence(s) {
   return null;
 }
 
+/** The repeating part of a decimal written with dots ("0.1666...") or brackets ("0.1(6)"): repeatdec(...) text, or null. */
+function wRepeating(t) {
+  t = t.trim().replace(/\s+/g, '');
+  let m;
+  let ip;
+  let pre;
+  let rep;
+  if ((m = /^(\d*)\.(\d*)\((\d+)\)$/.exec(t))) [, ip, pre, rep] = m;
+  else if ((m = /^(\d*)\.(\d*)\\?overline\{?(\d+)\}?$/.exec(t))) [, ip, pre, rep] = m;
+  else if ((m = /^(\d*)\.(\d+)(?:\.\.\.|…)$/.exec(t))) {
+    const D = m[2];
+    ip = m[1];
+    for (let p = 1; p <= Math.floor(D.length / 2) && p <= 6; p++) {
+      const block = D.slice(-p);
+      if (D.endsWith(block + block)) {
+        let st = D.length - 2 * p;
+        while (st > 0 && D[st - 1] === D[st - 1 + p]) st--;
+        pre = D.slice(0, st);
+        rep = D.slice(st, st + p);
+        break;
+      }
+    }
+    if (rep === undefined) return null;
+  } else return null;
+  return 'repeatdec(' + (ip || '0') + ', ' + (pre ? String(BigInt(pre)) : '0') + ', ' + pre.length + ', ' + String(BigInt(rep)) + ', ' + rep.length + ')';
+}
+
 /** One line, whole-line patterns. Returns the replacement text or null. */
 function wRules(s) {
   let m;
@@ -600,6 +627,96 @@ function wRules(s) {
     const sd = new RegExp('(?:sample\\s+)?(?:standard\\s+deviation|std\\.?\\s*dev\\.?|sd|\\bs)\\s*(?:of|is|=|:)?\\s*' + num, 'i').exec(s);
     if (level && nn && mean && (sigma || sd)) return sigma ? wCall('zinterval', mean[1], sigma[1], nn, level) : wCall('tinterval', mean[1], sd[1], nn, level);
   }
+  // ---- numbers: perfect numbers / squares / cubes, divisors, remainders, rounding, fractions <-> decimals
+  if ((m = /^(?:is|are)\s+(\d+)\s+(?:a\s+|an\s+)?(?:perfect|abundant|deficient)(?:\s+number)?$/i.exec(s))) return wCall('perfect', m[1]);
+  if ((m = /^(?:is|are)\s+(\d+)\s+(?:a\s+)?perfect\s+square$/i.exec(s))) return wCall('perfectsq', m[1]);
+  if ((m = /^(?:is|are)\s+(-?\d+)\s+(?:a\s+)?perfect\s+cube$/i.exec(s))) return wCall('perfectcb', m[1]);
+  if ((m = /^how\s+many\s+(?:positive\s+)?(?:divisors|factors)\s+(?:does|do|has|have)\s+(\d+)(?:\s+have)?$/i.exec(s)) || (m = /^(?:the\s+)?(?:number|count)\s+of\s+(?:positive\s+)?(?:divisors|factors)\s+(?:of|in)\s+(\d+)$/i.exec(s))) return wCall('numdivisors', m[1]);
+  if ((m = /^(?:the\s+)?sum\s+of\s+(?:the\s+)?(?:positive\s+)?(?:divisors|factors)\s+(?:of|in)\s+(\d+)$/i.exec(s))) return wCall('sigma', m[1]);
+  if ((m = /^(?:the\s+)?remainder\s+(?:when|of|if)\s+(.+?)\s+(?:is\s+)?(?:divided\s+by|÷|\/)\s+(.+)$/i.exec(s)) && !/[a-z]/i.test(m[1].replace(/\b(?:pi)\b/gi, '') + m[2])) return wCall('mod', wE(m[1]), wE(m[2]));
+  if ((m = /^round(?:\s+off)?\s+(.+?)\s+to\s+(?:the\s+)?(?:nearest\s+)?(\d+)\s+(?:decimal\s+places?|decimals?|places?|dp|d\.p\.)$/i.exec(s)) || (m = /^(.+?)\s+rounded\s+to\s+(\d+)\s+(?:decimal\s+places?|decimals?|places?)$/i.exec(s))) return wCall('round', wE(m[1]), m[2]);
+  if ((m = /^round(?:\s+off)?\s+(.+?)\s+to\s+(\d+)\s+(?:significant\s+(?:figures?|digits?)|sig\.?\s*(?:figs?|digits?)|s\.?f\.?)$/i.exec(s)) || (m = /^(.+?)\s+(?:rounded\s+)?to\s+(\d+)\s+(?:significant\s+(?:figures?|digits?)|sig\.?\s*(?:figs?|digits?))$/i.exec(s))) return wCall('sigfigs', wE(m[1]), m[2]);
+  if ((m = /^round(?:\s+off)?\s+(.+?)\s+to\s+the\s+nearest\s+(whole\s+number|integer|unit|one|ones|tenth|tenths|hundredth|hundredths|thousandth|thousandths|ten|tens|hundred|hundreds|thousand|thousands)$/i.exec(s)) || (m = /^(.+?)\s+rounded\s+to\s+the\s+nearest\s+(whole\s+number|integer|unit|one|ones|tenth|hundredth|thousandth|ten|hundred|thousand)$/i.exec(s))) {
+    const w = m[2].toLowerCase().replace(/s$/, '');
+    const dec = { 'whole number': 0, integer: 0, unit: 0, one: 0, tenth: 1, hundredth: 2, thousandth: 3, ten: -1, hundred: -2, thousand: -3 }[w];
+    if (dec !== undefined) return wCall('round', wE(m[1]), String(dec));
+  }
+  if ((m = /^(?:express|write|convert|change|turn|give|put)?\s*(.+?)\s+(?:as|to|into|in)\s+(?:a\s+)?(?:common\s+|simple\s+|proper\s+|vulgar\s+)?fraction(?:\s+in\s+(?:lowest|simplest)\s+(?:terms|form))?$/i.exec(s)) && /\d/.test(m[1])) {
+    const rp = wRepeating(m[1]);
+    if (rp) return rp;
+    if (/^[-−]?\d*\.\d+$/.test(m[1].trim())) return wCall('tofraction', m[1].trim().replace('−', '-'));
+  }
+  if ((m = /^(?:express|write|convert|change|turn|give|put)?\s*(.+?)\s+(?:as|to|into|in)\s+(?:a\s+)?decimal(?:\s+(?:number|form|notation))?$/i.exec(s)) && /\d/.test(m[1]) && /^[-−\d.\/()+*^\s]+$|^[-−\d.\/()+*^\sπ]*(?:pi)?[-−\d.\/()+*^\s]*$/i.test(m[1]) && !/0x/i.test(m[1])) return wCall('todecimal', wE(m[1]));
+  if ((m = /^(?:the\s+)?(?:decimal\s+(?:expansion|form|representation)\s+of|fraction\s+(?:form\s+)?of)\s+(.+)$/i.exec(s))) {
+    const rp = wRepeating(m[1]);
+    if (rp) return rp;
+    return /^[-−]?\d*\.\d+$/.test(m[1].trim()) ? wCall('tofraction', m[1].trim()) : wCall('todecimal', wE(m[1]));
+  }
+  // ---- lines through a point, spans of vectors
+  if ((m = /^(?:the\s+)?equation\s+of\s+(?:the\s+)?line\s+(?:that\s+)?(?:passes\s+)?(?:through|passing\s+through)\s+\(\s*(-?[\d./]+)\s*,\s*(-?[\d./]+)\s*\)\s+(?:with|and\s+has|having|and)\s+(?:a\s+)?slope\s+(?:of\s+|=\s*)?(-?[\d./]+)$/i.exec(s))) {
+    const plain = [m[1], m[2], m[3]].every((v) => /^-?\d+$/.test(v));
+    return wCall('line', '[' + m[1] + ', ' + m[2] + ']', plain ? '[' + (Number(m[1]) + 1) + ', ' + (Number(m[2]) + Number(m[3])) + ']' : '[' + m[1] + ' + 1, ' + m[2] + ' + (' + m[3] + ')]');
+  }
+  if ((m = /^(?:the\s+)?equation\s+of\s+(?:the\s+)?line\s+(parallel|perpendicular)\s+to\s+(?:the\s+line\s+)?(.+?=.+?)\s+(?:and\s+)?(?:passing\s+)?through\s+\(\s*(.+?)\s*,\s*(.+?)\s*\)$/i.exec(s))) return wCall(m[1].toLowerCase(), wOps(m[2]), '[' + m[3] + ', ' + m[4] + ']');
+  if ((m = /^(?:the\s+)?(area|volume)\s+of\s+(?:the\s+)?(parallelogram|triangle|parallelepiped)\s+(?:spanned|formed|determined|defined)\s+by\s+(?:the\s+)?(?:vectors\s+)?(\[[^\]]*\])\s*,?\s*(?:and\s+)?(\[[^\]]*\])(?:\s*,?\s*(?:and\s+)?(\[[^\]]*\]))?$/i.exec(s))) {
+    const dim = m[3].split(',').length;
+    if (m[2].toLowerCase() === 'parallelepiped' && m[5]) return 'abs(triplescalar(' + m[3] + ', ' + m[4] + ', ' + m[5] + '))';
+    const base = dim === 2 ? 'abs(det([' + m[3] + ', ' + m[4] + ']))' : 'norm(cross(' + m[3] + ', ' + m[4] + '))';
+    return m[2].toLowerCase() === 'triangle' ? '(' + base + ')/2' : base;
+  }
+  // ---- "solve the system ... by elimination / using matrices"
+  if ((m = /^(?:solve\s+)?(?:the\s+)?(?:system|equations?)(?:\s+of\s+equations)?\s*:?\s*(.+?)\s*,?\s*(?:by|using|with|via)\s+(?:the\s+)?(?:method\s+of\s+)?(?:matrices|a\s+matrix|matrix\s+(?:method|inverse)|elimination|substitution|graphing|cramer'?s\s+rule|gaussian\s+elimination|row\s+reduction|an?\s+augmented\s+matrix)$/i.exec(s)) && (m[1].match(/=/g) || []).length >= 2) return m[1].split(/\s*(?:;|,|\band\b)\s*/).filter(Boolean).map((x) => wOps(wExpr(x))).join('; ');
+  // ---- normal probabilities with the standard normal variable Z
+  if ((m = /^(?:(?:find|what\s+is|calculate)\s+)?(?:the\s+)?(?:P|probability)\s*\(\s*Z\s*(<|>|≤|≥|<=|>=)\s*(-?[\d.]+)\s*\)\s*[?.]?$/i.exec(s))) return /[<≤]/.test(m[1]) ? wCall('normalcdf', m[2]) : wCall('normalcdf', m[2], 'oo', '0', '1');
+  if ((m = /^(?:(?:find|what\s+is|calculate)\s+)?(?:the\s+)?(?:P|probability)\s*\(\s*(-?[\d.]+)\s*(?:<|≤|<=)\s*Z\s*(?:<|≤|<=)\s*(-?[\d.]+)\s*\)\s*[?.]?$/i.exec(s))) return wCall('normalcdf', m[1], m[2], '0', '1');
+  if ((m = /^(?:the\s+)?(?:area|probability)\s+under\s+the\s+standard\s+normal\s+(?:curve|distribution)\s+between\s+(-?[\d.]+)\s+and\s+(-?[\d.]+)$/i.exec(s))) return wCall('normalcdf', m[1], m[2], '0', '1');
+  if ((m = /^(?:the\s+)?(?:area|probability)\s+under\s+the\s+standard\s+normal\s+(?:curve|distribution)\s+(?:to\s+the\s+)?(left|right|below|above)\s+of\s+(?:z\s*=\s*)?(-?[\d.]+)$/i.exec(s))) return /left|below/i.test(m[1]) ? wCall('normalcdf', m[2]) : wCall('normalcdf', m[2], 'oo', '0', '1');
+  // ---- coin and die experiments: expected number, "at least one six in 4 rolls"
+  if ((m = /^(?:the\s+)?expected\s+(?:number|count)\s+of\s+(?:\w+\s+)?(?:heads|tails|successes|sixes|hits|\w+)\s+(?:in|out\s+of|from|when)\s+(\d+)\s+(?:coin\s+)?(?:flips|tosses|trials|rolls|attempts|times|draws)(?:.*?(?:p|probability)\s*(?:=|of|is)?\s*(0?\.\d+|\d+\/\d+))?\s*$/i.exec(s))) return wCall('binomstats', m[1], m[2] || (/\b(?:die|dice|rolls?|sixes|six)\b/i.test(s) ? '1/6' : '1/2'));
+  if ((m = /^(?:the\s+)?standard\s+error\s+(?:of\s+the\s+mean\s+)?(?:with|for|if|when|given)\s+(?:a\s+)?(?:sample\s+)?(?:sd|standard\s+deviation|s|σ|sigma)\s*(?:of|=|is)?\s*([\d.]+)\s*(?:,|and)?\s*(?:a\s+)?(?:sample\s+size|n)\s*(?:of|=|is)?\s*(\d+)$/i.exec(s))) return m[1] + '/sqrt(' + m[2] + ')';
+  // ---- sums over the first n integers, squares, cubes; their mean
+  if ((m = /^(?:the\s+)?sum\s+of\s+the\s+(squares|cubes|fourth\s+powers)\s+of\s+the\s+first\s+(\d+)\s+(?:positive\s+)?(?:integers|natural\s+numbers|whole\s+numbers|counting\s+numbers)$/i.exec(s))) return wCall('sum', 'k^' + ({ squares: 2, cubes: 3 }[m[1].toLowerCase()] || 4), 'k', '1', m[2]);
+  if ((m = /^(?:the\s+)?(?:mean|average)\s+of\s+the\s+first\s+(\d+)\s+(?:positive\s+)?(?:integers|natural\s+numbers|whole\s+numbers|counting\s+numbers)$/i.exec(s)) && Number(m[1]) <= 200) return wCall('mean', '[' + Array.from({ length: Number(m[1]) }, (_, i) => i + 1).join(', ') + ']');
+  // ---- the n-th term of a sequence given by its first terms
+  if ((m = /^(?:find\s+)?(?:the\s+)?(\d+)(?:st|nd|rd|th)\s+term\s+(?:of|in)\s+(?:the\s+)?(?:sequence\s+)?([-−\d.,\s\/]+?)\s*(?:,\s*)?(?:\.\.\.|…)?$/i.exec(s)) && !/arithmetic|geometric/i.test(s)) {
+    const nums = wNums(m[2]);
+    if (nums && nums.length >= 3) return wCall('nthterm', '[' + nums.join(', ') + ']', m[1]);
+  }
+  if ((m = /^(?:find\s+)?(?:the\s+)?(?:nth|general|n-th)\s+term\s+(?:of|for)\s+(?:the\s+)?(?:sequence\s+)?([-−\d.,\s\/]+?)\s*(?:,\s*)?(?:\.\.\.|…)?$/i.exec(s))) {
+    const nums = wNums(m[1]);
+    if (nums && nums.length >= 3) return wCall('sequence', ...nums);
+  }
+  // ---- regression from two lists: line, r², prediction
+  if ((m = /^(?:(?:the|an?)\s+)?(?:equation\s+of\s+(?:the\s+)?)?(?:regression\s+line|line\s+of\s+best\s+fit|least[- ]squares\s+line|linear\s+regression)\s+for\s+(.+)$/i.exec(s)) || (m = /^(?:the\s+)?(?:coefficient\s+of\s+determination|r\s*(?:squared|²|\^2)|correlation\s+coefficient)\s+(?:for|of|between)\s+(.+)$/i.exec(s))) {
+    const b = wBrackets(m[1]);
+    if (b.length === 2) return wCall('linreg', b[0], b[1]);
+  }
+  if ((m = /^(?:predict|estimate|find)\s+y\s+(?:when|for|if|at)\s+x\s*=\s*(-?[\d.]+)\s+(?:from|using|given|for|with)\s+(.+)$/i.exec(s))) {
+    const b = wBrackets(m[2]);
+    if (b.length === 2) return wCall('linreg', b[0], b[1], m[1]);
+  }
+  // ---- pH of strong acids and bases, hydrogen ion concentration from pH
+  if ((m = /^(?:the\s+)?pH\s+of\s+(?:an?\s+)?([\d.]+(?:e-?\d+)?)\s*(?:M|mol\/L|molar)\s+(?:solution\s+of\s+)?(HCl|HBr|HI|HNO3|HClO4)(?:\s+solution)?$/i.exec(s))) return wCall('ph', m[1]);
+  if ((m = /^(?:the\s+)?pH\s+of\s+(?:an?\s+)?([\d.]+(?:e-?\d+)?)\s*(?:M|mol\/L|molar)\s+(?:solution\s+of\s+)?(NaOH|KOH|LiOH)(?:\s+solution)?$/i.exec(s))) return '14 - ' + wCall('poh', m[1]);
+  if ((m = /^(?:the\s+)?pH\s+of\s+(?:an?\s+)?([\d.]+(?:e-?\d+)?)\s*(?:M|mol\/L|molar)\s+(?:solution\s+of\s+)?(Ba\(OH\)2|Ca\(OH\)2|Sr\(OH\)2)(?:\s+solution)?$/i.exec(s))) return '14 - ' + wCall('poh', '2*' + m[1]);
+  if ((m = /^(?:the\s+)?(?:hydrogen\s+ion\s+concentration|\[H\+?\]|H\+\s+concentration|concentration\s+of\s+H\+?)\s+(?:if|when|for|given|at)\s+pH\s*=\s*([\d.]+)$/i.exec(s)) || (m = /^(?:find\s+)?\[H\+?\]\s+(?:if|when|for|given|at)\s+pH\s*(?:=|is)\s*([\d.]+)$/i.exec(s))) return '10^(-' + m[1] + ')';
+  if ((m = /^concentration\s+if\s+pH\s*=\s*([\d.]+)$/i.exec(s))) return '10^(-' + m[1] + ')';
+  // ---- annuities and single sums
+  if ((m = /^(future|present)\s+value\s+of\s+(?:an?\s+annuity\s+of\s+|payments?\s+of\s+|a\s+payment\s+of\s+)?\$?([\d,]+(?:\.\d+)?)\s+(?:per|a|each|every)\s+(month|year|quarter|week)\s+(?:at|with|earning|paying)\s+(?:an?\s+)?(?:annual\s+)?(?:interest\s+)?(?:rate\s+of\s+)?([\d.]+)\s*%(?:\s+(?:interest\s+)?(?:annual(?:ly)?|per\s+year|compounded\s+\w+))?\s+for\s+(\d+)\s+(years?|months?)$/i.exec(s))) {
+    const per = { month: 12, year: 1, quarter: 4, week: 52 }[m[3].toLowerCase()];
+    const periods = /month/i.test(m[6]) ? Number(m[5]) : Number(m[5]) * per;
+    return wCall(m[1].toLowerCase() === 'future' ? 'annuityfv' : 'annuitypv', m[2].replace(/,/g, ''), '(' + m[4] + '/' + per + ')%', String(periods));
+  }
+  if ((m = /^(future|present)\s+value\s+of\s+\$?([\d,]+(?:\.\d+)?)\s+(?:in|due\s+in|after|received\s+in|paid\s+in)\s+(\d+)\s+years?\s+(?:at|with)\s+([\d.]+)\s*%(?:\s+(?:interest|annual\w*|compounded\s+annually))*$/i.exec(s))) {
+    const P = m[2].replace(/,/g, '');
+    return 'round(' + (m[1].toLowerCase() === 'future' ? P + '*(1 + ' + m[4] + '/100)^' + m[3] : P + '/(1 + ' + m[4] + '/100)^' + m[3]) + ', 2)';
+  }
+  // ---- critical values, sample size, rolling several of one face
+  if ((m = /^(?:the\s+)?t\s*(?:-|\s)?(?:critical\s+value|crit(?:ical)?|score)\s+(?:for|at|of)\s+(\d+(?:\.\d+)?)\s*%?\s*(?:confidence|level)?\s*(?:with|and|,)?\s*(\d+)\s+degrees\s+of\s+freedom$/i.exec(s))) return wCall('tcrit', m[1], m[2]);
+  if ((m = /^(?:the\s+)?z\s*(?:-|\s)?(?:critical\s+value|crit(?:ical)?|score)\s+(?:for|at|of)\s+(\d+(?:\.\d+)?)\s*%?(?:\s*confidence)?$/i.exec(s))) return wCall('zcrit', m[1]);
+  if ((m = /^(?:the\s+)?chi\s*-?\s*(?:square|squared|sq)(?:d)?\s+critical\s+value\s+(?:at|for|with)\s+(?:alpha\s*=\s*|α\s*=\s*|significance\s+level\s+)?(0?\.\d+)\s*(?:significance\s+level\s*)?(?:and|with|,)?\s*(\d+)\s+degrees\s+of\s+freedom$/i.exec(s))) return wCall('invchi2', String(1 - Number(m[1])), m[2]);
+  if ((m = /^(?:the\s+)?sample\s+size\s+(?:needed|required|necessary)?\s*(?:for|to\s+(?:get|have|achieve))?\s*(?:a\s+)?margin\s+of\s+error\s*(?:of|=)?\s*([\d.]+)\s*(?:with|and|,|given)?\s*(?:a\s+)?(?:population\s+)?(?:sd|standard\s+deviation|σ|sigma)\s*(?:of|=)?\s*([\d.]+)\s*(?:at|with|and|,)?\s*(\d+(?:\.\d+)?)\s*%\s*(?:confidence)?$/i.exec(s))) return wCall('samplesize', m[2], m[1], String(Number(m[3]) / 100));
+  if ((m = /^(?:what\s+is\s+)?(?:the\s+)?probability\s+of\s+rolling\s+(two|three|four|five|six)\s+(?:sixes|ones|twos|threes|fours|fives|[a-z]+s)(?:\s+in\s+a\s+row)?$/i.exec(s))) return '(1/6)^' + { two: 2, three: 3, four: 4, five: 5, six: 6 }[m[1].toLowerCase()];
   // ---- equation with an interval for the unknown
   if (/[<>≤≥]|\[|\(/.test(s) && /=/.test(s) && !/\b(?:fourier|series|integral|integrate|derivative|limit|laplace|average|area|volume|length|taylor|maclaurin|sum|plot|graph|domain|tangent)\b/i.test(s)) {
     const win = wWindow(s.replace(/^solve\s+(?:the\s+equation\s+)?/i, ''));
@@ -1048,11 +1165,11 @@ function wRules(s) {
   if ((m = /^(?:(?:the|a|an)\s+)?(correlation|covariance|spearman(?:\s+correlation)?|kendall(?:\s+tau)?)(?:\s+coefficient)?\s+(?:of|between|for)\s+(.+)$/i.exec(s)) && wBrackets(m[2]).length === 2) return wCall(/corr/i.test(m[1]) ? 'correlation' : /cov/i.test(m[1]) ? 'covariance' : /spear/i.test(m[1]) ? 'spearman' : 'kendall', ...wBrackets(m[2]));
   if ((m = /^(?:(?:the|a|an)\s+)?(?:linear\s+regression|regression\s+line|line\s+of\s+best\s+fit|least[- ]squares\s+line)\s+(?:of|for|to|through)?\s*(.+)$/i.exec(s)) && wBrackets(m[1]).length === 2) return wCall('linreg', ...wBrackets(m[1]));
   if ((m = /^(?:(?:the|a|an)\s+)?z-?score\s+(?:of|for)\s+(-?[\d.]+)\s*,?\s*(?:with|given|when|if|where)?\s*(?:a\s+)?mean\s*(?:of|=)?\s*(-?[\d.]+)\s*(?:,|and)?\s*(?:a\s+)?(?:standard\s+deviation|sd|std)\s*(?:of|=)?\s*([\d.]+)$/i.exec(s))) return wCall('zscore', m[1], m[2], m[3]);
-  if ((m = /^(?:(?:the|a|an)\s+)?probability\s+(?:of\s+)?(?:getting\s+|obtaining\s+|having\s+|seeing\s+)?(exactly|at\s+least|at\s+most|more\s+than|fewer\s+than|less\s+than)?\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten|an?)\s+(?:heads?|tails?|successes?|hits?|sixes|\w+s?)\s+(?:in|out\s+of|from|when)\s+(?:flipping\s+|tossing\s+|rolling\s+)?(?:a\s+(?:fair\s+)?coin\s+)?(\d+)\s*(?:coin\s+|die\s+|dice\s+)?(?:times?|trials?|tosses|flips|attempts|tries|rolls)?(?:\s+of\s+a\s+(?:fair\s+)?coin)?(?:\s+(?:with|if|when|where|and)\s+(?:(?:the|a|an)\s+)?(?:success\s+)?(?:probability\s*(?:of\s+success\s*)?|p\s*)(?:is\s+|of\s+|=\s*)?(0?\.\d+|\d+\/\d+|\d+%))?$/i.exec(s))) {
+  if ((m = /^(?:(?:the|a|an)\s+)?probability\s+(?:of\s+)?(?:getting\s+|obtaining\s+|having\s+|seeing\s+)?(exactly|at\s+least|at\s+most|more\s+than|fewer\s+than|less\s+than)?\s*(\d+|one|two|three|four|five|six|seven|eight|nine|ten|an?)\s+(?:heads?|tails?|successes?|hits?|sixes|\w+s?)\s+(?:in|out\s+of|from|when)\s+(?:flipping\s+|tossing\s+|rolling\s+)?(?:a\s+(?:fair\s+)?coin\s+)?(\d+)\s*(?:coin\s+|die\s+|dice\s+)?(?:times?|trials?|tosses|flips|attempts|tries|rolls)?(?:\s+of\s+an?\s+(?:fair\s+)?(?:coin|die|dice|six-sided\s+die))?(?:\s+(?:with|if|when|where|and)\s+(?:(?:the|a|an)\s+)?(?:success\s+)?(?:probability\s*(?:of\s+success\s*)?|p\s*)(?:is\s+|of\s+|=\s*)?(0?\.\d+|\d+\/\d+|\d+%))?$/i.exec(s))) {
     const WORDN = { one: 1, a: 1, an: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
     const k = /^\d+$/.test(m[2]) ? m[2] : String(WORDN[m[2].toLowerCase()]);
     const n = m[3];
-    const p = m[4] ? (m[4].endsWith('%') ? '(' + m[4].slice(0, -1) + '/100)' : m[4]) : '1/2';
+    const p = m[4] ? (m[4].endsWith('%') ? '(' + m[4].slice(0, -1) + '/100)' : m[4]) : /\b(?:die|dice|rolls?|rolling)\b/i.test(s) ? '1/6' : '1/2';
     const how = (m[1] || 'exactly').toLowerCase().replace(/\s+/g, ' ');
     if (how === 'exactly') return wCall('binompdf', n, p, k);
     if (how === 'at most') return wCall('binomcdf', n, p, k);
@@ -1211,7 +1328,7 @@ function wFunctions(s) {
 const W_WORDY = /\b(?:plus|minus|times|multiplied|divided|over|squared|cubed|power|root|equals?|percent|per\s*cent|less\s+than|greater\s+than|at\s+least|at\s+most|twice|half|negative|sum\s+of|product\s+of|difference)\b/i;
 function convertWordLine(line) {
   const s0 = line.trim().replace(/\s+/g, ' ');
-  if (s0.length < 4 || s0.length > 400 || !/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|…|[∪∩⊂⊆×Δ]/.test(s0)) return line;
+  if (s0.length < 4 || s0.length > 400 || !/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|…|[∪∩⊂⊆×Δ]|\bP\s*\(/.test(s0)) return line;
   const s = s0.replace(/\s*[?!]+$/, '').replace(/\s*(?<!\.)\.$/, '');
   const lead = s.replace(W_LEAD, '');
   WORDS_ASK.v = null;
@@ -1231,7 +1348,7 @@ function convertWordLine(line) {
   return line;
 }
 function convertWords(raw) {
-  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|…|[∪∩⊂⊆×Δ]/.test(raw)) return raw;
+  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b|\.\.\.|…|[∪∩⊂⊆×Δ]|\bP\s*\(/.test(raw)) return raw;
   return raw.split('\n').map(convertWordLine).join('\n');
 }
 
