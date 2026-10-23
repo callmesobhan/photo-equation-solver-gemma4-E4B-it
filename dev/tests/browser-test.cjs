@@ -61,6 +61,31 @@ const path = require('path');
     if (!png || !out.result) bad++;
     console.log((png && out.result ? '✓ ' : '✗ ') + eq + '  ->  image ' + (out.image ? (out.image.base64.length / 1024).toFixed(1) + ' KB base64' : 'MISSING') + (png ? ' (PNG)' : ''));
   }
+  // an ordinary answer also comes back as a picture of the exact "Read as" / "Answer" lines (the model's own sentence can copy a digit wrongly); help does not
+  for (const [eq, wantCard] of [['2x + 3 = 11', true], ['bond(1000, 5%, 6%, 10, 2)', true], ['eigen([[2,1],[1,2]])', true], ['help finance', false]]) {
+    const out = JSON.parse(await page.evaluate(appCall(JSON.stringify({ equation: eq }))));
+    const png = !!(out.image && out.image.base64 && out.image.base64.startsWith('iVBORw0KGgo'));
+    let ink = 0;
+    if (png) {
+      ink = await page.evaluate(async (b64) => {
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + b64;
+        await img.decode();
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const g = c.getContext('2d');
+        g.drawImage(img, 0, 0);
+        const d = g.getImageData(0, 0, c.width, c.height).data;
+        let n = 0;
+        for (let i = 0; i < d.length; i += 4) if (d[i] < 160 && d[i + 1] < 160) n++;
+        return n;
+      }, out.image.base64);
+    }
+    const ok = wantCard ? png && ink > 600 && out.result : !png && out.result;
+    if (!ok) bad++;
+    console.log((ok ? '✓ ' : '✗ ') + 'answer card ' + eq.padEnd(30) + ' -> ' + (png ? ink + ' dark pixels' : 'no image') + (wantCard ? '' : ' (expected none)'));
+  }
   // the other pictures: a real PNG that actually contains the drawing (counted from the decoded pixels)
   const pictures = [
     ['histogram([2,3,3,4,5,7,8,9,12], 3)', 'colored', 4000], ['histbins([2,3,3,4,5,7,8,9,12], 4)', 'colored', 4000],

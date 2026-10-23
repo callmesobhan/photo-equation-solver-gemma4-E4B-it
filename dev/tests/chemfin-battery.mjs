@@ -93,7 +93,7 @@ for (const c of cases) {
       if (!p || !near(Number(p[1]), c.n, 1e-6)) fail('N ' + (p && p[1]) + ' vs ' + c.n);
     } else if (c.kind === 'bond') {
       const p = /price = ([\d,.]+)/.exec(answer); const cy = /current yield = ([\d.e+-]+)/.exec(answer);
-      const du = /Macaulay duration = ([\d.e+-]+) years;  modified duration = ([\d.e+-]+)/.exec(work.join('\n'));
+      const du = /Macaulay duration = ([\d.e+-]+) years[\s\S]*modified duration = ([\d.e+-]+)/.exec(answer);
       if (!p || Math.abs(num(p[1]) - c.price) > 0.0051) fail('price ' + (p && p[1]) + ' vs ' + c.price);
       else if (!cy || !near(Number(cy[1]), c.cy, 1e-6)) fail('current yield');
       else if (!du || !near(Number(du[1]), c.mac, 1e-6) || !near(Number(du[2]), c.mod, 1e-6)) fail('durations');

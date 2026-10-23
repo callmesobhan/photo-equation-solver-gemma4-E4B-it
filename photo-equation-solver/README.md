@@ -25,6 +25,8 @@ Everything runs on the phone. `scripts/index.html` is a single self-contained fi
 `help calculus`, `help stats`, ...) and it lists every command - offline too - so
 `SKILL.md` is kept very short on purpose: about 3 KB (roughly 1,000 tokens). The app reads it again for every question and the on-device model's context window is small (the default "Max tokens" for Gemma-4-E4B-it is 4000, shared by the app's prompt, `SKILL.md`, the tool call and the answer; raising it to about 8000 in the chat's settings helps). Only a few commands are listed there; the rest is found with `help`, or by writing the question in plain English.
 
+**The answer card.** Gallery tells the model to reply with a one-sentence summary, and a small model can copy digits wrongly (seen on a phone: a price of 925.61 came back as "$9.610"). So every ordinary result also comes back as a picture of the exact "Read as" and "Answer" lines, shown in the chat under the model's sentence (graphs come back as graphs, `help` as text). If the sentence and the card differ, the card is right. The chat settings matter too: TopK 1 (always the single most likely word) can send the model into a repetition loop on long text, while a high temperature corrupts digits; the card makes the second harmless.
+
 ## What it can do
 
 | Area | Examples (what the model sends) |

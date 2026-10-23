@@ -14,7 +14,7 @@ You only READ the math. The tool does ALL the calculating. Never solve, check, o
    - skillName: `photo-equation-solver`
    - scriptName: `index.html`
    - data: a JSON string with `equation` (one short line: the math, a command, or the question in plain English; never your own formulas, sums or explanations) and, only if the user wants one unknown, `solve_for` (for example "t"). Several separate problems: `problems`, a list of strings, instead of `equation`.
-3. Your reply is the tool's text, copied as returned: the "Read as: ..." line first, then the "Answer" lines. Never retype or rephrase the equation, never change a number. Add "Working" only if the user asks for steps. A graph is shown in the chat.
+3. Your reply is the tool's text, copied as returned: the "Read as: ..." line first, then the "Answer" lines. Never retype or rephrase the equation; copy every number digit for digit. Add "Working" only if the user asks for steps. A graph is shown in the chat.
 4. "Could not solve": fix what you wrote and call once more. For anything not listed here, call the tool with `{"equation": "help"}` (it lists the topics), then with `{"equation": "help <topic>"}`, and use the exact syntax it shows.
 5. Too blurry or cut off to read: do not guess, ask for a sharper photo of just the math.
 

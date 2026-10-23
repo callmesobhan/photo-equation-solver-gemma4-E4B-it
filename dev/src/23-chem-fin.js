@@ -601,10 +601,11 @@ defCmd('bond bondprice', (n) => {
   }
   const out = newOut();
   out.answer.push('price = ' + fmtMoney(price) + ' (' + (Math.abs(price - F) < 0.005 ? 'at par' : price > F ? 'at a premium: coupon rate above the yield' : 'at a discount: coupon rate below the yield') + ')');
-  out.answer.push('current yield = ' + fmtNum(((F * cr) / price) * 100) + ' %');
   const mac = wsum / price;
+  out.answer.push('Macaulay duration = ' + fmtNum(mac) + ' years');
+  out.answer.push('modified duration = ' + fmtNum(mac / (1 + i)) + ',  convexity = ' + fmtNum(convex / price));
+  out.answer.push('current yield = ' + fmtNum(((F * cr) / price) * 100) + ' %');
   out.work.push('price = Σ coupon/(1 + y/f)^t + face/(1 + y/f)^N with ' + N + ' periods, coupon ' + fmtMoney(c) + ' per period, periodic yield ' + fmtNum(i));
-  out.work.push('Macaulay duration = ' + fmtNum(mac) + ' years;  modified duration = ' + fmtNum(mac / (1 + i)) + ';  convexity = ' + fmtNum(convex / price));
   out.value = { num: price };
   return out;
 });

@@ -77,7 +77,8 @@ function run(data) {
     const help = helpFor(problems[0]);
     if (help) return { text: help, image: null };
     const { readAs, out } = solveProblem(problems[0], solveFor);
-    return { text: renderResult(readAs, out), image: out.image || null };
+    const text = renderResult(readAs, out);
+    return { text, image: out.image || answerCardImage(text) };
   }
   let image = null;
   const text = problems.map((p, i) => {
@@ -89,7 +90,7 @@ function run(data) {
       return 'Problem ' + (i + 1) + '\nRead as: ' + p + '\nError: ' + explain(e);
     }
   }).join('\n\n');
-  return { text, image };
+  return { text, image: image || answerCardImage(text) };
 }
 
 const RETRY_HINT = ' Re-read the picture and call the tool again with the math written in plain text (digits, letters, + - * / ^ ( ), sqrt(), pi, =, <, >).';
