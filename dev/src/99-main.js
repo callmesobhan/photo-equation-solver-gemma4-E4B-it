@@ -94,12 +94,31 @@ function run(data) {
 
 const RETRY_HINT = ' Re-read the picture and call the tool again with the math written in plain text (digits, letters, + - * / ^ ( ), sqrt(), pi, =, <, >).';
 
+// a small model that writes its own formulas and sums gets sent to the right help page
+const HELP_TOPIC_WORDS = [
+  ['finance', /\b(?:bonds?|coupons?|yield|loans?|mortgage|interest|annuit\w*|amortiz\w*|amortis\w*|depreciation|npv|irr|dividends?|principal|payback|invest\w*)\b/i],
+  ['chemistry', /\b(?:molar\w*|moles?|reactants?|reagent|stoichiometry|titration|electron configuration)\b|\bpH\b/i],
+  ['stats', /\b(?:probability|distribution|binomial|poisson|normal|median|variance|standard deviation|regression|correlation|t-?test|z-?test|chi|hypothesis|confidence|z-?score|sample|percentile|quartile)\b/i],
+  ['matrix', /\b(?:matrix|matrices|determinant|eigen\w*|vectors?)\b/i],
+  ['geometry', /\b(?:triangle|circle|sphere|polygon|ellipse|parabola|hyperbola|perimeter|radius|cylinder|cone)\b/i],
+  ['number', /\b(?:prime|modulo|gcd|lcm|divisors?|permutations?|combinations?|sequence|factorial)\b/i],
+  ['calculus', /\b(?:derivative|integral|integrate|limit|differentiate|series|taylor)\b/i],
+  ['ode', /\b(?:differential equation|laplace|ode)\b/i],
+];
+function helpHint(data) {
+  let text = '';
+  try { text = parseRequest(data).problems.join(' '); } catch (e) { text = String(data); }
+  const hit = HELP_TOPIC_WORDS.find(([, rx]) => rx.test(text));
+  if (hit) return ' This looks like a ' + hit[0] + ' problem: do not write formulas or sums yourself; call the tool with {"equation": "help ' + hit[0] + '"} and use the command it shows.';
+  return ' If you are unsure how to write it, call the tool with {"equation": "help"} for the list of topics.';
+}
+
 window['ai_edge_gallery_get_result'] = async (data) => {
   try {
     const r = run(data);
     return JSON.stringify(r.image ? { result: r.text, image: { base64: r.image } } : { result: r.text });
   } catch (e) {
     if (!(e instanceof MathError)) console.error(e);
-    return JSON.stringify({ error: 'Could not solve: ' + explain(e) + '.' + RETRY_HINT });
+    return JSON.stringify({ error: 'Could not solve: ' + explain(e) + '.' + RETRY_HINT + helpHint(data) });
   }
 };

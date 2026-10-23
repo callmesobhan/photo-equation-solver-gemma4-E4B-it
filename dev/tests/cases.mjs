@@ -1047,4 +1047,8 @@ export const CASES = [
   ['how many standard deviations is 130 from the mean of 100 with a standard deviation of 15', ['zscore(130, 100, 15)', 'Answer: 2']],
   ['poissoncdf(5.5, -1)', ['Answer: P(X ≤ -1) = 0']],
   ['geometcdf(0.3, -2)', ['Answer: P(X ≤ -2) = 0']],
+  // ---- errors point a small model at the right help page
+  ['Bond price: FV=1000, C=0.05/2, YTM=0.06/2, N=20. Price = sum_{t=1}^{20} [C / (1+YTM)^t]', ['help finance'], { err: true }],
+  ['t-test with mean = 5, std = 2, sample = 10 and then something odd =', ['help stats'], { err: true }],
+  ['2x +', ['"help"'], { err: true }],
 ];

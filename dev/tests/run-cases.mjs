@@ -11,7 +11,7 @@ for (const [input, expect, opts = {}] of CASES) {
   const ms = Date.now() - t0;
   const text = r.result ?? r.error ?? '';
   let ok = true; const why = [];
-  if (opts.err) { if (r.error === undefined) { ok = false; why.push('expected an error'); } }
+  if (opts.err) { if (r.error === undefined) { ok = false; why.push('expected an error'); } else for (const e of expect) if (!r.error.includes(e)) { ok = false; why.push('error lacks "' + e + '"'); } }
   else {
     if (r.error !== undefined) { ok = false; why.push('error: ' + r.error); }
     for (const e of expect) if (!text.includes(e)) { ok = false; why.push('missing "' + e + '"'); }
