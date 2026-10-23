@@ -23,7 +23,7 @@ with exact fractions and symbolic expressions. The answer always starts with a
 Everything runs on the phone. `scripts/index.html` is a single self-contained file
 (about 1.2 MB): no CDN, no `fetch`, no API key, no secret. Ask it for `help` (or
 `help calculus`, `help stats`, ...) and it lists every command - offline too - so
-`SKILL.md` can stay short: it is only about 6 KB (under 2,000 tokens), because an on-device model has a small context window shared with the photo, the tool call and the answer. Only the most common commands are listed there; the rest is found with `help`, or by writing the question in plain English.
+`SKILL.md` is kept very short on purpose: about 3 KB (roughly 1,000 tokens). The app reads it again for every question and the on-device model's context window is small (the default "Max tokens" for Gemma-4-E4B-it is 4000, shared by the app's prompt, `SKILL.md`, the tool call and the answer; raising it to about 8000 in the chat's settings helps). Only a few commands are listed there; the rest is found with `help`, or by writing the question in plain English.
 
 ## What it can do
 
