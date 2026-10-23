@@ -58,6 +58,7 @@ If the question asks for one thing only, add `"solve_for"`. If the problem is re
 | Several variables | `grad(f, x, y)`, `hessian(f, x, y)`, `critical(f, x, y)`, `lagrange(f, g, c, x, y)`, `integrate(integrate(x*y, y, 0, x), x, 0, 2)`, `polarint(x^2 + y^2, t, 0, 2*pi, r, 0, 1)`, `surfacearea(x^2 + y^2, x, 0, 1, y, 0, 1)`, `flux(...)`, `green(...)`, `stokes(...)` (`help multivar`) |
 | Optimization | `maximize 3x + 2y subject to x + y <= 4, x, y >= 0` (linear programming) |
 | Algebra | `factor(x^4-1)`, `expand((x+1)^5)`, `simplify(...)`, `apart(...)`, `gcd(12, 18)`, `ratroots(2x^3 - 3x^2 - 8x - 3)`, `rangeof(1/(x^2+1))`, `coeff((1 + 2x)^6, x, 3)`, `sinusoid(3*sin(2x - pi) + 1)`; complex: `(3+4i)(1-2i)`, `sqrt(-4)`, `z^2 = 3+4i`, `polar(1+i)` |
+| Radicals and trig | `rationalize(1/(sqrt(3)+1))`, `denest(sqrt(5+2*sqrt(6)))`, `simplify(sin(2x)/sin(x))`, `trigexpand(cos(3x))` (also `expand(sin(a+b))`), `tosum(sin(x)*cos(3x))`; exact values `tan(22.5°)`, `cos(2*asin(1/3))` |
 | Equation in an interval | add the interval after a comma: `cos(x) = 0.5, 0 <= x <= 2pi` |
 | Formulas | write the equation and set `solve_for`: `v = u + a*t` with `"solve_for": "t"` |
 | Matrices | `[[1,2],[3,4]]` with `det()`, `inv()`, `rank()`, `rref()`, `eigen()`, `linsolve(A, b)`, `A*B`, `A^-1`; `dot([1,2,3],[4,5,6])`, `cross(...)`, `svd([[3,0],[4,5]])`, `expm([[0,1],[-2,-3]], t)`, `independent([1,2,3],[4,5,6],[7,8,9])`, `leastsquares(A, b)` |

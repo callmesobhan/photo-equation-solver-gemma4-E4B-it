@@ -413,7 +413,53 @@ defCmd('expand', (n) => {
   needArgs(n, 1, 1, 'one expression');
   const out = newOut();
   const S = fromAst(n.args[0]);
-  out.answer.push(fmtS(expandS(S)));
+  let T = expandS(S);
+  if (trigArgsToExpand(T)) {
+    const U = expandS(trExpandS(T));
+    if (sameFunction(U, T)) T = U;
+  }
+  out.answer.push((trigArgsToExpand(S) && trTanText(S)) || fmtS(T));
+  return out;
+});
+
+/** Does the expression have sin / cos / tan of a sum or of a multiple (something expand can open up)? */
+function trigArgsToExpand(S) {
+  if (S.k === 'f' && TR_FNS.has(S.fn)) {
+    const sp = trSplit(S.a[0]);
+    if (sp.parts || sp.k) return true;
+  }
+  if (S.k === '+' || S.k === '*' || S.k === 'f') return S.a.some(trigArgsToExpand);
+  if (S.k === '^') return trigArgsToExpand(S.b);
+  return false;
+}
+
+defCmd('trigexpand expandtrig', (n) => {
+  needArgs(n, 1, 1, 'one expression');
+  const out = newOut();
+  const S = fromAst(n.args[0]);
+  const T = expandS(trExpandS(S));
+  if (!sameFunction(T, S)) throw new MathError('I could not expand this trigonometric expression');
+  out.answer.push(trTanText(S) || fmtS(T));
+  out.work.push('Used the sum and multiple-angle formulas: sin(A+B) = sin A cos B + cos A sin B, cos(A+B) = cos A cos B - sin A sin B, tan(A+B) = (tan A + tan B)/(1 - tan A tan B)');
+  return out;
+});
+
+defCmd('tosum powerreduce', (n) => {
+  needArgs(n, 1, 1, 'one expression');
+  const out = newOut();
+  const S = fromAst(n.args[0]);
+  let T = null;
+  try {
+    const ctx = trContext(S, 'c');
+    const x = trToElem(S, ctx);
+    const v = ctx.v;
+    T = trFourier(x, (k) => (ctx.n === 1 && k === 1 ? sV(v) : sMul([sN(new Q(BigInt(k), BigInt(ctx.n))), sV(v)])));
+  } catch (e) {
+    if (!(e instanceof TrigBail)) throw e;
+  }
+  if (!T || !sameFunction(T, S)) throw new MathError('this needs a product or power of sin and cos of multiples of one angle, e.g. sin(x)*cos(3x) or sin(x)^4');
+  out.answer.push(fmtS(T));
+  out.work.push('Wrote the products and powers as a sum of sines and cosines of multiples of the angle (product-to-sum and power-reducing formulas)');
   return out;
 });
 
@@ -500,7 +546,15 @@ function factorMulti(S, vs, out) {
   return out;
 }
 
-defCmd('simplify', (n) => {
+/** "(top)/(bottom)" of a reduced rational function, factored or expanded, whichever is shorter. */
+function ratioPolyAnswer(r, fn, fd, v) {
+  const wrap = (t) => (isWrapped(t) || /^-?[A-Za-z0-9²³⁴⁵⁶⁷⁸⁹⁰¹]+$/.test(t) ? t : '(' + t + ')');
+  const factored = wrap(factorPolyText(fn, v)) + '/' + wrap(factorPolyText(fd, v));
+  const expanded = wrap(polyText(r.n, v)) + '/' + wrap(polyText(r.d, v));
+  return expanded.length + 4 <= factored.length ? expanded : factored;
+}
+
+defCmd('simplify trigsimp', (n) => {
   needArgs(n, 1, 1, 'one expression');
   const out = newOut();
   const S = fromAst(n.args[0]);
@@ -513,7 +567,7 @@ defCmd('simplify', (n) => {
       const top = factorPolyText(fn, vs[0]);
       let ans;
       if (r.d.length === 1) ans = polyText(r.n.map((c) => c.mul(r.d[0].inv())), vs[0]);
-      else ans = (fn.factors.length > 1 || fn.content.sign() < 0 ? '(' + top + ')' : top) + '/(' + factorPolyText(fd, vs[0]) + ')';
+      else ans = ratioPolyAnswer(r, fn, fd, vs[0]);
       out.answer.push(ans);
       if (r.d.length > 1) out.work.push('Expanded: (' + polyText(r.n, vs[0]) + ')/(' + polyText(r.d, vs[0]) + ')');
       out.work.push('Cancelled common factors and combined terms');
@@ -522,7 +576,13 @@ defCmd('simplify', (n) => {
       if (!(e instanceof NotAlgebraic)) throw e;
     }
   }
-  out.answer.push(fmtS(simplifyTrigS(S)));
+  if (!vs.length) {
+    const T = surdNorm(S);
+    out.answer.push(surdText(T) || symText(T));
+    return out;
+  }
+  const best = trigBest(S);
+  out.answer.push(fmtS(surdNorm(best || simplifyTrigS(S))));
   return out;
 });
 

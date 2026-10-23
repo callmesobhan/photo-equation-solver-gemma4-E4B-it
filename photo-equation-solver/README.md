@@ -47,6 +47,7 @@ Everything runs on the phone. `scripts/index.html` is a single self-contained fi
 | **Several variables** | `grad`, `hessian`, `jacobian`, `divergence`, `curl`, `directional`, `tangentplane`, critical points of `f(x, y)` with the second-derivative test, `lagrange` multipliers, double and triple integrals as nested `integrate(...)` |
 | **Linear programming** | `maximize 3x + 2y subject to x + y <= 4, x, y >= 0` (up to 4 variables; exact corner points, unbounded/infeasible detection, integer programs) |
 | **Algebra** | `factor`, `expand`, `simplify`, `apart` (partial fractions), `gcd`/`lcm`, polynomial division, exact radicals |
+| **Radicals and trigonometry** | exact surds in canonical form (`(2+sqrt(3))^2` = 7 + 4√3, `1/(sqrt(6)-sqrt(2))` = (√6 + √2)/4, `denest(sqrt(5+2*sqrt(6)))` = √3 + √2, `rationalize(x/(sqrt(x)+1))`), exact values of all six trig functions at multiples of π/n for n = 1, 2, 3, 4, 5, 6, 8, 10, 12 (`tan(22.5°)` = √2 − 1, `cos(pi/5)` = (1 + √5)/4, `tan(pi/2)` is reported undefined), trig of inverse trig (`tan(asin(3/5))`, `cos(2*asin(1/3))`, `sin(atan(3)+atan(4))`), `simplify` of trigonometric expressions in one variable (Pythagorean and double-angle identities, tan / cot / sec / csc ratios: `sin(2x)/sin(x)` = 2cos(x)), `trigexpand` / `expand` (sum and multiple-angle formulas), `tosum` (product-to-sum, power reduction) |
 | **Complex numbers** | `(3+4i)(1-2i)`, `sqrt(-4)`, `e^(i*pi)`, `(1+i)^10`, `polar`, `conj`, `nthroots(8, 3)`, `z^2 = 3+4i`, `(2+i)z = 3-i` |
 | **Linear algebra** (exact fractions) | `det`, `inv`, `rank`, `rref`, `nullspace`, `charpoly`, `eigen`, `diagonalize`, `lu`, `linsolve`, `gramschmidt`, `A*B`, `A^-1`, `dot`, `cross`, `norm`, `angle`, `qr`, `cholesky`, `definite`, `pinv`, `leastsquares`, `svd`, `expm` (e^(At), exact), `jordan` |
 | **Number theory and counting** | `isprime`, `factor(n)`, `divisors`, `totient`, `mod`, `modinv`, `modpow`, `crt`, `x ≡ 2 (mod 3), x ≡ 3 (mod 5)`, `diophantine`, `ncr`, `npr`, `multiset`, `catalan`, `fibonacci`, `partitions`, `sequence(2,6,12,20)` (next terms and formula), base conversion, sets, `dice(3,6,10)`, distinct arrangements of the letters of a word (MISSISSIPPI), `birthday(23)`, `pascal`, `circular` |
@@ -156,7 +157,7 @@ photo-equation-solver/
 
 Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
 
-- 807 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
+- 855 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
   geometry, units, chemistry, finance, graphs, differential equations, messy transcriptions, errors)
 - calculus against **sympy** and **scipy**: 146 antiderivatives (each also verified by differentiating),
   42 definite/improper integrals, 43 limits, 22 sums, 593 random symbolic expressions

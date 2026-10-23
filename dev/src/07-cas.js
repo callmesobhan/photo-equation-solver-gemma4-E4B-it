@@ -346,19 +346,7 @@ const R3 = () => sSqrt(sI(3));
 const half = (x) => sMul([sN(new Q(1n, 2n)), x]);
 function trigExact(fn, q) {
   // q: Q, angle = q*pi. returns S or null
-  const t = q.sub(qInt(2).mul(floorQ(q.div(qInt(2))))); // reduce into [0, 2)
-  const d = t.d;
-  if (![1n, 2n, 3n, 4n, 6n, 12n].includes(d)) return null;
-  // use twelfths: t = m/12, 0 <= m < 24
-  const m = Number(t.n * (12n / d));
-  const tab = trigTable(m);
-  if (!tab) return null;
-  const [s, c] = tab;
-  if (fn === 'sin') return s;
-  if (fn === 'cos') return c;
-  if (isNumVal(c, 0)) return null;
-  if (fn === 'tan') return sDiv(s, c);
-  return null;
+  return trigExactAll(fn, q);
 }
 function floorQ(q) {
   let f = q.n / q.d;
@@ -451,7 +439,7 @@ function sFn(fn, args) {
   switch (fn) {
     case 'sin': case 'tan': case 'cot':
     case 'sinh': case 'tanh': case 'asin': case 'atan': {
-      if (num && num.isZero()) return S0;
+      if (num && num.isZero() && fn !== 'cot') return S0;
       const neg = negCoefArg(a);
       if (neg) return sNeg(sFn(fn, [neg]));
       break;
@@ -479,6 +467,18 @@ function sFn(fn, args) {
       if (fn === 'sin' && a.k === 'f' && a.fn === 'acos') return sSqrt(sSub(S1, sPow(a.a[0], sI(2))));
       if (fn === 'sin' && a.k === 'f' && a.fn === 'atan') return sDiv(a.a[0], sSqrt(sAdd([S1, sPow(a.a[0], sI(2))])));
       if (fn === 'cos' && a.k === 'f' && a.fn === 'atan') return sDiv(S1, sSqrt(sAdd([S1, sPow(a.a[0], sI(2))])));
+      const inv = trigOfInverse(fn, a);
+      if (inv) return inv;
+      break;
+    }
+    case 'cot': case 'sec': case 'csc': {
+      const q = asPiMultiple(a);
+      if (q) {
+        const v = trigExact(fn, q);
+        if (v) return v;
+      }
+      const inv = trigOfInverse(fn, a);
+      if (inv) return inv;
       break;
     }
     case 'asin': case 'acos': case 'atan': {

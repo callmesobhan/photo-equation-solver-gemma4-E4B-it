@@ -347,7 +347,7 @@ function wRules(s) {
     if (win) return win;
   }
   // ---- identities: "verify sin(x)^2 + cos(x)^2 = 1"
-  if ((m = /^(?:verify|prove|show|check|confirm|demonstrate)(?:\s+that)?\s+(.+=.+)$/i.exec(s)) && !/[<>]/.test(m[1])) return wOps(m[1]);
+  if ((m = /^(?:verify|prove|show|check|confirm|demonstrate)(?:\s+(?:that|the\s+identity|the\s+trig(?:onometric)?\s+identity|whether))*\s+(.+=.+)$/i.exec(s)) && !/[<>]/.test(m[1])) return wOps(m[1]);
   if ((m = /^is\s+(.+=.+?)\s+an?\s+identity$/i.exec(s))) return wOps(m[1]);
   // ---- "if EQ, find x" and "x if EQ"
   if ((m = /^(?:if|given(?:\s+that)?|suppose(?:\s+that)?|let)\s+(.+?)\s*[,;]?\s*(?:then\s+)?(?:find|what\s+is|what\s+are|solve\s+for|determine|calculate|compute)\s+(?:the\s+value\s+of\s+)?[a-z]$/i.exec(s))) return wOps(m[1]);
@@ -473,8 +473,17 @@ function wRules(s) {
   // ---- algebra
   if ((m = /^(?:factor|factori[sz]e|factoring)\s+(?:(?:the|a|an)\s+)?(?:polynomial\s+|expression\s+|number\s+)?(.+)$/i.exec(s)) || (m = /^(?:(?:the|a|an)\s+)?(?:prime\s+)?factori[sz]ation\s+of\s+(.+)$/i.exec(s))) return wCall('factor', wE(m[1]));
   if ((m = /^(?:(?:the|a|an)\s+)?prime\s+factors\s+of\s+(.+)$/i.exec(s))) return wCall('factor', wE(m[1]));
+  // radicals and trigonometry: rationalise, denest, sum / multiple-angle formulas, product-to-sum, power reduction
+  if ((m = /^(?:rationali[sz]e|rationali[sz]ing|denest|radsimp)\s*(?:the\s+)?(?:denominator\s*)?(?:of\s+)?[:,]?\s*(.+)$/i.exec(s)) && !/^[:,]/.test(m[1])) return wCall('rationalize', wE(m[1]));
+  if ((m = /^(?:remove|get\s+rid\s+of|eliminate)\s+(?:the\s+)?(?:square\s+)?roots?\s+(?:from|in)\s+(?:the\s+)?denominator\s+(?:of\s+)?(.+)$/i.exec(s))) return wCall('rationalize', wE(m[1]));
+  if ((m = /^(?:use\s+)?(?:the\s+)?(?:sum|difference|angle[- ]sum|angle[- ]addition|double[- ]angle|triple[- ]angle|multiple[- ]angle)(?:\s+and\s+(?:difference|double[- ]angle))?\s+(?:formulas?|identit(?:y|ies))\s+(?:to\s+)?(?:expand|evaluate|simplify|find|write|rewrite|compute)\s+(.+)$/i.exec(s))) return wCall('trigexpand', wE(m[1]));
+  if ((m = /^(?:the\s+)?(?:(?:angle[- ])?(?:sum|difference|addition)|double[- ]angle|triple[- ]angle|multiple[- ]angle)\s+(?:formulas?|identit(?:y|ies))\s+(?:for|of)\s+(.+)$/i.exec(s))) return wCall('trigexpand', wE(m[1]));
+  if ((m = /^(?:express|write|rewrite)\s+(.+?)\s+(?:in\s+terms\s+of|using)\s+(?:only\s+)?(?:(?:sin|cos|tan|sine|cosine|tangent)\b.*|(?:single|simple|the\s+single)\s+angles?)$/i.exec(s)) && !/multiple/i.test(s)) return wCall('trigexpand', wE(m[1]));
+  if ((m = /^(?:express|write|rewrite|convert)\s+(.+?)\s+(?:as|into)\s+(?:a\s+)?(?:sum|sums|linear\s+combination)(?:\s+of\s+(?:sines?|cosines?|sines?\s+and\s+cosines?|cosines?\s+and\s+sines?|trig\w*\s+functions?)(?:\s+of\s+(?:multiple\s+)?angles?)?)?$/i.exec(s))) return wCall('tosum', wE(m[1]));
+  if ((m = /^(?:express|write|rewrite)\s+(.+?)\s+in\s+terms\s+of\s+(?:the\s+)?(?:multiple|first[- ]power|single)\s+angles?$/i.exec(s))) return wCall('tosum', wE(m[1]));
+  if ((m = /^(?:use\s+)?(?:the\s+)?(?:product[- ]to[- ]sum|power[- ]reduc(?:tion|ing|e)|reduc(?:e|ing)\s+(?:the\s+)?powers?(?:\s+of)?|sum[- ]to[- ]product)(?:\s+(?:formulas?|identit(?:y|ies)))?\s*(?:to\s+(?:write|express|rewrite|simplify|find|evaluate))?\s*(?:of\s+|for\s+)?[:,]?\s*(.+)$/i.exec(s)) && !/^[:,]/.test(m[1])) return wCall('tosum', wE(m[1]));
   if ((m = /^expand\s+(?:(?:the|a|an)\s+)?(?:expression\s+|product\s+)?(.+)$/i.exec(s))) return wCall('expand', wE(m[1]));
-  if ((m = /^simplify\s+(?:(?:the|a|an)\s+)?(?:expression\s+)?(.+)$/i.exec(s)) && !/^(?:$)/.test(m[1])) return wCall('simplify', wE(m[1]));
+  if ((m = /^simplify\s+(?:(?:the|a|an)\s+)?(?:(?:radical|surd|root|trig(?:onometric)?|rational|fractional|algebraic|fraction)\s+)?(?:expression\s+)?(.+)$/i.exec(s)) && !/^(?:$)/.test(m[1])) return wCall('simplify', wE(m[1]));
   if ((m = /^(?:(?:the|a|an)\s+)?partial\s+fractions?(?:\s+decomposition)?\s+(?:of|for)\s+(.+)$/i.exec(s)) || (m = /^decompose\s+(.+?)\s+into\s+partial\s+fractions$/i.exec(s))) return wCall('apart', wE(m[1]));
   if ((m = /^(?:(?:the|a|an)\s+)?(?:real\s+)?(?:roots|zeros|zeroes|solutions|x-?intercepts)\s+of\s+(?:(?:the|a|an)\s+)?(?:polynomial\s+|function\s+|equation\s+)?(.+)$/i.exec(s))) {
     const e = wExpr(m[1]);
@@ -967,7 +976,7 @@ function convertWords(raw) {
 
 /** Words of problem statements that can never be part of an equation: they would be read as products of letters. */
 const ENGLISH_WORDS = new Set(('of is the and for are was were will would can could how why who whom what when where which while that this these those then than there their them they with without from into onto over under about around between after before during since until because '
-  + 'find solve evaluate calculate compute determine simplify show tell give please help answer result value values equal equals plus minus times divided multiplied squared cubed power root square cube '
+  + 'find solve evaluate calculate compute determine simplify show tell give please help answer result value values equal equals plus minus times divided multiplied squared cubed power root square cube fraction fractions radical radicals surd surds rationalize rationalise denominator numerator denest identity formula formulas terms multiple angle angles sum product reduction expand '
   + 'positive negative integer integers real number numbers function expression equation equations inequality problem question given following true false have has does did not each every some any all both either '
   + 'area volume length width height radius diameter perimeter circumference triangle circle rectangle sphere cylinder derivative integral limit approaches respect interval point points line slope distance '
   + 'probability chance prime factor factors remainder divisible greater less least most larger smaller exactly approximately roughly total sum product average mean median mode').split(' '));

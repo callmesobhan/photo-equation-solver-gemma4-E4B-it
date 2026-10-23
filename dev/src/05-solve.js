@@ -797,10 +797,30 @@ function describeEq(x) {
 }
 
 // ---- plain evaluation ------------------------------------------------------------------
+/** An expression with a function in it (sin, ln, sqrt ...) and no "=": what the person wants is almost surely its simplest form. */
+function astHasCall(n) {
+  if (!n || typeof n !== 'object') return false;
+  if (n.t === 'call') return true;
+  return astHasCall(n.a) || astHasCall(n.b) || (Array.isArray(n.args) && n.args.some(astHasCall));
+}
+function simplifyLone(node, why) {
+  try {
+    const out = runCommandCall({ t: 'call', fn: 'simplify', args: [node] });
+    out.work.unshift('Type: expression with no equation, so it was simplified');
+    return out;
+  } catch (e) {
+    if (!(e instanceof MathError || e instanceof NotAlgebraic)) throw e;
+    throw new MathError(why);
+  }
+}
 function evaluateExpression(node) {
   const out = newOut();
   const vars = collectVars(node, new Set());
-  if (vars.size > 1) throw new MathError('this is an expression with several unknowns (' + sortedVars(vars).join(', ') + '), not an equation; write "= something" or give the other equations');
+  if (vars.size > 1) {
+    const why = 'this is an expression with several unknowns (' + sortedVars(vars).join(', ') + '), not an equation; write "= something" or give the other equations';
+    if (astHasCall(node)) return simplifyLone(node, why);
+    throw new MathError(why);
+  }
   if (vars.size === 1) {
     const v = sortedVars(vars)[0];
     try {
@@ -809,7 +829,7 @@ function evaluateExpression(node) {
       out.answer.push(r.d.length === 1 ? polyText(r.n, v) : '(' + polyText(r.n, v) + ')/(' + polyText(r.d, v) + ')');
       return out;
     } catch (e) {
-      if (e instanceof NotAlgebraic) throw new MathError('this expression contains the unknown ' + v + ' but no "="; I cannot simplify it. Write the full equation');
+      if (e instanceof NotAlgebraic) return simplifyLone(node, 'this expression contains the unknown ' + v + ' but no "="; I cannot simplify it. Write the full equation');
       throw e;
     }
   }
@@ -821,11 +841,18 @@ function evaluateExpression(node) {
   } catch (e) {
     if (!(e instanceof NotAlgebraic)) throw e;
   }
+  let undefinedAt = null;
+  try {
+    trigUndefined(fromAst(node));
+  } catch (e) {
+    if (e instanceof MathError && /undefined/.test(e.message)) undefinedAt = e;
+  }
+  if (undefinedAt) throw undefinedAt;
   try {
     const S = fromAst(node);
     const ev = varsOfS(S).size ? NaN : numS(S, {});
     if (isFinite(ev)) {
-      out.answer.push(symText(S));
+      out.answer.push(surdText(S) || symText(surdNorm(S)));
       return out;
     }
   } catch (e) {

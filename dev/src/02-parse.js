@@ -123,6 +123,15 @@ function convertLogBase(s) {
   return s;
 }
 
+/** "15" (degrees) -> "(pi/12)", "22.5" -> "(pi/8)", a letter -> "(x*pi/180)". */
+function degreesToPi(a) {
+  if (!/^\d+(?:\.\d+)?$/.test(a) || a.length > 15) return '(' + a + '*pi/180)';
+  const dot = a.indexOf('.');
+  const q = dot < 0 ? new Q(BigInt(a), 180n) : new Q(BigInt(a.replace('.', '')), 180n * 10n ** BigInt(a.length - dot - 1));
+  if (q.isZero()) return '(0)';
+  return '(' + (q.n === 1n ? '' : q.n + '*') + 'pi' + (q.d === 1n ? '' : '/' + q.d) + ')';
+}
+
 /** Character-level clean-up: unicode math, LaTeX, printed notation, abs bars. Keeps ; and newlines. */
 function normalizeText(raw) {
   SERIES_FLAG.v = null;
@@ -151,7 +160,8 @@ function normalizeText(raw) {
     .replace(/[→⟶↦]/g, '->')
     .replace(/[“”‘’]/g, '')
     .replace(/[αβγδθλμφωρσ]/g, (c) => GREEK[c]);
-  s = s.replace(/(\d+(?:\.\d+)?|[a-zA-Z])\s*°/g, '($1*pi/180)').replace(/°/g, '*pi/180');
+  s = s.replace(/(\d+(?:\.\d+)?)\s*(?:degrees?|deg)\b/gi, '$1°');
+  s = s.replace(/(\d+(?:\.\d+)?|[a-zA-Z])\s*°/g, (m, a) => degreesToPi(a)).replace(/°/g, '*pi/180');
   s = convertDiscrete(s);
   s = convertSubscripts(s);
   if (/[\\$]/.test(s)) s = convertLatex(s);
@@ -574,6 +584,11 @@ function parseExpression(src) {
       node = { t: 'bin', op: '^', a: node, b: powerOperand() };
     }
     if (!node) fail('"' + name + '" needs an argument');
+    // "cos 3pi/8" and "sin pi/6" mean the angle 3pi/8 and pi/6
+    if (isOp(peek(), '/') && /^(?:sin|cos|tan|cot|sec|csc)$/.test(name) && hasPi(node) && toks[i + 1] && toks[i + 1].t === 'num') {
+      i++;
+      node = { t: 'bin', op: '/', a: node, b: atom() };
+    }
     return neg ? { t: 'neg', a: node } : node;
   }
 
@@ -582,6 +597,10 @@ function parseExpression(src) {
   return node;
 }
 
+/** Is pi a factor of the (product) expression? */
+function hasPi(n) {
+  return n.t === 'const' ? n.name === 'pi' : n.t === 'bin' && n.op === '*' ? hasPi(n.a) || hasPi(n.b) : false;
+}
 /** Variable names used in an expression tree. */
 function collectVars(n, set) {
   switch (n.t) {

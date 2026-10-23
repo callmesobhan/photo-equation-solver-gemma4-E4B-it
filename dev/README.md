@@ -60,7 +60,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 
 | File | What it checks |
 |------|----------------|
-| `cases.mjs` + `run-cases.mjs` | 807 hand-written input → expected output cases |
+| `cases.mjs` + `run-cases.mjs` | 855 hand-written input → expected output cases |
 | `doc-test.mjs` | every example in `SKILL.md` runs; every command appears in the built-in help |
 | `props.mjs`, `gen_expr.py`, `gen_poly.py` | random expressions / polynomials / systems against Fraction and numpy |
 | `cas-props.mjs`, `gen_cas.py` | the symbolic core against sympy |
@@ -92,6 +92,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `fourier-battery.mjs`, `gen_fourier.py` | 44 Fourier-series checks per seed: the mean and a₁…a₄, b₁…b₄ of polynomials, exponentials, sines / cosines, |x − c|, piecewise definitions on intervals of different lengths and the half-range cosine / sine series against `scipy.integrate.quad` |
 | `precalc-battery.mjs`, `gen_precalc.py` | 136 checks per seed: amplitude / period / phase shift of sinusoids, independence, span and nullity (sympy rank), rational zeros of polynomials with roots chosen in advance, end behaviour (sympy limits), even / odd, coefficients (sympy Poly) and the range of 30 function families whose ranges are known by construction (open and closed ends, unions around poles and holes) |
 | `vectorcalc-battery.mjs`, `gen_vectorcalc.py` | 63 checks per seed: mass / centre / moments of laminas and solids, polar, cylindrical and spherical integrals (sympy), surface areas (scipy `dblquad`, spheres / cylinders / cones by formula), flux through graphs and spheres, and Green / divergence / Stokes each compared with the independent other side (edge line integrals, six face fluxes) |
+| `trig-battery.mjs`, `gen_trig.py` | ~480 checks per seed: exact values of sin / cos / tan / cot / sec / csc at multiples of π/n (n = 1, 2, 3, 4, 5, 6, 8, 10, 12, also in degrees) against Python's `math`, arithmetic with square roots (rationalised, denested, no root left in a denominator), trig of inverse trig, and `simplify` / `expand` / `trigexpand` / `tosum` checked for equivalence at random points (and for the structure asked: fully expanded, a plain sum of sines and cosines) |
 | `linalg-battery.mjs`, `gen_linalg.py` | linear algebra against sympy |
 | `linalg2-battery.mjs`, `gen_linalg2.py` | QR, Cholesky, definiteness, pinv, least squares, SVD, expm, Jordan form against numpy / scipy.linalg / sympy (printed matrices are parsed back and compared) |
 | `applied-battery.mjs`, `gen_applied.py` | geometry, triangles, units, chemistry, finance, complex numbers against pint / periodictable / numpy-financial / Python `complex` |
