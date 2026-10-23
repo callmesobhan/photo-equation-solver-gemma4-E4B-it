@@ -496,7 +496,7 @@ function poissonCmd(cumulative) {
     const lam = constQ(n.args[0]);
     const k = intArg(n.args[1]);
     if (lam.sign() <= 0) throw new MathError('λ must be positive');
-    if (k < 0n || k > 3000n) throw new MathError('k must be between 0 and 3000');
+    if (k > 3000n || (k < 0n && !cumulative)) throw new MathError('k must be between 0 and 3000');
     let acc = Q0;
     let term = Q1;
     for (let i = 0n; i <= k; i++) {
@@ -530,8 +530,8 @@ defCmd('geometcdf geometriccdf', (n) => {
   needArgs(n, 2, 2, 'p and k');
   const p = probArg(n.args[0], 'geometcdf');
   const k = intArg(n.args[1]);
-  if (k < 0n || k > 5000n) throw new MathError('k must be at least 0');
-  const res = Q1.sub(Q1.sub(p).pow(Number(k)));
+  if (k > 5000n) throw new MathError('k must be at most 5000');
+  const res = k < 0n ? Q0 : Q1.sub(Q1.sub(p).pow(Number(k)));
   const out = newOut();
   out.work.push('At least one success within k trials: 1 − (1 − p)ᵏ');
   out.answer.push('P(X ≤ ' + k + ') = ' + qText(res));

@@ -11117,7 +11117,7 @@ function poissonCmd(cumulative) {
     const lam = constQ(n.args[0]);
     const k = intArg(n.args[1]);
     if (lam.sign() <= 0) throw new MathError('\u03bb must be positive');
-    if (k < 0n || k > 3000n) throw new MathError('k must be between 0 and 3000');
+    if (k > 3000n || (k < 0n && !cumulative)) throw new MathError('k must be between 0 and 3000');
     let acc = Q0;
     let term = Q1;
     for (let i = 0n; i <= k; i++) {
@@ -11151,8 +11151,8 @@ defCmd('geometcdf geometriccdf', (n) => {
   needArgs(n, 2, 2, 'p and k');
   const p = probArg(n.args[0], 'geometcdf');
   const k = intArg(n.args[1]);
-  if (k < 0n || k > 5000n) throw new MathError('k must be at least 0');
-  const res = Q1.sub(Q1.sub(p).pow(Number(k)));
+  if (k > 5000n) throw new MathError('k must be at most 5000');
+  const res = k < 0n ? Q0 : Q1.sub(Q1.sub(p).pow(Number(k)));
   const out = newOut();
   out.work.push('At least one success within k trials: 1 \u2212 (1 \u2212 p)\u1d4f');
   out.answer.push('P(X \u2264 ' + k + ') = ' + qText(res));
@@ -13212,6 +13212,9 @@ HELP.words = [
   '  algebra 2  "discriminant of x^2 - 4x + 7"  "complete the square for x^2 + 6x + 2"  "vertex of y = 2x^2 - 8x + 5"  "foci of the ellipse x^2/25 + y^2/9 = 1"  "expand log(x^2 * y)"  "condense 2*log(x) + log(y)"  "the 4th term of (x+y)^9"',
   '             "simplify the ratio 12:18"  "3:4 = x:12"  "write 0.00045 in scientific notation"  "A = {1,2,3}, B = {2,3,4}, find A union B"  "{1,2,3} \u2229 {2,3,4}"  "number of subsets of {1,2,3,4}"  "hexadecimal FF to decimal"',
   '             "95% confidence interval for the mean with sample mean 50, standard deviation 8, n = 36"  "probability of at least 2 successes in 5 trials with p = 0.3"  "probability of at least one head in 3 coin flips"',
+  '  stats 3    "X is normal with mean 100 and sd 15, find P(85 < X < 115)"  "P(X = 3) for a binomial with n = 10 and p = 0.3"  "Poisson with mean 4, P(X <= 2)"  "the 90th percentile of a normal distribution with mean 100 and sd 15"',
+  '             "one-sample t test with sample mean 103, hypothesized mean 100, sd 12, n = 49"  "z test with sample mean 52, mu = 50, sigma 4, n = 25"  "probability of drawing 2 red then 1 blue from 5 red and 3 blue without replacement"',
+  '             "the probability the first success is on trial 4 for a geometric distribution with p = 0.2"  "how many standard deviations is 130 from the mean of 100 with a standard deviation of 15"',
   '  textbook   "linear approximation of sqrt(x) at x = 4"  "mean value theorem for f(x) = x^2 on [1, 3]"  "show that x^3 + x - 1 has a root in [0, 1]"  "1 + 2 + 3 + ... + 100"  "sum of the geometric series 1 + 1/2 + 1/4 + ..."',
   '             "expected value of a fair die"  "the mean and variance of a binomial distribution with n = 10 and p = 0.3"  "P(A|B) if P(A and B) = 0.2 and P(B) = 0.5"  "how many ways can 5 people sit in a row"  "how many ways can a committee of 3 be chosen from 10 people"',
   '             "convert 3pi/5 radians to degrees"  "combine 1/(x-1) + 2/(x+1)"  "arc length with radius 5 and angle 60 degrees"',
@@ -20602,6 +20605,71 @@ function wSubstitution(s) {
   return used ? out : null;
 }
 
+/** "P(X = 3) for a binomial with n = 10 and p = 0.3", "Poisson with mean 4, P(X <= 2)", "X is normal with mean 100 and sd 15, find P(85 < X < 115)" */
+function wDistProb(s) {
+  const q = /\bP\s*\(\s*(?:(-?[\d.]+)\s*(<|\u2264|<=)\s*)?X\s*(?:(=|==|<|>|\u2264|\u2265|<=|>=)\s*(-?[\d.]+)|(<|\u2264|<=)\s*(-?[\d.]+))\s*\)/i.exec(s);
+  if (!q) return null;
+  const NUM = '(-?\\d+(?:\\.\\d+)?(?:\\s*/\\s*\\d+)?)';
+  const find = (rx) => { const m = rx.exec(s); return m ? m[1].replace(/\s+/g, '') : null; };
+  let lo = null;
+  let hi = null;
+  let op = null;
+  let k = null;
+  let loOp = null;
+  let hiOp = null;
+  if (q[1] !== undefined) { lo = q[1]; loOp = q[2]; hi = q[4] !== undefined ? q[4] : q[6]; hiOp = q[3] || q[5]; } else if (q[3] !== undefined) { op = q[3]; k = q[4]; } else { op = q[5]; k = q[6]; }
+  const norm = /\bnormal(?:ly)?\b|\bN\s*\(/i.test(s);
+  const pois = /\bpoisson\b/i.test(s);
+  const geom = /\bgeometric\b/i.test(s);
+  const binom = /\bbinomial\b|\bbin(?:omial)?\s*\(/i.test(s) && !pois && !norm;
+  const eq = (v) => (v === '=' || v === '==');
+  if (norm) {
+    const mean = find(new RegExp('(?:mean|\u03bc|mu)\\s*(?:of|=|is)?\\s*' + NUM, 'i')) ?? (/N\s*\(\s*(-?[\d.]+)\s*,/.exec(s) || [])[1];
+    const sd = find(new RegExp('(?:standard\\s+deviation|std|sd|\u03c3|sigma)\\s*(?:of|=|is)?\\s*' + NUM, 'i')) ?? (/N\s*\(\s*-?[\d.]+\s*,\s*(-?[\d.]+)/.exec(s) || [])[1];
+    if (mean == null || sd == null) return null;
+    if (lo != null) return wCall('normalcdf', lo, hi, mean, sd);
+    if (/[<\u2264]/.test(op)) return wCall('normalcdf', '-oo', k, mean, sd);
+    if (/[>\u2265]/.test(op)) return wCall('normalcdf', k, 'oo', mean, sd);
+    return null;
+  }
+  const kind = pois ? 'poisson' : geom ? 'geomet' : binom ? 'binom' : null;
+  if (!kind) return null;
+  let params;
+  if (kind === 'binom') {
+    const n = find(/\bn\s*=\s*(\d+)/i) || find(/(\d+)\s+trials/i) || (/[Bb]in(?:omial)?\s*\(\s*(\d+)\s*,/.exec(s) || [])[1];
+    const p = find(/\bp\s*=\s*(0?\.\d+|\d+\/\d+|\d+%)/i) || find(/probability\s+(?:of\s+success\s+)?(?:of\s+|is\s+|=\s*)?(0?\.\d+|\d+\/\d+)/i) || (/[Bb]in(?:omial)?\s*\(\s*\d+\s*,\s*(0?\.\d+|\d+\/\d+)/.exec(s) || [])[1];
+    if (!n || !p) return null;
+    params = [n, p];
+  } else if (kind === 'poisson') {
+    const l = find(new RegExp('(?:mean|rate|\u03bb|lambda|average)\\s*(?:of|=|is)?\\s*' + NUM, 'i')) || (/[Pp]oisson\s*\(\s*([\d.]+)\s*\)/.exec(s) || [])[1];
+    if (!l) return null;
+    params = [l];
+  } else {
+    const p = find(/\bp\s*=\s*(0?\.\d+|\d+\/\d+)/i) || find(/probability\s+(?:of\s+success\s+)?(?:of\s+|is\s+|=\s*)?(0?\.\d+|\d+\/\d+)/i);
+    if (!p) return null;
+    params = [p];
+  }
+  if (kind === 'geomet') {
+    const ft = /first\s+success\s+(?:is\s+|occurs\s+|happens\s+)?(?:on|at|in)\s+(?:the\s+)?(?:trial\s+)?(\d+)/i.exec(s);
+    if (ft && !q) return wCall('geometpdf', ...params, ft[1]);
+  }
+  const pdf = (v) => wCall(kind + 'pdf', ...params, v);
+  const cdf = (v) => (kind === 'binom' ? wCall('binomcdf', ...params, v) : wCall(kind + 'cdf', ...params, v));
+  const dec = (v) => String(Number(v) - 1);
+  if (lo != null) {
+    const a = /^</.test(loOp) && !/<=/.test(loOp) ? String(Number(lo) + 1) : lo;
+    const b = /^</.test(hiOp) && !/<=/.test(hiOp) ? String(Number(hi) - 1) : hi;
+    if (kind === 'binom') return wCall('binomcdf', ...params, a, b);
+    return cdf(b) + ' - ' + cdf(dec(a));
+  }
+  if (eq(op)) return pdf(k);
+  if (op === '<=' || op === '\u2264') return cdf(k);
+  if (op === '<') return cdf(dec(k));
+  if (op === '>=' || op === '\u2265') return '1 - ' + cdf(dec(k));
+  if (op === '>') return '1 - ' + cdf(k);
+  return null;
+}
+
 /** One line, whole-line patterns. Returns the replacement text or null. */
 function wRules(s) {
   let m;
@@ -20610,6 +20678,8 @@ function wRules(s) {
   if (pr) return pr;
   const st = wSetSentence(s);
   if (st) return st;
+  const dp = wDistProb(s);
+  if (dp) return dp;
   const sub = wSubstitution(s);
   if (sub) return sub;
 
@@ -20821,6 +20891,54 @@ function wRules(s) {
   if ((m = /^(?:the\s+)?chi\s*-?\s*(?:square|squared|sq)(?:d)?\s+critical\s+value\s+(?:at|for|with)\s+(?:alpha\s*=\s*|\u03b1\s*=\s*|significance\s+level\s+)?(0?\.\d+)\s*(?:significance\s+level\s*)?(?:and|with|,)?\s*(\d+)\s+degrees\s+of\s+freedom$/i.exec(s))) return wCall('invchi2', String(1 - Number(m[1])), m[2]);
   if ((m = /^(?:the\s+)?sample\s+size\s+(?:needed|required|necessary)?\s*(?:for|to\s+(?:get|have|achieve))?\s*(?:a\s+)?margin\s+of\s+error\s*(?:of|=)?\s*([\d.]+)\s*(?:with|and|,|given)?\s*(?:a\s+)?(?:population\s+)?(?:sd|standard\s+deviation|\u03c3|sigma)\s*(?:of|=)?\s*([\d.]+)\s*(?:at|with|and|,)?\s*(\d+(?:\.\d+)?)\s*%\s*(?:confidence)?$/i.exec(s))) return wCall('samplesize', m[2], m[1], String(Number(m[3]) / 100));
   if ((m = /^(?:what\s+is\s+)?(?:the\s+)?probability\s+of\s+rolling\s+(two|three|four|five|six)\s+(?:sixes|ones|twos|threes|fours|fives|[a-z]+s)(?:\s+in\s+a\s+row)?$/i.exec(s))) return '(1/6)^' + { two: 2, three: 3, four: 4, five: 5, six: 6 }[m[1].toLowerCase()];
+  if (/\bgeometric\b/i.test(s) && (m = /first\s+success\s+(?:is\s+|occurs\s+|happens\s+)?(?:on|at|in)\s+(?:the\s+)?(?:trial\s+)?(\d+)/i.exec(s))) {
+    const p = (/\bp\s*=\s*(0?\.\d+|\d+\/\d+)/i.exec(s) || /probability\s+(?:of\s+success\s+)?(?:of\s+|is\s+|=\s*)?(0?\.\d+|\d+\/\d+)/i.exec(s) || [])[1];
+    if (p) return wCall('geometpdf', p, m[1]);
+  }
+  // ---- percentiles of a normal distribution, hypothesis tests from summary numbers, z for a value
+  if ((m = /^(?:find\s+)?(?:the\s+)?(\d+(?:\.\d+)?)(?:st|nd|rd|th)?\s+percentile\s+(?:of|for)\s+(?:a\s+|the\s+)?(?:normal|normally\s+distributed)\b.*$/i.exec(s))) {
+    const mean = (/(?:mean|\u03bc|mu)\s*(?:of|=|is)?\s*(-?[\d.]+)/i.exec(s) || [])[1];
+    const sd = (/(?:standard\s+deviation|std|sd|\u03c3|sigma)\s*(?:of|=|is)?\s*([\d.]+)/i.exec(s) || [])[1];
+    if (mean != null && sd != null) return wCall('invnorm', String(Number(m[1]) / 100), mean, sd);
+  }
+  if ((m = /^(?:percentile|the\s+(\d+(?:\.\d+)?)(?:st|nd|rd|th)\s+percentile(?:\s+of)?)\s*(\d+(?:\.\d+)?)?\s*(?:of|for)?\s*(\[[^\]]*\])$/i.exec(s))) {
+    const pc = m[1] || m[2];
+    if (pc) return wCall('percentile', m[3], pc);
+  }
+  if (/\b(?:t|z)[- ]?test\b/i.test(s) && !/\btwo[- ]sample\b|\bpaired\b|\bslope\b/i.test(s)) {
+    const num = '(-?\\d+(?:\\.\\d+)?)';
+    const mean = new RegExp('(?:sample\\s+)?mean\\s*(?:of|=|is)?\\s*' + num, 'i').exec(s);
+    const mu0 = new RegExp('(?:hypothesi[sz]ed\\s+mean|null\\s+mean|population\\s+mean|mu\\s*0|\u03bc\\s*0|mu_0|mu|\u03bc)\\s*(?:of|=|is)?\\s*' + num, 'i').exec(s);
+    const nn = /\bn\s*=\s*(\d+)|sample\s+(?:size|of)\s*(?:is\s*)?(\d+)/i.exec(s);
+    const isZ = /\bz[- ]?test\b/i.test(s);
+    const sd = isZ ? new RegExp('(?:\u03c3|sigma|population\\s+standard\\s+deviation|standard\\s+deviation|sd)\\s*(?:of|=|is)?\\s*' + num, 'i').exec(s) : new RegExp('(?:sample\\s+standard\\s+deviation|standard\\s+deviation|std|sd|\\bs)\\s*(?:of|=|is)?\\s*' + num, 'i').exec(s);
+    if (mean && mu0 && sd && nn) return isZ ? wCall('ztest', mean[1], mu0[1], sd[1], nn[1] || nn[2]) : wCall('ttest', mean[1], sd[1], nn[1] || nn[2], mu0[1]);
+  }
+  if ((m = /^(?:test\s+(?:whether|if)\s+)?(?:the\s+)?(?:a\s+)?(?:one[- ]?sample\s+)?(?:z[- ]test\s+for\s+(?:a\s+)?)?proportion\s+(?:is|equals|=)?\s*(0?\.\d+|\d+\/\d+)?.*?(\d+)\s+successes?\s+(?:in|out\s+of|from)\s+(\d+)/i.exec(s)) && m[1]) return wCall('proptest', m[2], m[3], m[1]);
+  if ((m = /^(?:a\s+)?chi[- ]?(?:square|squared)(?:d)?\s+(?:test\s+)?(?:of\s+independence\s+)?(?:test\s+)?(?:for|of|on|with)\s+(?:the\s+)?(?:table\s+|contingency\s+table\s+|data\s+)?(.+)$/i.exec(s))) {
+    const b = wBrackets(m[1]);
+    if (b.length === 1) return wCall('chisqtest', b[0]);
+    if (b.length === 2) return wCall('chisqtest', b[0], b[1]);
+  }
+  if ((m = /^(?:a\s+)?(?:two[- ]sample\s+)?(?:welch\s+)?t[- ]?test\s+(?:for|of|on|between|comparing)\s+(.+)$/i.exec(s)) && wBrackets(m[1]).length === 2 && /two[- ]sample|welch|and/i.test(s)) return wCall('ttest2', ...wBrackets(m[1]));
+  if ((m = /^how\s+many\s+standard\s+deviations\s+(?:is|are|away\s+is)\s+(-?[\d.]+)\s+(?:from|away\s+from|above|below)\s+(?:the\s+)?mean\s*(?:of|=)?\s*(-?[\d.]+)\s*(?:with|and|,)?\s*(?:a\s+)?(?:standard\s+deviation|sd|std)\s*(?:of|=)?\s*([\d.]+)$/i.exec(s))) return wCall('zscore', m[1], m[2], m[3]);
+  // ---- ordered draws: "probability of drawing 2 red then 1 blue from 5 red and 3 blue without replacement"
+  if ((m = /^(?:the\s+)?probability\s+of\s+(?:drawing|picking|choosing|getting)\s+(\d+)\s+([a-z]+)\s+(?:and\s+)?then\s+(\d+)\s+([a-z]+)(?:\s+(?:and\s+)?then\s+(\d+)\s+([a-z]+))?\s+from\s+(?:a\s+bag\s+(?:of|with|containing)\s+)?(\d+)\s+([a-z]+)\s+and\s+(\d+)\s+([a-z]+)(?:\s+marbles?|\s+balls?|\s+cards?)?\s*(?:,?\s*(with|without)\s+replacement)?$/i.exec(s))) {
+    const bag = new Map([[m[8].toLowerCase(), Number(m[7])], [m[10].toLowerCase(), Number(m[9])]]);
+    const draws = [];
+    [[m[1], m[2]], [m[3], m[4]], [m[5], m[6]]].forEach(([c, col]) => { if (c) for (let i = 0; i < Number(c); i++) draws.push(col.toLowerCase()); });
+    if (draws.length && draws.every((c) => bag.has(c)) && draws.length <= 12) {
+      const withRep = /^with$/i.test(m[11] || '');
+      let total = Number(m[7]) + Number(m[9]);
+      const left = new Map(bag);
+      const parts = draws.map((c) => {
+        const t = '(' + left.get(c) + '/' + total + ')';
+        if (!withRep) { left.set(c, left.get(c) - 1); total--; }
+        return t;
+      });
+      return parts.join('*');
+    }
+  }
   // ---- equation with an interval for the unknown
   if (/[<>\u2264\u2265]|\[|\(/.test(s) && /=/.test(s) && !/\b(?:fourier|series|integral|integrate|derivative|limit|laplace|average|area|volume|length|taylor|maclaurin|sum|plot|graph|domain|tangent)\b/i.test(s)) {
     const win = wWindow(s.replace(/^solve\s+(?:the\s+equation\s+)?/i, ''));

@@ -60,7 +60,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 
 | File | What it checks |
 |------|----------------|
-| `cases.mjs` + `run-cases.mjs` | 987 hand-written input → expected output cases |
+| `cases.mjs` + `run-cases.mjs` | 1001 hand-written input → expected output cases |
 | `doc-test.mjs` | every example in `SKILL.md` runs; every command appears in the built-in help |
 | `props.mjs`, `gen_expr.py`, `gen_poly.py` | random expressions / polynomials / systems against Fraction and numpy |
 | `cas-props.mjs`, `gen_cas.py` | the symbolic core against sympy |
@@ -95,6 +95,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `trig-battery.mjs`, `gen_trig.py` | ~480 checks per seed: exact values of sin / cos / tan / cot / sec / csc at multiples of π/n (n = 1, 2, 3, 4, 5, 6, 8, 10, 12, also in degrees) against Python's `math`, arithmetic with square roots (rationalised, denested, no root left in a denominator), trig of inverse trig, and `simplify` / `expand` / `trigexpand` / `tosum` checked for equivalence at random points (and for the structure asked: fully expanded, a plain sum of sines and cosines) |
 | `textbook-battery.mjs`, `gen_textbook.py` | ~230 checks per seed: linear approximation (against the tangent formula), mean value / Rolle theorems (every c checked against sympy / scipy roots of f' − rate), intermediate value theorem, sums of arithmetic / geometric / famous series (mpmath `nsum`), mean and variance of the binomial, Poisson, geometric and die distributions, probability sentences (exact `fractions` arithmetic), counting phrases (`math.comb`, `math.perm`), radian / degree conversions and combined fractions |
 | `algebra2-battery.mjs`, `gen_algebra2.py` | ~490 checks per seed: perfect numbers and divisor counts (sympy / brute force), remainders, rounding, fractions and repeating decimals (`fractions`), lines through a point, spans of vectors, systems "using matrices"; discriminant / completing the square / vertex of random quadratics (exact formulas), expanding and condensing logarithms (equivalence at random positive points and structure), sets (Python `set`, also from sentences with { } and ∪ ∩), digits in bases up to 36 (`int(s, base)`), binomial terms (sympy), ratios and proportions, scientific notation and confidence intervals from summary numbers (scipy `t.ppf`, `norm.ppf`) |
+| `stats3-battery.mjs` + `gen_stats3.py` | statistics sentences phrased every way (strict / non-strict bounds, ranges, tails, percentiles, one-sample t / z and proportion tests, ordered draws, geometric first success) compared with scipy.stats and fractions |
 | `noise-battery.mjs` | about half of the hand-written cases per seed, sent again with a worksheet label in front (`Q3.`, `Problem 2:`, `(a)`, `1)`, `Ex. 5`, a bullet) and an instruction behind (`(solve for x)`): the result must be identical to the clean text |
 | `linalg-battery.mjs`, `gen_linalg.py` | linear algebra against sympy |
 | `linalg2-battery.mjs`, `gen_linalg2.py` | QR, Cholesky, definiteness, pinv, least squares, SVD, expm, Jordan form against numpy / scipy.linalg / sympy (printed matrices are parsed back and compared) |
