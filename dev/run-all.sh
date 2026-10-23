@@ -43,6 +43,9 @@ echo; echo "== 8p. planes, lines, skew lines, spheres and quadric surfaces vs sy
 echo; echo "== 8q. plot extras (slope fields, fits, histograms, box plots, shaded areas, implicit curves, contours, regions): printed numbers vs numpy / scipy / exact fractions"; for s in 1 2; do node plot2-battery.mjs "$tmp/test-index.html" $s; done
 echo; echo "== 8r. series: convergence verdicts and radius / interval of convergence for the standard families (truth known from theory)"; for s in 1 2; do node series-battery.mjs "$skill" $s; done
 echo; echo "== 8s. Laplace transforms and initial value problems with unit steps and impulses vs quadrature / mpmath / scipy solve_ivp"; for s in 1 2; do node laplace2-battery.mjs "$skill" $s; done
+echo; echo "== 8t. plain-English phrasings give exactly the answer of the command they stand for (random numbers, every template)"; for s in 1 2; do node words-battery.mjs "$skill" $s; done
+echo; echo "== 8u. plane geometry (circles, tangents, lines, triangle centres, transformations, hulls) vs sympy.geometry"; for s in 1 2; do node coord2d-battery.mjs "$skill" $s; done
+echo; echo "== 8v. equations with an interval for the unknown (trig, exponential, polynomial) vs a fine scan + brentq and polynomials with chosen roots"; for s in 1 2; do node window-battery.mjs "$skill" $s; done
 echo; echo "== 8h. random limits, Taylor polynomials, definite integrals (pole detection) and finite sums, checked numerically"; for s in 1 2; do node calc-random-battery.mjs "$skill" $s 80; done
 echo; echo "== 8i. random equations (rational, radical, exponential, log, abs, polynomial) and inequalities, checked by a numerical scan"; for s in 1 2; do node eq-battery.mjs "$skill" $s 80; done
 echo; echo "== 8g. random rational functions (non-monic factors): apart, integrals, inverse Laplace, checked numerically"; for s in 1 2; do node rational-battery.mjs "$skill" $s 100; done

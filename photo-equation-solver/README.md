@@ -36,6 +36,9 @@ Everything runs on the phone. `scripts/index.html` is a single self-contained fi
 | **Curves and vectors** | `paramdiff`, `paramlength`, `paramarea`, `polararea`, `polarlength`, `polarslope`, coordinate conversions (`topolar`, `tospherical`, ...), `velocity`, `curvature`, `tnb` (T, N, B, curvature, torsion), `lineintegral`, `potential` |
 | **Numerical methods** | `euler` / `heun` / `rk4` for y' = f(x, y) (exact fractions, compared with the exact solution), `trapezoid` / `simpson` / `midpointrule` / `riemann` with error bounds, `bisection`, `secant`, `falseposition`, `fixedpoint`, `interpolate`, `spline`, `polyfit`, `difftable`, `numdiff` |
 | **Series** | `convergence(n^2/2^n, n)`: converges absolutely / conditionally or diverges, with the test that decides (term, geometric, ratio, root, p-series comparison, integral, alternating); `radius((x-2)^n/(n*3^n), n, x, 1)`: radius and interval of convergence with both end points tested; written as sentences too ("Does the series Σ 1/n^2 converge?") |
+| **Plain English** | the whole line may be a textbook question in words: "find the derivative of x^3 + 2x", "integrate x^2 from 0 to 1", "limit of sin(x)/x as x approaches 0", "factor x^2 - 5x + 6", "gcd of 12 and 18", "area of a circle with radius 3", "distance between (1,2) and (4,6)", "mean of 2, 4, 6, 8", "determinant of [[1,2],[3,4]]", "let f(x) = 2x + 1 and g(x) = x^2, find f(g(3))"; the asked quantity is listed first. Words that are not maths ("What is the length of a rectangle with area 20...") are refused instead of being read as products of letters (`help words` lists the phrasings) |
+| **Plane geometry** | circle through three points / from a diameter / centre and radius, line and circle (secant, tangent, none; exact points), two circles (apart, touching, intersecting, inside; radical axis), tangents from or at a point, perpendicular bisector, parallel and perpendicular lines, intersection and angle, triangle centres (centroid, circumcentre, orthocentre, incentre and radii), rotation / reflection / translation / dilation, section formula, collinearity, convex hull; lines and circles can be written as equations |
+| **Equations in an interval** | `cos(x) = 0.5, 0 <= x <= 2pi`, `sin(x) = 1/2 for x in [0, 360°]`, `x^3 - x = 0 on (-2, 2)`: only the solutions inside the interval (exact values and degrees when they are recognised; touching roots are polished); `verify sin(2x) = 2 sin(x) cos(x)` reports an identity |
 | **Several variables** | `grad`, `hessian`, `jacobian`, `divergence`, `curl`, `directional`, `tangentplane`, critical points of `f(x, y)` with the second-derivative test, `lagrange` multipliers, double and triple integrals as nested `integrate(...)` |
 | **Linear programming** | `maximize 3x + 2y subject to x + y <= 4, x, y >= 0` (up to 4 variables; exact corner points, unbounded/infeasible detection, integer programs) |
 | **Algebra** | `factor`, `expand`, `simplify`, `apart` (partial fractions), `gcd`/`lcm`, polynomial division, exact radicals |
@@ -148,7 +151,7 @@ photo-equation-solver/
 
 Automated, on a desktop (`dev/run-all.sh` in the repository runs all of it):
 
-- 668 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
+- 734 hand-written cases (equations, calculus, matrices, number theory, statistics, complex numbers,
   geometry, units, chemistry, finance, graphs, differential equations, messy transcriptions, errors)
 - calculus against **sympy** and **scipy**: 146 antiderivatives (each also verified by differentiating),
   42 definite/improper integrals, 43 limits, 22 sums, 593 random symbolic expressions

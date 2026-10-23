@@ -33,4 +33,14 @@ if (window.__test) {
   if (undocumented.length) { bad++; console.log('✗ commands missing from the built-in help: ' + undocumented.join(', ')); }
   else console.log('every command (or one of its aliases) appears in the built-in help');
 }
+// every phrase quoted in "help words" must be understood
+{
+  const words = (await call({ equation: 'help words' })).result;
+  const phrases = [...words.matchAll(/"([^"]+)"/g)].map((x) => x[1]).filter((p) => !/\.\.\./.test(p) && /[a-z]{3}/.test(p));
+  for (const p of phrases) {
+    const r = await call({ equation: p });
+    if (r.error !== undefined) { bad++; console.log('✗ "help words" phrase fails: ' + p + '\n    ' + r.error); }
+  }
+  console.log(phrases.length + ' phrases quoted in "help words" run');
+}
 process.exit(bad ? 1 : 0);

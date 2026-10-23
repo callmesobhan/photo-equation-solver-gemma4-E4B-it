@@ -363,6 +363,7 @@ function convertLogBase(s) {
 /** Character-level clean-up: unicode math, LaTeX, printed notation, abs bars. Keeps ; and newlines. */
 function normalizeText(raw) {
   SERIES_FLAG.v = null;
+  WORDS_ASK.v = null;
   let s = convertApplied(convertLogic(String(raw)));
   s = s.replace(/[\u2211\u03a3]/g, '\u0001S').replace(/[\u220f\u03a0]/g, '\u0001P');
   s = s.replace(/[\u2070\u00b9\u00b2\u00b3\u2074-\u207b]+/g, (m) =>
@@ -586,6 +587,10 @@ function tokenize(s) {
         const word = /^[a-z]{5,}(?=\()/.exec(rest);
         if (word && !FN_NAMES.some((f) => word[0].includes(f)) && !Object.keys(COMMANDS).some((f) => word[0].includes(f)) && !/pi|oo/.test(word[0])) {
           throw new MathError('"' + word[0] + '" is not a function this solver knows; see "help" for the supported functions and commands');
+        }
+        const wd = /^[a-z]+/.exec(rest);
+        if (wd && wd[0].length >= 3 && (i === 0 || !/[a-z]/.test(s[i - 1])) && ENGLISH_WORDS.has(wd[0])) {
+          throw new MathError('"' + wd[0] + '" is a word of the question, not part of the maths; send only the equation or expression (or a plain phrasing such as "derivative of x^2" or "area of a circle with radius 3")');
         }
         tok = { t: 'id', v: c };
         i++;
@@ -1722,7 +1727,7 @@ function residualCheck(lhs, rhs, v, roots) {
 }
 
 // ---- one unknown: exact rational path --------------------------------------------
-function solveRationalEquation(f, dom, eq, v) {
+function solveRationalEquation(f, dom, eq, v, win) {
   const out = newOut();
   const N = f.n;
   const denomRoots = [];
@@ -1751,6 +1756,19 @@ function solveRationalEquation(f, dom, eq, v) {
   const keep = [];
   const rejected = [];
   for (const r of roots.real) (dom.some((P) => polyIsZeroAt(P, r)) ? rejected : keep).push(r);
+  if (win) {
+    const eps = 1e-9;
+    const inside = (x) => (x > win.lo + eps || (win.loInc && Math.abs(x - win.lo) <= eps)) && (x < win.hi - eps || (win.hiInc && Math.abs(x - win.hi) <= eps));
+    const kept = keep.filter((r) => inside(r.val));
+    keep.length = 0;
+    kept.forEach((r) => keep.push(r));
+    const bt = (x) => { const rc = recognize(x); return rc ? rc.text : fmtNum(x); };
+    out.notes.push('Only solutions with ' + bt(win.lo) + (win.loInc ? ' \u2264 ' : ' < ') + v + (win.hiInc ? ' \u2264 ' : ' < ') + bt(win.hi) + ' are listed.');
+    if (!keep.length) {
+      out.answer.push('no solution in the interval');
+      return out;
+    }
+  }
   if (rejected.length) out.work.push('Rejected (makes a denominator zero): ' + listJoin(rejected.map((r) => v + ' = ' + (r.text || fmtNum(r.val)))));
   if (keep.length) {
     capList(keep.map((r) => rootLine(v, r))).forEach((l) => out.answer.push(l));
@@ -1834,7 +1852,7 @@ function periodStep(P) {
   return (fr.p === 1 ? '' : String(fr.p)) + '\u03c0k' + (fr.q === 1 ? '' : '/' + fr.q);
 }
 
-function solveNumericEquation(eq, v) {
+function solveNumericEquation(eq, v, win) {
   const out = newOut();
   const env = {};
   const F = (x) => {
@@ -1842,10 +1860,10 @@ function solveNumericEquation(eq, v) {
     return evalNum(eq.lhs, env) - evalNum(eq.rhs, env);
   };
   const trig = usesTrig(eq.lhs) || usesTrig(eq.rhs);
-  let P = trig ? findPeriod(F) : 0;
-  const lo = P ? 0 : -SCAN_LIMIT;
-  const hi = P ? P : SCAN_LIMIT;
-  const steps = P ? 6000 : 80000;
+  let P = trig && !win ? findPeriod(F) : 0;
+  const lo = win ? win.lo : P ? 0 : -SCAN_LIMIT;
+  const hi = win ? win.hi : P ? P : SCAN_LIMIT;
+  const steps = win ? Math.min(160000, Math.max(8000, Math.ceil((hi - lo) * 500))) : P ? 6000 : 80000;
   const h = (hi - lo) / steps;
   const xs = new Array(steps + 1);
   const fs = new Array(steps + 1);
@@ -1882,7 +1900,15 @@ function solveNumericEquation(eq, v) {
     if (i > 0 && i < steps && isFinite(fs[i - 1]) && isFinite(fs[i + 1]) && (f < 0) === (fs[i - 1] < 0) && (f < 0) === (fs[i + 1] < 0) &&
         Math.abs(f) <= Math.abs(fs[i - 1]) && Math.abs(f) <= Math.abs(fs[i + 1]) &&
         Math.abs(f) < 0.5 * Math.max(Math.abs(fs[i - 1]), Math.abs(fs[i + 1])) && ++refinements <= 400) {
-      const m = minimizeAbs(F, xs[i - 1], xs[i + 1]);
+      let m = minimizeAbs(F, xs[i - 1], xs[i + 1]);
+      // a touching root is where the slope changes sign: polish it with a bisection on the slope (the minimum itself is only good to about 1e-8)
+      const D = (x) => (F(x + 1e-5) - F(x - 1e-5)) / 2e-5;
+      const d0 = D(xs[i - 1]);
+      const d1 = D(xs[i + 1]);
+      if (isFinite(d0) && isFinite(d1) && (d0 < 0) !== (d1 < 0)) {
+        const mm = bisect(D, xs[i - 1], xs[i + 1]);
+        if (Math.abs(F(mm)) <= Math.abs(F(m)) + 1e-15) m = mm;
+      }
       if (Math.abs(F(m)) <= tol(m)) roots.push(m);
     }
   }
@@ -1891,10 +1917,18 @@ function solveNumericEquation(eq, v) {
     return out;
   }
   if (P) roots = roots.map((r) => ((r % P) + P) % P).map((r) => (P - r < 1e-9 ? 0 : r));
+  if (win) {
+    // the end points of the interval are tested on their own (the scan only sees sign changes)
+    [[win.lo, win.loInc], [win.hi, win.hiInc]].forEach(([e, inc]) => {
+      if (inc && Math.abs(F(e)) <= Math.max(tol(e), 1e-11)) roots.push(e);
+    });
+    roots = roots.filter((r) => (r > win.lo || (win.loInc && Math.abs(r - win.lo) < 1e-9 * (1 + Math.abs(r)))) && (r < win.hi || (win.hiInc && Math.abs(r - win.hi) < 1e-9 * (1 + Math.abs(r)))));
+    roots = roots.filter((r) => !(!win.loInc && Math.abs(r - win.lo) < 1e-9) && !(!win.hiInc && Math.abs(r - win.hi) < 1e-9));
+  }
   roots.sort((a, b) => a - b);
   const uniq = [];
   for (const r of roots) if (!uniq.length || r - uniq[uniq.length - 1] > 1e-7 * (1 + Math.abs(r))) uniq.push(r);
-  out.work.push('Type: equation with ' + (trig ? 'trigonometric functions' : 'a non-polynomial expression (root, exponential, logarithm, absolute value ...)') + ' - solved numerically (exact names are shown when they are recognised)');
+  out.work.push('Type: equation with ' + (win ? 'an interval for ' + v + (trig ? ' (trigonometric functions)' : '') : trig ? 'trigonometric functions' : 'a non-polynomial expression (root, exponential, logarithm, absolute value ...)') + ' - solved numerically (exact names are shown when they are recognised)');
   // The solution set may repeat faster than the function itself (e.g. sin x = cos x: every pi, not 2 pi).
   if (P && uniq.length) {
     for (let m = 12; m >= 2; m--) {
@@ -1914,7 +1948,7 @@ function solveNumericEquation(eq, v) {
   }
   if (truncated) out.notes.push('The search was stopped early because the function oscillates too fast or has too many solutions, so this answer is incomplete.');
   if (!uniq.length) {
-    out.answer.push(truncated ? 'could not find a solution before the search was stopped' : 'no real solution found' + (P ? '' : ' between ' + v + ' = -' + SCAN_LIMIT + ' and ' + SCAN_LIMIT));
+    out.answer.push(truncated ? 'could not find a solution before the search was stopped' : 'no real solution found' + (win ? ' in the interval' : P ? '' : ' between ' + v + ' = -' + SCAN_LIMIT + ' and ' + SCAN_LIMIT));
     return out;
   }
   let total = uniq.length;
@@ -1939,10 +1973,19 @@ function solveNumericEquation(eq, v) {
       }
     } else {
       line = rec ? (rec.rational && !rec.text.includes('/') ? v + ' = ' + rec.text : v + ' = ' + rec.text + ' (' + approxSym(r) + ' ' + d + ')') : v + ' \u2248 ' + d;
+      if (win && rec && /\u03c0/.test(rec.text)) {
+        const deg = (r * 180) / Math.PI;
+        const dfr = toFraction(deg, 6);
+        if (dfr) line += '  [' + (dfr.q === 1 ? dfr.p : fmtNum(deg)) + '\u00b0]';
+      }
     }
     out.answer.push(line);
   }
-  if (P) out.notes.push('The equation repeats every ' + periodText(P) + ' (k is any integer). The solutions listed are those in 0 \u2264 ' + v + ' < ' + periodText(P) + '.');
+  if (win) {
+    const bt = (x) => { const rc = recognize(x); return rc ? rc.text : fmtNum(x); };
+    out.notes.push('Solutions with ' + bt(win.lo) + (win.loInc ? ' \u2264 ' : ' < ') + v + (win.hiInc ? ' \u2264 ' : ' < ') + bt(win.hi) + ' (' + uniq.length + ' found).');
+  }
+  else if (P) out.notes.push('The equation repeats every ' + periodText(P) + ' (k is any integer). The solutions listed are those in 0 \u2264 ' + v + ' < ' + periodText(P) + '.');
   else out.notes.push('Searched for real solutions between ' + v + ' = -' + SCAN_LIMIT + ' and ' + SCAN_LIMIT + '.');
   out.check = uniq.every((r) => Math.abs(F(r)) <= Math.max(tol(r), 1e-7)) ? 'substituting back gives equal sides (to numerical precision)' : null;
   return out;
@@ -2463,6 +2506,8 @@ function solveProblem(text, solveFor) {
   if (special) return special;
   sts = sts.map(resolveCommandsStatement);
   const readAs = sts.map(showStatement).join(';  ');
+  const windowed = tryWindowedEquation(sts);
+  if (windowed) return { readAs, out: windowed };
   const kinds = new Set(sts.map((s) => s.kind));
   if (kinds.size > 1) throw new MathError('equations, inequalities and plain expressions cannot be mixed in one problem; send them as separate problems');
   let out;
@@ -2541,6 +2586,7 @@ function solveProblem(text, solveFor) {
 }
 
 function renderResult(readAs, out) {
+  askFirst(out);
   const lines = ['Read as: ' + readAs];
   if (out.answer.length === 1) lines.push('Answer: ' + out.answer[0]);
   else {
@@ -12499,10 +12545,12 @@ function trimFormula(f) {
 function convertApplied(s) {
   if (!/[A-Za-z]/.test(s)) return s;
   s = convertPlotWords(s);
+  s = convertWords(s);
   // balancing chemical equations and formula commands
   s = s.replace(/[\u2080-\u2089]/g, (c) => String(c.charCodeAt(0) - 0x2080));
   s = convertChem2(s);
   s = convertGeometry3d(s);
+  s = convertCoord2d(s);
   s = convertPlot2(s);
   s = convertSeriesSentence(s);
   s = convertStepNotation(s);
@@ -12936,6 +12984,7 @@ const HELP = {};
 HELP.index = [
   'PHOTO MATH SOLVER - help topics (ask with  help <topic>):',
   '  syntax      how to write the math (digits, letters, ^, sqrt, fractions, matrices, units)',
+  '  words       questions in plain English that are understood as they are ("derivative of x^3 at x = 2", "area of a circle with radius 3", "gcd of 12 and 18")',
   '  equations   equations, systems, inequalities, formulas ("solve for t"), complex numbers',
   '  calculus    integrate, diff, limit, taylor, sum, product, tangent lines, curve study, areas and volumes',
   '  ode         differential equations (first order, linear of any order, systems) and Laplace transforms',
@@ -12951,6 +13000,26 @@ HELP.index = [
   '  units       unit conversion;  physics formulas\n  chemistry   molar mass, balancing, stoichiometry, limiting reagent, empirical formulas, pH, buffers, gases, elements, electron configurations\n  finance     interest, loans and amortization, bonds, depreciation, NPV / IRR / MIRR, growth rates',
   '  plot        graphs of functions, parametric and polar curves, implicit curves, inequality regions, contour maps, slope fields, scatter plots, histograms, box plots, shaded distributions',
   'Write every command as name(arguments). The answer always starts with "Read as:" - check it matches the picture.',
+].join('\n');
+HELP.words = [
+  'QUESTIONS IN PLAIN ENGLISH (the whole line must be the question; otherwise write the math or the command)',
+  '  calculus   "find the derivative of x^3 + 2x"  "second derivative of x^4"  "derivative of x^3 at x = 2"  "integrate x^2 from 0 to 1"  "integral of sin(x) dx"',
+  '             "limit of sin(x)/x as x approaches 0"  "limit of 1/x as x approaches 0 from the right"  "taylor series of e^x about 0 up to order 4"  "sum of k^2 for k from 1 to 10"',
+  '             "tangent line to x^2 at x = 3"  "critical points of x^3 - 3x"  "area under the curve x^2 from 0 to 2"  "area between x^2 and x from 0 to 1"  "average value of x^2 on [0, 3]"',
+  '             "length of the curve y = x^2 from 0 to 1"  "volume of the solid generated by revolving y = x^2 about the x-axis from 0 to 1"  "laplace transform of t*e^(-2t)"',
+  '  algebra    "factor x^2 - 5x + 6"  "expand (x+1)^3"  "simplify (x^2-1)/(x-1)"  "partial fractions of ..."  "roots of x^2 - 5x + 6"  "find x if 3x = 12"  "evaluate x^2 + 1 at x = 3"',
+  '             "f(x) = 2x + 1 and g(x) = x^2, find f(g(3))"  "x squared plus 3 equals 7"  "the square root of 144"  "2 to the power of 10"  "12 plus 8 times 2"  "15 percent of 80"',
+  '  numbers    "gcd of 12 and 18"  "lcm of 4, 6 and 10"  "is 97 a prime number"  "prime factorization of 360"  "factors of 36"  "17 mod 5"  "5 choose 2"  "10th fibonacci number"',
+  '             "255 in binary"  "binary 1011 to decimal"  "log base 2 of 8"  "percent change from 50 to 65"  "number of permutations of the letters in MISSISSIPPI"',
+  '  shapes     "area of a circle with radius 3"  "volume of a cylinder with radius 2 and height 5"  "area of a triangle with base 6 and height 4"  "hypotenuse of a right triangle with legs 3 and 4"',
+  '             circle, sphere, cylinder, cone, cube, box, rectangle, square, trapezoid, ellipse, regular polygons;  the asked quantity is listed first',
+  '  points     "distance between (1,2) and (4,6)"  "midpoint of (1,2) and (3,8)"  "slope of the line through (1,2) and (3,8)"  "area of the triangle with vertices (0,0), (4,0), (0,3)"',
+  '             "circle through (0,0), (4,0) and (0,3)"  "perpendicular bisector of (1,2) and (5,6)"  "the line through (1,5) parallel to y = 2x + 3"  "intersection of the lines y = 2x + 1 and x + y = 7"  "where does the line y = x + 1 meet the circle x^2 + y^2 = 25"',
+  '             "tangents from (7,1) to the circle x^2 + y^2 = 25"  "reflection of (1,2) in the line y = x"  "rotate (1,2) by 90 degrees about the origin"  "circumcenter of the triangle with vertices (0,0), (4,0), (0,3)"  "convex hull of (0,0), (4,0), (4,3), (1,1), (0,3)"',
+  '  matrices   "determinant of [[1,2],[3,4]]"  "inverse of ..."  "eigenvalues of ..."  "rank / transpose / trace / rref of ..."  "dot product of [1,2,3] and [4,5,6]"  "angle between [1,0] and [1,1]"',
+  '  data       "mean of 2, 4, 6, 8"  "median of ..."  "standard deviation of ..." (sample; "population standard deviation of ..." for the population)  "correlation between [1,2,3,4] and [2,4,5,9]"',
+  '             "probability of exactly 3 heads in 5 coin flips"  "z-score of 85 with mean 70 and standard deviation 10"  "X is normally distributed with mean 100 and standard deviation 15, find P(X < 120)"',
+  '  money      "compound interest on $1000 at 5% for 10 years compounded monthly"  "simple interest on $2000 at 4% for 3 years"  "monthly payment on a $200,000 loan at 6% for 30 years"',
 ].join('\n');
 HELP.syntax = [
   'SYNTAX',
@@ -12969,6 +13038,8 @@ HELP.equations = [
   '  one unknown: any polynomial, rational, radical, exponential, logarithmic, trig or absolute-value equation (exact when possible)',
   '  systems: x + y = 10; x - y = 2     (linear exactly, non-linear by search)',
   '  inequalities: x^2 - 5x + 6 < 0,  (x+1)/(x-2) >= 0,  |x - 3| <= 2,  1 < 2x + 1 <= 7',
+  '  in an interval:  sin(x) = 1/2, 0 <= x <= 2pi    cos(x) = 0.5 for x in [0, 360\u00b0]    x^3 - x = 0 on (-2, 2)   (the solutions inside the interval, exact when possible)',
+  '  identities:  sin(2x) = 2 sin(x) cos(x)  is reported as true for every x;  "verify ..." and "prove that ..." work too',
   '  formulas with several letters:  v = u + a*t, solve for t     d = v*t + a*t^2/2; solve for t     1/f = 1/u + 1/v for v',
   '  complex numbers: (3+4i)(1-2i),  sqrt(-4),  z^2 = 3 + 4i,  (2+i)z = 3 - i,  nthroots(8, 3)   (see help algebra)',
   '  ODEs: y\' = 2y,  y\'\' + y = 0,  y\' + y = x with y(0) = 1',
@@ -12977,7 +13048,7 @@ HELP.calculus = [
   'CALCULUS',
   '  integrate(f, x)                    indefinite integral (checked by differentiating); also \u222b f dx',
   '  integrate(f, x, a, b)              definite integral, a and b may be oo / -oo (improper)',
-  '  diff(f, x)  diff(f, x, n)          derivative, n-th derivative;   f\' and dy/dx also work',
+  '  diff(f, x)  diff(f, x, n)          derivative, n-th derivative;   f\' and dy/dx also work;   diffat(f, x, a)  derivative at a point;   evalat(f, x, a)  value at a point',
   '  limit(f, x, a)  limit(f, x, a, 1)  limit; the 4th argument 1 or -1 selects the side;  a may be oo',
   '  taylor(f, x, a, n)                 Taylor polynomial of order n around a  (maclaurin for a = 0)',
   '  sum(f, k, a, b)  product(f, k, a, b)   finite and infinite sums (convergence is reported)',
@@ -13108,6 +13179,12 @@ HELP.geometry = [
   '  distance([1,2],[4,6])  midpoint(P, Q)  slope(P, Q)  line(P, Q)  pointlinedistance(x0, y0, a, b, c)  polygonarea([0,0],[4,0],[4,3])  centroid(P, Q, R)',
   '  conic sections: just write the equation:  x^2 + y^2 - 6x + 4y - 12 = 0,  x^2/9 + y^2/4 = 1,  y = x^2 - 4x + 3',
   '                  (circle, ellipse, parabola, hyperbola: center, radius, foci, vertices, directrix, asymptotes)',
+  'PLANE (2-D)   a point is [x, y]; a line is its equation (3x + 4y = 12, y = 2x + 1), [a, b, c] for ax + by = c, or two points; a circle is its equation ((x-1)^2 + (y+2)^2 = 25) or [h, k, r^2]',
+  '  circle([h, k], r)  circle(P, Q) [diameter]  circle(P, Q, R) [through three points]  centre, radius, equation, general form      lineinfo(3x + 4y = 12)  slope, intercepts, normal, inclination',
+  '  linecircle(line, circle)  secant / tangent / outside, points and chord      circlecircle(c1, c2)  apart / touching / intersecting / inside, radical axis, common points      tangentcircle(circle, P) [tangentsfrom]  tangents from or at a point',
+  '  perpbisector(P, Q)   parallel(line, P)   perpendicular(line, P)   lineintersect(l1, l2) [linesintersect]  point and angle   pointline(P, line)  distance, foot, mirror image   parallellines(l1, l2)  distance',
+  '  triangle2d(P, Q, R) [trianglecenters]  sides, angles, area, centroid, circumcentre, orthocentre, incentre, radii      rotate(P, 90) rotate(P, pi/3, C)   reflect(P, line)   translate(P, v)   dilate(P, k, C)  (P may be a list of points)',
+  '  section(P, Q, m, n)  point dividing PQ in the ratio m : n (negative n = external)   collinear(P, Q, R, ...)   hull(P1, P2, ...) [convexhull]  convex hull, area, perimeter',
   'SPACE (3-D)   points and vectors [x, y, z];  a plane is [a, b, c, d] for ax + by + cz = d, or just the equation 2x + 3y - z = 5;  a line is a point and a direction',
   '  plane(P, Q, R) [planeinfo]  through three points   plane(P, normal)   plane(2x + 3y - z = 5)  normal, intercepts, distance from the origin   line3d(P, Q) [line3]  vector, parametric and symmetric form',
   '  pointplane(P, plane) [planedist]  distance and foot   pointline3d(P, A, d)  distance from P to the line through A with direction d   skewlines(A, d1, B, d2) [linedistance]  distance, intersection or parallel',
@@ -19753,6 +19830,1537 @@ function expandPhase(e, t) {
     return x;
   };
   return walk(e);
+}
+// ======================================================================
+// 28. Plain-English phrasings of textbook questions ("find the derivative of x^3 + 2x", "area of a circle with radius 3",
+//     "gcd of 12 and 18", "mean of 2, 4, 6, 8", "determinant of [[1,2],[3,4]]", "distance between (1,2) and (4,6)" ...)
+//     are rewritten into the commands that already exist. Every rule needs the WHOLE line to match, so ordinary
+//     equations and expressions are never touched; word operators (plus, squared, square root of ...) are rewritten last.
+// ======================================================================
+const WORDS_ASK = { v: null }; // labels of the quantity that was asked for (the answer line starting with one is shown first)
+
+// ---- small building blocks --------------------------------------------------------------------------------------------------------
+const W_NUM = '[-\u2212]?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:\\s*/\\s*\\d+)?';
+const W_ATOM = '(?:\\d+(?:\\.\\d+)?|\\.\\d+|\u03c0|pi\\b|e\\b|\u221e|infinity\\b|inf\\b|oo\\b|sqrt\\s*\\([^()]*\\)|\u221a\\s*\\d+|\\([^()]*\\))';
+const W_BOUND = '[-\u2212+]?' + W_ATOM + '(?:\\s*[*/^\u00d7\u00b7]\\s*[-\u2212+]?' + W_ATOM + '|\\s*(?:\u03c0|pi\\b|sqrt\\s*\\([^()]*\\)))*';
+const W_TERM = '(?:[\\w.]+(?:\\s*\\^\\s*(?:[\\w.]+|\\([^()]*\\)))?|\\([^()]*\\))';
+const W_UNIT = '(?:\\s*(?:cm|mm|km|m|in|inch|inches|ft|feet|foot|yd|yards?|mi|miles?|units?|meters?|metres?|centimet(?:er|re)s?|kg|g)\\b)?';
+const W_PT = '[\\(\\[<]\\s*(' + W_NUM + ')\\s*,\\s*(' + W_NUM + ')\\s*(?:,\\s*(' + W_NUM + ')\\s*)?[\\)\\]>]';
+const wClean = (t) => t.replace(/\u2212/g, '-').replace(/\s+/g, '');
+const wNumTxt = (t) => wClean(t);
+
+/** The text of an expression: the leading "f(x) =" / "y =" and a trailing "dx" are dropped. */
+function wExpr(e) {
+  e = e.trim().replace(/^(?:(?:the|a|an)\s+)?(?:function|expression|polynomial|equation|curve|graph|series|quantity)\s+/i, '');
+  if ((e.match(/=/g) || []).length === 1 && !/[<>!]/.test(e)) e = e.replace(/^\s*[a-zA-Z]\s*(?:\(\s*[a-zA-Z]\s*\))?\s*=\s*/, '');
+  return e.replace(/\s+(?:completely|fully)$/i, '').replace(/[\s,;]+$/, '');
+}
+/** word operators inside an expression */
+const W_NUMWORDS = { zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, hundred: 100, thousand: 1000 };
+function wOps(s) {
+  const T = '(' + W_TERM + ')';
+  if (W_WORDY.test(s)) s = s.replace(/\b(?:(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[- ](one|two|three|four|five|six|seven|eight|nine))?|(zero|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen))\b/gi, (m, t, u, w) => String(t ? W_NUMWORDS[t.toLowerCase()] + (u ? W_NUMWORDS[u.toLowerCase()] : 0) : W_NUMWORDS[w.toLowerCase()]));
+  s = s.replace(/\b(\d+(?:\.\d+)?)\s*per\s*cent\b|\b(\d+(?:\.\d+)?)\s*percent(?:age)?\b/gi, (m, a, b) => (a || b) + '%');
+  s = s.replace(new RegExp('\\b(?:(?:the|a|an)\\s+)?square\\s+root\\s+of\\s+' + T, 'gi'), 'sqrt($1)');
+  s = s.replace(new RegExp('\\b(?:(?:the|a|an)\\s+)?cube\\s+root\\s+of\\s+' + T, 'gi'), 'cbrt($1)');
+  s = s.replace(new RegExp('\\b(?:(?:the|a|an)\\s+)?(\\d+)(?:st|nd|rd|th)\\s+root\\s+of\\s+' + T.replace('(', '('), 'gi'), (m, n, x) => 'root(' + n + ', ' + x + ')');
+  s = s.replace(/\b(?:raised\s+)?to\s+the\s+(\d+)(?:st|nd|rd|th)\s+power\b/gi, '^($1)');
+  s = s.replace(new RegExp('\\braised\\s+to\\s+(?:(?:the|a|an)\\s+)?(?:power\\s+(?:of\\s+)?)?' + T + '(?:st|nd|rd|th)?(?:\\s+power)?', 'gi'), '^($1)');
+  s = s.replace(new RegExp('\\bto\\s+the\\s+(\\d+)(?:st|nd|rd|th)\\s+power', 'gi'), '^($1)');
+  s = s.replace(new RegExp('\\bto\\s+the\\s+power\\s+(?:of\\s+)?' + T, 'gi'), '^($1)');
+  s = s.replace(new RegExp(T + '\\s+squared\\b', 'gi'), '$1^2').replace(new RegExp(T + '\\s+cubed\\b', 'gi'), '$1^3');
+  s = s.replace(/\bnegative\s+(?=[\d(a-z])/gi, '-');
+  s = s.replace(/\b(?:(?:the|a|an)\s+)?(sum|product)\s+of\s+(-?\d+(?:\.\d+)?)\s+and\s+(-?\d+(?:\.\d+)?)\b/gi, (m, w, a, b) => '(' + a + (/sum/i.test(w) ? ' + ' : ' * ') + b + ')');
+  s = s.replace(/\b(?:(?:the|a|an)\s+)?difference\s+(?:of|between)\s+(-?\d+(?:\.\d+)?)\s+and\s+(-?\d+(?:\.\d+)?)\b/gi, '($1 - $2)');
+  s = s.replace(new RegExp('\\btwice\\s+' + T, 'gi'), '2*$1').replace(new RegExp('\\bhalf\\s+(?:of\\s+)?' + T, 'gi'), '($1)/2');
+  s = s.replace(/\bplus\b/gi, ' + ').replace(/\bminus\b/gi, ' - ');
+  s = s.replace(/\b(?:multiplied\s+by|multiply\s+by|times)\b/gi, ' * ').replace(/\bdivided\s+by\b/gi, ' / ').replace(/\bover\b/gi, ' / ');
+  s = s.replace(/\bis\s+(?:greater|more|larger|bigger)\s+than\s+or\s+equal\s+to\b|\bis\s+at\s+least\b|\bat\s+least\b|\bgreater\s+than\s+or\s+equal\s+to\b/gi, ' >= ');
+  s = s.replace(/\bis\s+(?:less|smaller|fewer)\s+than\s+or\s+equal\s+to\b|\bis\s+at\s+most\b|\bat\s+most\b|\bless\s+than\s+or\s+equal\s+to\b/gi, ' <= ');
+  s = s.replace(/\bis\s+(?:greater|more|larger|bigger)\s+than\b|\bgreater\s+than\b|\bexceeds\b/gi, ' > ').replace(/\bis\s+(?:less|smaller|fewer)\s+than\b|\bless\s+than\b/gi, ' < ');
+  s = s.replace(/\bis\s+equal\s+to\b|\bequals\b|\bequal\s+to\b|\bis\s+equal\b/gi, ' = ');
+  return s.replace(/\s+/g, ' ').trim();
+}
+const wE = (e) => wOps(wExpr(e));
+/** the variable of an expression: x if present, else the only letter, else x */
+function wVarOf(e) {
+  const letters = new Set((e.replace(/\b(?:sin|cos|tan|cot|sec|csc|sinh|cosh|tanh|asin|acos|atan|arcsin|arccos|arctan|ln|log|log10|log2|exp|sqrt|cbrt|abs|pi|oo|heaviside|dirac)\b/gi, ' ').match(/(?<![A-Za-z])[a-z](?![A-Za-z])/g) || []));
+  if (letters.has('x') || !letters.size) return 'x';
+  return letters.size === 1 ? Array.from(letters)[0] : letters.has('t') ? 't' : 'x';
+}
+
+/** Peel the clauses ("with respect to t", "from 0 to 1", "at x = 2", "dx") off the end of an expression. */
+function wPeel(s) {
+  const o = { rest: s.trim(), v: null, lo: null, hi: null, at: null, atVar: null };
+  const rxs = [
+    ['range', new RegExp('\\s*(?:,\\s*)?(?:from|between|over|on|in)\\s+(?:the\\s+interval\\s+)?(?:[a-z]\\s*=\\s*)?(' + W_BOUND + ')\\s*(?:to|and|through|until|-+>?)\\s*(?:[a-z]\\s*=\\s*)?(' + W_BOUND + ')$', 'i')],
+    ['range', new RegExp('\\s*(?:,\\s*)?(?:over|on|in|from)\\s+(?:the\\s+interval\\s+)?[\\[(]\\s*(' + W_BOUND + ')\\s*[,;]\\s*(' + W_BOUND + ')\\s*[\\])]$', 'i')],
+    ['at', new RegExp('\\s*(?:,\\s*)?(?:at|when|where|for)\\s+(?:the\\s+point\\s+)?([a-z])\\s*(?:=|equals|is)\\s*(' + W_BOUND + ')$', 'i')],
+    ['at', new RegExp('\\s*(?:,\\s*)?at\\s+(?:the\\s+point\\s+)?(' + W_BOUND + ')$', 'i')],
+    ['wrt', /\s*(?:,\s*)?(?:with\s+respect\s+to|wrt|w\.r\.t\.?|in\s+terms\s+of|relative\s+to)\s+(?:the\s+variable\s+)?([a-z])$/i],
+    ['dx', /^(.*?[^\sA-Za-z])\s*d([a-z])$/],
+    ['dx', /^(.*?\S)\s+d([a-z])$/],
+  ];
+  for (let guard = 0; guard < 6; guard++) {
+    let hit = false;
+    for (const [kind, rx] of rxs) {
+      const m = rx.exec(o.rest);
+      if (!m) continue;
+      if (kind === 'range' && o.lo == null) { o.lo = m[1]; o.hi = m[2]; o.rest = o.rest.slice(0, m.index); hit = true; break; }
+      if (kind === 'at' && o.at == null) {
+        o.at = m.length > 2 ? m[2] : m[1];
+        o.atVar = m.length > 2 ? m[1] : null;
+        o.rest = o.rest.slice(0, m.index);
+        hit = true;
+        break;
+      }
+      if (kind === 'wrt' && !o.v) { o.v = m[1]; o.rest = o.rest.slice(0, m.index); hit = true; break; }
+      if (kind === 'dx' && !o.v) { o.v = m[2]; o.rest = m[1]; hit = true; break; }
+    }
+    if (!hit) break;
+  }
+  o.rest = o.rest.trim();
+  return o;
+}
+const wBound = (b) => wOps(b.replace(/\u2212/g, '-').replace(/\binfinity\b|\binf\b/gi, 'oo').replace(/\u221e/g, 'oo'));
+
+/** Numbers in "2, 4, 6 and 8" (null when other words are left over). */
+function wNums(str) {
+  const t = str.replace(/\b(?:the|these|those|following|numbers?|values?|data(?:\s*set)?|set|list|observations?|scores?|items?|sample|population|of|and|are|is|for|given|with)\b|[:;]/gi, ' ').replace(/[\[\]{}()<>]/g, ' ');
+  if (/[A-Za-z]/.test(t)) return null;
+  const nums = t.match(/[-\u2212]?\d+(?:\.\d+)?(?:e[+-]?\d+)?(?:\s*\/\s*\d+)?/gi);
+  if (!nums || t.replace(/[-\u2212]?\d+(?:\.\d+)?(?:e[+-]?\d+)?(?:\s*\/\s*\d+)?/gi, '').replace(/[\s,]+/g, '') !== '') return null;
+  return nums.map(wNumTxt);
+}
+/** [x, y] / [x, y, z] vectors or points written as (x, y), <x, y>, [x, y] in a text. */
+function wPoints(str) {
+  const pts = [];
+  const rx = new RegExp(W_PT, 'g');
+  let m;
+  while ((m = rx.exec(str))) pts.push([m[1], m[2], m[3]].filter((v) => v != null).map(wNumTxt));
+  return pts;
+}
+const wVec = (p) => '[' + p.join(', ') + ']';
+/** exactly one vector in a text: [..] or (..) / <..> */
+function wOneVec(str) {
+  const br = wBrackets(str);
+  if (br.length) return br.length === 1 ? br[0] : null;
+  const pts = wPoints(str);
+  return pts.length === 1 ? wVec(pts[0]) : null;
+}
+/** the bracket groups [...] of a text, with nesting (matrices, lists, vectors) */
+function wBrackets(str) {
+  const out = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < str.length; i++) {
+    if (str[i] === '[') { if (depth === 0) start = i; depth++; } else if (str[i] === ']') { depth--; if (depth === 0 && start >= 0) { out.push(str.slice(start, i + 1)); start = -1; } if (depth < 0) depth = 0; }
+  }
+  return out;
+}
+/** x, y coefficients of a line a x + b y + c = d written in text: [a, b, c-d] or null */
+function wLine2(str) {
+  const t = str.replace(/\u2212/g, '-').replace(/\s+/g, '');
+  const parts = t.split('=');
+  if (parts.length !== 2) return null;
+  const co = { x: 0, y: 0, k: 0 };
+  const add = (side, sign) => {
+    const terms = side.replace(/(?!^)([+-])/g, ' $1').split(' ').filter(Boolean);
+    for (const term of terms) {
+      const m = /^([+-]?)(\d*\.?\d*(?:\/\d+)?)\*?([xy]?)$/.exec(term);
+      if (!m || (!m[2] && !m[3])) return false;
+      let c = m[2] === '' ? 1 : m[2].includes('/') ? Number(m[2].split('/')[0]) / Number(m[2].split('/')[1]) : Number(m[2]);
+      if (m[1] === '-') c = -c;
+      co[m[3] || 'k'] += sign * c;
+    }
+    return true;
+  };
+  if (!add(parts[0], 1) || !add(parts[1], -1)) return null;
+  if (co.x === 0 && co.y === 0) return null;
+  return [co.x, co.y, co.k].map((v) => String(Math.round(v * 1e9) / 1e9));
+}
+
+// ---- the commands needed for "at a point" questions ---------------------------------------------------------------------------------
+defCmd('evalat', (n) => {
+  needArgs(n, 3, 3, 'an expression, the variable and the value');
+  const S = fromAst(n.args[0]);
+  const v = varOfArg(n.args[1]);
+  const val = simp(subsS(S, v, fromAst(n.args[2])));
+  const out = newOut();
+  out.answer.push(symText(val));
+  out.work.push('substitute ' + v + ' = ' + fmtS(fromAst(n.args[2])) + ' into ' + fmtS(S));
+  return withValue(out, val);
+});
+COMMANDS.evalat.show = (n) => showRaw(n.args[0]) + ' at ' + showRaw(n.args[1]) + ' = ' + showRaw(n.args[2]);
+defCmd('diffat', (n) => {
+  needArgs(n, 3, 4, 'an expression, the variable, the point and optionally the order');
+  const S = fromAst(n.args[0]);
+  const v = varOfArg(n.args[1]);
+  const order = n.args[3] ? Number(intArg(n.args[3])) : 1;
+  if (order < 1 || order > 12) throw new MathError('the order of the derivative must be between 1 and 12');
+  let d = S;
+  for (let i = 0; i < order; i++) d = diffS(d, v);
+  const at = fromAst(n.args[2]);
+  const val = simp(subsS(d, v, at));
+  const out = newOut();
+  const prime = order <= 3 ? "\u2032".repeat(order) : '^(' + order + ')';
+  out.answer.push('f' + prime + '(' + fmtS(at) + ') = ' + symText(val));
+  out.work.push('f(' + v + ') = ' + fmtS(S));
+  out.work.push('f' + prime + '(' + v + ') = ' + fmtS(d));
+  return withValue(out, val);
+});
+COMMANDS.diffat.show = (n) => 'd' + (n.args[3] ? '^' + showRaw(n.args[3]) : '') + '/d' + showRaw(n.args[1]) + (n.args[3] ? '^' + showRaw(n.args[3]) : '') + ' [' + showRaw(n.args[0]) + '] at ' + showRaw(n.args[1]) + ' = ' + showRaw(n.args[2]);
+
+// ---- shapes ---------------------------------------------------------------------------------------------------------------------------
+// canonical parameter names: r d C A V h w l b s a p q theta
+const W_PARAM_WORDS = [
+  ['r', 'radius|radii|r'], ['d', 'diameter|d'], ['C', 'circumference'], ['A', 'area'], ['V', 'volume'], ['h', 'height|altitude|tall|high|h'],
+  ['w', 'width|wide|breadth|w'], ['l', 'length|long|l'], ['b', 'base|b'], ['s', 'sides?(?:\\s+length)?|edges?(?:\\s+length)?|s'],
+  ['p', 'diagonal\\s*1|d1|p'], ['q', 'diagonal\\s*2|d2|q'], ['theta', 'angle|central\\s+angle|\u03b8'],
+];
+/** "radius 3", "radius of 3 cm", "r = 3", "3 cm radius", "height 4" -> {r: '3', h: '4'}; "sides 3, 4 and 5" -> {sides: [...]} */
+function wParams(str) {
+  const o = {};
+  const t = ' ' + str.replace(/\u2212/g, '-') + ' ';
+  const num = '(' + W_NUM + ')' + W_UNIT;
+  const sidesRx = new RegExp('\\b(?:(?:the|a|an)\\s+)?(sides|legs|bases|diagonals|semi-?(?:axes|axis)|axes|dimensions)\\s*(?:of\\s+|are\\s+|=\\s*|:\\s*|lengths?\\s+)?((?:' + W_NUM + W_UNIT + '\\s*(?:,|and|&)?\\s*){2,4})', 'i');
+  let m = sidesRx.exec(t);
+  if (m) {
+    const nums = m[2].match(new RegExp(W_NUM, 'g'));
+    if (nums && nums.length >= 2) o[m[1].toLowerCase().replace(/^semi-?/, 'semi')] = nums.map(wNumTxt);
+  }
+  const byRx = new RegExp('(' + W_NUM + ')' + W_UNIT + '\\s*(?:by|x|\u00d7)\\s*(' + W_NUM + ')' + W_UNIT + '(?:\\s*(?:by|x|\u00d7)\\s*(' + W_NUM + ')' + W_UNIT + ')?', 'i');
+  m = byRx.exec(t);
+  if (m) o.by = [m[1], m[2], m[3]].filter((v) => v != null).map(wNumTxt);
+  for (const [key, words] of W_PARAM_WORDS) {
+    if (o[key] != null) continue;
+    const after = new RegExp('\\b(?:' + words + ')\\b\\s*(?:of\\s+|is\\s+|are\\s+|equals\\s+|=\\s*|:\\s*|\\s)\\s*(?:about\\s+)?' + num, 'i');
+    const before = new RegExp(num + '\\s*(?:' + words + ')\\b', 'i');
+    const mm = after.exec(t) || before.exec(t);
+    if (mm) o[key] = wNumTxt(mm[1]);
+  }
+  if (/degrees?|\u00b0/i.test(str) && o.theta != null) o.thetaDeg = true;
+  return o;
+}
+const W_REG_POLY = { triangle: 3, pentagon: 5, hexagon: 6, heptagon: 7, octagon: 8, nonagon: 9, decagon: 10, dodecagon: 12 };
+const W_NOUNS = 'circle|disc|disk|sphere|ball|cylinder|cone|cube|box|cuboid|rectangular\\s+(?:prism|solid|box)|rectangle|square|trapezoid|trapezium|parallelogram|rhombus|ellipse|sector|pyramid|triangle|equilateral\\s+triangle|right(?:-angled)?\\s+triangle|(?:regular\\s+)?(?:pentagon|hexagon|heptagon|octagon|nonagon|decagon|dodecagon)|regular\\s+polygon';
+const W_QTY = '(area|perimeter|circumference|diameter|radius|volume|surface\\s+area|total\\s+surface\\s+area|lateral\\s+(?:surface\\s+)?area|diagonal|space\\s+diagonal|slant\\s+height|arc\\s+length|hypotenuse|side|side\\s+length|sector\\s+area|length|height)';
+const W_QTY_KEYS = {
+  area: ['area', 'sector area'], perimeter: ['perimeter'], circumference: ['circumference'], diameter: ['diameter'], radius: ['radius'],
+  volume: ['volume'], 'surface area': ['surface area', 'total surface'], 'total surface area': ['total surface', 'surface area'],
+  'lateral area': ['lateral surface'], 'lateral surface area': ['lateral surface'], diagonal: ['diagonal', 'space diagonal'], 'space diagonal': ['space diagonal'],
+  'slant height': ['slant height'], 'arc length': ['arc length'], side: ['side'], 'side length': ['side'], hypotenuse: ['hypotenuse', 'c'],
+};
+const wKey = (q) => q.toLowerCase().replace(/\s+/g, ' ');
+function wShape(qty, noun, tail) {
+  const q = wKey(qty);
+  const nn = noun.toLowerCase().replace(/\s+/g, ' ').replace(/^regular /, '');
+  const p = wParams(tail);
+  const ask = W_QTY_KEYS[q] || [q];
+  const set = (cmd) => { WORDS_ASK.v = ask; return cmd; };
+  const rdim = () => (p.r != null ? p.r : p.d != null ? '(' + p.d + ')/2' : null);
+  const three = nn === 'sphere' || nn === 'ball';
+  if (/^(circle|disc|disk)$/.test(nn)) {
+    const arg = p.r != null ? 'r=' + p.r : p.d != null ? 'd=' + p.d : p.C != null ? 'C=' + p.C : p.A != null ? 'A=' + p.A : null;
+    return arg ? set('circle(' + arg + ')') : null;
+  }
+  if (three) {
+    const arg = p.r != null ? 'r=' + p.r : p.d != null ? 'd=' + p.d : p.V != null ? 'V=' + p.V : p.A != null ? 'A=' + p.A : null;
+    return arg ? set('sphere(' + arg + ')') : null;
+  }
+  if (nn === 'cylinder') {
+    const r = rdim();
+    return r && p.h != null ? set('cylinder(' + r + ', ' + p.h + ')') : null;
+  }
+  if (nn === 'cone') {
+    const r = rdim();
+    return r && p.h != null ? set('cone(' + r + ', ' + p.h + ')') : null;
+  }
+  if (nn === 'cube') {
+    const arg = p.s != null ? p.s : p.l != null ? p.l : p.V != null ? 'V=' + p.V : null;
+    return arg ? set('cube(' + arg + ')') : null;
+  }
+  if (/^(box|cuboid|rectangular (prism|solid|box))$/.test(nn)) {
+    const dims = p.by && p.by.length === 3 ? p.by : p.dimensions && p.dimensions.length === 3 ? p.dimensions : p.l != null && p.w != null && p.h != null ? [p.l, p.w, p.h] : null;
+    return dims ? set('box(' + dims.join(', ') + ')') : null;
+  }
+  if (nn === 'rectangle') {
+    const dims = p.by && p.by.length === 2 ? p.by : p.sides && p.sides.length === 2 ? p.sides : p.dimensions && p.dimensions.length === 2 ? p.dimensions : (p.l != null || p.b != null) && (p.w != null || p.h != null) ? [p.l != null ? p.l : p.b, p.w != null ? p.w : p.h] : null;
+    return dims ? set('rectangle(' + dims.join(', ') + ')') : null;
+  }
+  if (nn === 'square') {
+    const arg = p.s != null ? p.s : p.l != null ? p.l : p.d != null ? 'd=' + p.d : p.A != null ? 'A=' + p.A : p.sides && p.sides.length ? p.sides[0] : null;
+    return arg ? set('square(' + arg + ')') : null;
+  }
+  if (nn === 'trapezoid' || nn === 'trapezium') {
+    const bases = p.bases && p.bases.length === 2 ? p.bases : null;
+    return bases && p.h != null ? set('trapezoid(' + bases.join(', ') + ', ' + p.h + ')') : null;
+  }
+  if (nn === 'parallelogram') {
+    const b = p.b != null ? p.b : p.l != null ? p.l : null;
+    return b && p.h != null ? set('parallelogram(' + b + ', ' + p.h + ')') : null;
+  }
+  if (nn === 'rhombus') {
+    const dg = p.diagonals && p.diagonals.length === 2 ? p.diagonals : p.p != null && p.q != null ? [p.p, p.q] : null;
+    return dg ? set('rhombus(' + dg.join(', ') + ')') : null;
+  }
+  if (nn === 'ellipse') {
+    const ax = p.semiaxes && p.semiaxes.length === 2 ? p.semiaxes : p.semiaxis && p.semiaxis.length === 2 ? p.semiaxis : p.axes && p.axes.length === 2 ? p.axes : null;
+    return ax ? set('ellipse(' + ax.join(', ') + ')') : null;
+  }
+  if (nn === 'sector') {
+    return p.r != null && p.theta != null ? set('sector(' + p.r + ', ' + p.theta + ')') : null;
+  }
+  if (nn === 'pyramid') {
+    const B = p.A != null ? p.A : null;
+    return B && p.h != null ? set('pyramid(' + B + ', ' + p.h + ')') : null;
+  }
+  if (/triangle$/.test(nn)) {
+    if (/^right/.test(nn) || (p.legs && p.legs.length === 2)) {
+      const legs = p.legs && p.legs.length === 2 ? p.legs : null;
+      return legs ? set('righttriangle(a=' + legs[0] + ', b=' + legs[1] + ')') : null;
+    }
+    const sd = p.sides && p.sides.length === 3 ? p.sides : null;
+    if (sd && !/^equilateral/.test(nn)) return set('triangle(' + sd.join(', ') + ')');
+    if (/^equilateral/.test(nn)) {
+      const s = p.s != null ? p.s : sd ? sd[0] : null;
+      return s ? set('polygon(3, ' + s + ')') : null;
+    }
+    if (p.b != null && p.h != null) {
+      WORDS_ASK.v = null;
+      return '(1/2)*(' + p.b + ')*(' + p.h + ')';
+    }
+    return null;
+  }
+  const sides = W_REG_POLY[nn.replace(/^regular /, '')];
+  if (sides || nn === 'regular polygon' || nn === 'polygon') {
+    const nsides = sides || (/\b(\d+)\s*-?\s*(?:sides|gon)/i.exec(tail) || [])[1];
+    const s = p.s != null ? p.s : p.sides && p.sides.length ? p.sides[0] : null;
+    return nsides && s ? set('polygon(' + nsides + ', ' + s + ')') : null;
+  }
+  return null;
+}
+/** the answer line of the asked quantity first */
+function askFirst(out) {
+  const keys = WORDS_ASK.v;
+  if (!keys || !out || !out.answer || out.answer.length < 2) return;
+  for (const k of keys) {
+    const i = out.answer.findIndex((a) => a.toLowerCase().startsWith(k));
+    if (i > 0) {
+      out.answer.unshift(out.answer.splice(i, 1)[0]);
+      return;
+    }
+    if (i === 0) return;
+  }
+}
+
+// ---- the rules --------------------------------------------------------------------------------------------------------------------------
+const W_LEAD = /^\s*(?:please\s+|pls\s+|kindly\s+)?(?:(?:can|could|would|will)\s+you\s+(?:please\s+)?)?(?:help\s+me\s+(?:to\s+)?)?(?:tell\s+me\s+)?(?:i\s+(?:want|need)\s+(?:to\s+)?)?(?:(?:find|calculate|calc|compute|determine|evaluate|work\s+out|get|give\s+me|show\s+me|what\s*(?:'s|is|are)|whats|how\s+(?:much|many)\s+is|how\s+(?:long|far|big|tall|wide|large)\s+(?:is|are))\s+(?:me\s+)?)?(?:(?:the|a|an)\s+)?(?:value\s+of\s+)?/i;
+const W_ORD = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6 };
+const wOrd = (t) => (t == null || t === '' ? 1 : W_ORD[t.toLowerCase()] || parseInt(t, 10));
+const wCall = (name, ...args) => name + '(' + args.filter((a) => a != null).join(', ') + ')';
+const W_LIST_OF = (words) => new RegExp('^(?:(?:the|a|an)\\s+)?(?:(sample|population)\\s+)?(?:' + words + ')\\s+(?:of|for|in)\\s+(.+)$', 'i');
+
+const W_STAT = [
+  ['mean|average|avg|arithmetic\\s+mean', 'mean'], ['median', 'median'], ['mode', 'mode'], ['(?:sample\\s+)?variance', 'variance'], ['standard\\s+deviation|std\\.?\\s*dev(?:iation)?|sd|stdev', 'stdev'],
+  ['range', 'datarange'], ['quartiles', 'quartiles'], ['iqr|interquartile\\s+range', 'iqr'], ['five[- ]number\\s+summary', 'fivenum'], ['(?:summary|descriptive)\\s+statistics|summary', 'summary'],
+  ['geometric\\s+mean', 'geomean'], ['harmonic\\s+mean', 'harmean'], ['rms|root\\s+mean\\s+square', 'rms'], ['z-?scores?', 'zscores'], ['outliers', 'outliers'],
+  ['skewness', 'skewness'], ['kurtosis', 'kurtosis'], ['coefficient\\s+of\\s+variation', 'cv'], ['mean\\s+absolute\\s+deviation|mad', 'mad'],
+  ['max(?:imum)?|largest|greatest|biggest|highest', 'max'], ['min(?:imum)?|smallest|least|lowest', 'min'],
+];
+
+/** One line, whole-line patterns. Returns the replacement text or null. */
+function wRules(s) {
+  let m;
+  const T = (x) => x.replace(/^\s*(?:(?:the|a|an)\s+)?/i, '');
+
+  // ---- equation with an interval for the unknown
+  if (/[<>\u2264\u2265]|\[|\(/.test(s) && /=/.test(s)) {
+    const win = wWindow(s.replace(/^solve\s+(?:the\s+equation\s+)?/i, ''));
+    if (win) return win;
+  }
+  // ---- identities: "verify sin(x)^2 + cos(x)^2 = 1"
+  if ((m = /^(?:verify|prove|show|check|confirm|demonstrate)(?:\s+that)?\s+(.+=.+)$/i.exec(s)) && !/[<>]/.test(m[1])) return wOps(m[1]);
+  if ((m = /^is\s+(.+=.+?)\s+an?\s+identity$/i.exec(s))) return wOps(m[1]);
+  // ---- "if EQ, find x" and "x if EQ"
+  if ((m = /^(?:if|given(?:\s+that)?|suppose(?:\s+that)?|let)\s+(.+?)\s*[,;]?\s*(?:then\s+)?(?:find|what\s+is|what\s+are|solve\s+for|determine|calculate|compute)\s+(?:the\s+value\s+of\s+)?[a-z]$/i.exec(s))) return wOps(m[1]);
+  if ((m = /^(?:what\s+is\s+)?(?:the\s+value\s+of\s+)?[a-z]\s+(?:if|when|given(?:\s+that)?|such\s+that|where)\s+(.+)$/i.exec(s)) && /[=<>]|equals|less|greater/i.test(m[1])) return wOps(m[1]);
+  if ((m = /^for\s+what\s+(?:values?\s+of\s+)?[a-z]\s+(?:is|does|do|are)\s+(.+)$/i.exec(s)) && /[=<>]|equals|less|greater/i.test(m[1])) return wOps(m[1].replace(/\s+true$/i, ''));
+  if ((m = /^solve\s+(?:(?:the|a|an)\s+)?(?:equation|inequality|system(?:\s+of\s+equations)?)\s*[:,]?\s*(.+)$/i.exec(s))) return wOps(m[1]);
+
+  // ---- function definitions: "f(x) = x^2 + 1, find f(3)"
+  if (/^(?:let\s+)?[a-z]\(\s*[a-z]\s*\)\s*=/i.test(s)) {
+    const r = wFunctions(s);
+    if (r) return r;
+  }
+
+  // ---- the value of an expression at a point: "evaluate x^2 + 1 at x = 3"
+  if ((m = new RegExp('^(.+?)\\s+(?:at|when|for|if|where|with)\\s+(?:the\\s+point\\s+)?([a-z])\\s*(?:=|equals|is)\\s*(' + W_BOUND + ')$', 'i').exec(s)) && /[a-z]/i.test(m[1]) && !/=/.test(m[1]) && !/\b(?:derivative|integral|limit|tangent|slope|differentiate|integrate|sum|product|series|area|volume|probability|roots?|zeros|solve|find|solution)\b/i.test(m[1])) {
+    return wCall('evalat', wE(m[1].replace(/^(?:the\s+)?(?:value|result|answer)\s+of\s+/i, '')), m[2].toLowerCase(), wBound(m[3]));
+  }
+
+  // ---- derivatives
+  if ((m = /^d\s*(?:\^\s*(\d)\s*)?\/\s*d\s*([a-z])\s*(?:\^\s*\d\s*)?(?:of\s+)(.+)$/i.exec(s))) {
+    return wCall('diff', wE(m[3]), m[2].toLowerCase(), m[1] && m[1] !== '1' ? m[1] : null);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:(\d+)(?:st|nd|rd|th)|(first|second|third|fourth|fifth|sixth)|n-?th)?\s*(?:derivative|differentiation)\s+(?:of|for)\s+(.+)$/i.exec(s))) {
+    const pe = wPeel(m[3]);
+    const n = wOrd(m[1] || m[2]);
+    const f = wE(pe.rest);
+    if (pe.at != null) return wCall('diffat', f, pe.atVar || pe.v || 'x', wBound(pe.at), n > 1 ? n : null);
+    return wCall('diff', f, n > 1 ? pe.v || wVarOf(f) : pe.v, n > 1 ? n : null);
+  }
+  if ((m = /^(?:differentiate|derive)\s+(?:(?:the|a|an)\s+)?(?:function\s+)?(.+)$/i.exec(s))) {
+    const pe = wPeel(m[1]);
+    const f = wE(pe.rest);
+    if (pe.at != null) return wCall('diffat', f, pe.atVar || pe.v || 'x', wBound(pe.at));
+    return wCall('diff', f, pe.v);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:equation\s+of\s+the\s+)?(?:tangent|tangent\s+line)\s+(?:line\s+)?(?:to|of|for)\s+(?!(?:(?:the|a|an)\s+)?circle)(.+)$/i.exec(s))) {
+    const pe = wPeel(m[1]);
+    const pts = wPoints(pe.rest);
+    if (pe.at != null) return wCall('tangent', wE(pe.rest), pe.atVar || 'x', wBound(pe.at));
+    const mm = /^(.*?)\s+at\s+(?:the\s+point\s+)?[\(\[]\s*(.+?)\s*,\s*.+[\)\]]$/i.exec(pe.rest);
+    if (mm) return wCall('tangent', wE(mm[1]), 'x', wBound(mm[2]));
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?slope\s+of\s+(?:(?:the|a|an)\s+)?(?:tangent(?:\s+line)?\s+to\s+)?(?:(?:the|a|an)\s+)?(?:curve|graph|function)?\s*(.+?)\s+at\s+(?:x\s*=\s*)?(.+)$/i.exec(s)) && !wPoints(m[1]).length) {
+    return wCall('diffat', wE(m[1]), 'x', wBound(m[2]));
+  }
+
+  // ---- integrals
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:definite\s+|indefinite\s+)?(?:integral|antiderivative|primitive)\s+(?:of|for)\s+(.+)$/i.exec(s)) || (m = /^integrate\s+(.+)$/i.exec(s))) {
+    const pe = wPeel(m[1]);
+    const f = wE(pe.rest);
+    if (pe.lo != null) return wCall('integrate', f, pe.v, wBound(pe.lo), wBound(pe.hi));
+    return wCall('integrate', f, pe.v);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:total\s+)?area\s+(?:under|below|beneath)\s+(?:(?:the|a|an)\s+)?(?:curve|graph|function)?\s*(.+)$/i.exec(s))) {
+    const pe = wPeel(m[1]);
+    if (pe.lo != null) return wCall('areabetween', wE(pe.rest), '0', pe.v || 'x', wBound(pe.lo), wBound(pe.hi));
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?area\s+(?:enclosed\s+|bounded\s+)?between\s+(?:(?:the|a|an)\s+)?(?:curves?|graphs?|functions?|lines?)?\s*(.+?)\s+and\s+(?!\s*$)(.+)$/i.exec(s)) && !/^[\[(]?\s*-?\d/.test(m[2])) {
+    const pe = wPeel(m[2]);
+    const f = wE(m[1]);
+    const g = wE(pe.rest);
+    return pe.lo != null ? wCall('areabetween', f, g, pe.v || 'x', wBound(pe.lo), wBound(pe.hi)) : wCall('areabetween', f, g, pe.v || 'x');
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:average|mean)\s+value\s+of\s+(.+)$/i.exec(s))) {
+    const pe = wPeel(m[1]);
+    if (pe.lo != null) return wCall('avgvalue', wE(pe.rest), pe.v || 'x', wBound(pe.lo), wBound(pe.hi));
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:arc\s*length|length)\s+of\s+(?:(?:the|a|an)\s+)?(?:curve|graph|arc)?\s*(.+)$/i.exec(s)) && !/\b(?:rectangle|circle|line\s+segment|segment|side|vector)\b/i.test(m[1])) {
+    const pe = wPeel(m[1]);
+    if (pe.lo != null && /[a-z]/i.test(pe.rest)) return wCall('arclength', wE(pe.rest), pe.v || 'x', wBound(pe.lo), wBound(pe.hi));
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?volume\s+of\s+(?:(?:the|a|an)\s+)?(?:solid\s+)?(?:generated|formed|obtained|produced)?\s*(?:by\s+)?(?:revolving|rotating|rotation\s+of|revolution\s+of)\s+(?:(?:the|a|an)\s+)?(?:curve|region|graph)?\s*(?:under\s+)?(.+?)\s+(?:about|around)\s+the\s+([xy])-?\s*axis\s*(.*)$/i.exec(s))) {
+    const pe = wPeel((m[3] ? m[3] : '') || '');
+    const pe2 = pe.lo != null ? pe : wPeel(m[1]);
+    const f = wE(pe.lo != null ? m[1] : pe2.rest);
+    if (pe2.lo != null) return m[2].toLowerCase() === 'x' ? wCall('volumerev', f, pe2.v || 'x', wBound(pe2.lo), wBound(pe2.hi)) : wCall('shells', f, pe2.v || 'x', wBound(pe2.lo), wBound(pe2.hi));
+  }
+
+  // ---- limits
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:two-sided\s+)?limit\s+(?:of\s+)?(.+?)\s+as\s+([a-z])\s*(?:approaches|tends\s+to|goes\s+to|->|\u2192|\u27f6|\u2192|approach|tend\s+to)\s*(.+)$/i.exec(s)) || (m = /^(?:(?:the|a|an)\s+)?limit\s+as\s+([a-z])\s*(?:approaches|tends\s+to|goes\s+to|->|\u2192|\u27f6|approach|tend\s+to)\s*(.+?)\s+of\s+(.+)$/i.exec(s))) {
+    const first = /^[a-z]$/i.test(m[1]) && m.length === 4 && !/^[a-z]$/i.test(m[2]);
+    const expr = first ? m[3] : m[1];
+    const v = first ? m[1] : m[2];
+    let tail = first ? m[2] : m[3];
+    let side = null;
+    tail = tail.replace(/\s*(?:from\s+(?:(?:the|a|an)\s+)?(left|right|above|below|positive\s+side|negative\s+side)|\^?\s*([+\-\u2212]))\s*$/i, (mm, w, sg) => {
+      if (w) side = /right|above|positive/i.test(w) ? 1 : -1;
+      else if (sg) side = sg === '+' ? 1 : -1;
+      return '';
+    });
+    const sideWord = /\s*\(?\s*from\s+(?:(?:the|a|an)\s+)?(left|right|above|below)\s*\)?\s*$/i.exec(tail);
+    if (sideWord) { side = /right|above/i.test(sideWord[1]) ? 1 : -1; tail = tail.slice(0, sideWord.index); }
+    const sup = /^(.*?)\s*(?:\^\s*\(?\s*([+\-\u2212])\s*\)?|([\u207a\u207b]))$/.exec(tail);
+    if (sup) { side = (sup[2] || sup[3]) === '+' || sup[3] === '\u207a' ? 1 : -1; tail = sup[1]; }
+    const to = wBound(tail.replace(/\s+/g, ' ').trim());
+    return wCall('limit', wE(expr), v.toLowerCase(), to, side);
+  }
+
+  // ---- series
+  if ((m = /^(?:(?:the|a|an)\s+)?(taylor|maclaurin)\s+(?:series|polynomial|expansion)\s+(?:of|for)\s+(.+)$/i.exec(s))) {
+    let rest = m[2];
+    let center = /maclaurin/i.test(m[1]) ? '0' : null;
+    let order = null;
+    let g = true;
+    while (g) {
+      g = false;
+      let mm;
+      if ((mm = /\s*,?\s*(?:about|around|centered\s+(?:at|about)|centred\s+(?:at|about)|at|near)\s+(?:[a-z]\s*=\s*)?(.+?)$/i.exec(rest)) && !/\b(?:up|to|order|degree|terms)\b/i.test(mm[1])) { center = wBound(mm[1]); rest = rest.slice(0, mm.index); g = true; continue; }
+      if ((mm = /\s*,?\s*(?:up\s+to|to|through|of)\s+(?:(?:the|a|an)\s+)?(?:order|degree)\s+(\d+)$/i.exec(rest)) || (mm = /\s*,?\s*(?:up\s+to|to|through)\s+(?:(?:the|a|an)\s+)?(\d+)(?:st|nd|rd|th)\s+(?:order|degree|power)(?:\s+term)?$/i.exec(rest)) || (mm = /\s*,?\s*(?:up\s+to|to|through)\s+(?:x\^|degree\s+|order\s+)(\d+)$/i.exec(rest))) { order = mm[1]; rest = rest.slice(0, mm.index); g = true; continue; }
+      if ((mm = /\s*,?\s*(?:with|using|first)\s+(\d+)\s+terms?$/i.exec(rest))) { order = String(Number(mm[1]) - 1); rest = rest.slice(0, mm.index); g = true; continue; }
+    }
+    return wCall('taylor', wE(rest), 'x', center || '0', order || '5');
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?sum\s+of\s+(?:(?:the|a|an)\s+)?first\s+(\d+|n)\s+(positive\s+)?(integers|natural\s+numbers|whole\s+numbers|counting\s+numbers|odd\s+(?:positive\s+)?numbers|odd\s+integers|even\s+(?:positive\s+)?numbers|even\s+integers|squares|perfect\s+squares|cubes|perfect\s+cubes)$/i.exec(s))) {
+    const kind = m[3].toLowerCase();
+    const body = /odd/.test(kind) ? '2*k-1' : /even/.test(kind) ? '2*k' : /square/.test(kind) ? 'k^2' : /cube/.test(kind) ? 'k^3' : 'k';
+    return wCall('sum', body, 'k', '1', m[1]);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(sum|product)\s+of\s+(.+?)\s+(?:for|where|with)\s+([a-z])\s*(?:=|from)\s*(.+?)\s+(?:to|through|up\s+to|until)\s+(.+)$/i.exec(s)) || (m = /^(?:(?:the|a|an)\s+)?(sum|product)\s+of\s+(.+?)\s+from\s+([a-z])\s*=\s*(.+?)\s+(?:to|through|up\s+to)\s+(.+)$/i.exec(s))) {
+    return wCall(m[1].toLowerCase(), wE(m[2]), m[3].toLowerCase(), wBound(m[4]), wBound(m[5]));
+  }
+
+  // ---- algebra
+  if ((m = /^(?:factor|factori[sz]e|factoring)\s+(?:(?:the|a|an)\s+)?(?:polynomial\s+|expression\s+|number\s+)?(.+)$/i.exec(s)) || (m = /^(?:(?:the|a|an)\s+)?(?:prime\s+)?factori[sz]ation\s+of\s+(.+)$/i.exec(s))) return wCall('factor', wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?prime\s+factors\s+of\s+(.+)$/i.exec(s))) return wCall('factor', wE(m[1]));
+  if ((m = /^expand\s+(?:(?:the|a|an)\s+)?(?:expression\s+|product\s+)?(.+)$/i.exec(s))) return wCall('expand', wE(m[1]));
+  if ((m = /^simplify\s+(?:(?:the|a|an)\s+)?(?:expression\s+)?(.+)$/i.exec(s)) && !/^(?:$)/.test(m[1])) return wCall('simplify', wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?partial\s+fractions?(?:\s+decomposition)?\s+(?:of|for)\s+(.+)$/i.exec(s)) || (m = /^decompose\s+(.+?)\s+into\s+partial\s+fractions$/i.exec(s))) return wCall('apart', wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:real\s+)?(?:roots|zeros|zeroes|solutions|x-?intercepts)\s+of\s+(?:(?:the|a|an)\s+)?(?:polynomial\s+|function\s+|equation\s+)?(.+)$/i.exec(s))) {
+    const e = wExpr(m[1]);
+    return /=/.test(e) ? wOps(e) : wOps(e) + ' = 0';
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:critical\s+points|stationary\s+points|turning\s+points|extrema|extreme\s+values|local\s+(?:maxima|minima|extrema)|local\s+maxima\s+and\s+minima|maxima\s+and\s+minima|maximum\s+and\s+minimum)\s+of\s+(.+)$/i.exec(s))) {
+    const pe = wPeel(m[1]);
+    return pe.lo != null ? wCall('critical', wE(pe.rest), pe.v || 'x', wBound(pe.lo), wBound(pe.hi)) : wCall('critical', wE(pe.rest), pe.v);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:inflection\s+points|points\s+of\s+inflection)\s+of\s+(.+)$/i.exec(s))) return wCall('inflection', wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?domain\s+(?:and\s+range\s+)?of\s+(.+)$/i.exec(s))) return wCall('domain', wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:inverse\s+function|inverse)\s+of\s+(?:the\s+function\s+)?([a-z]\s*\(\s*[a-z]\s*\)\s*=.+|y\s*=.+)$/i.exec(s))) return wCall('inversefunction', wE(m[1]));
+  if ((m = /^(?:study|analy[sz]e|investigate|sketch)\s+(?:(?:the|a|an)\s+)?(?:function|curve|graph\s+of)?\s*(.+)$/i.exec(s)) && /[a-z]/i.test(m[1]) && /[x]/i.test(m[1]) && !/\bplot\b/i.test(s)) return wCall('analyze', wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:laplace\s+transform)\s+of\s+(.+)$/i.exec(s))) return wCall('laplace', wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?inverse\s+laplace(?:\s+transform)?\s+of\s+(.+)$/i.exec(s))) return wCall('ilaplace', wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?(vertex|focus|foci|directrix|axis\s+of\s+symmetry|center|centre|radius|asymptotes|eccentricity|major\s+axis|minor\s+axis|equation|properties)(?:\s*,?\s*(?:and\s+)?(?:vertex|focus|foci|directrix|axis\s+of\s+symmetry|center|centre|radius|asymptotes|eccentricity))*\s+of\s+(?:(?:the|a|an)\s+)?(?:parabola|circle|ellipse|hyperbola|conic(?:\s+section)?)\s*(?:with\s+equation|given\s+by|:|,)?\s*(.+=.+)$/i.exec(s))) return wOps(m[2]);
+
+  // ---- number theory and counting
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:greatest\s+common\s+(?:divisor|factor)|highest\s+common\s+factor|hcf|gcd|gcf)\s+(?:of|for)\s+(.+)$/i.exec(s))) {
+    const nums = wNums(m[1]);
+    return nums ? wCall('gcd', ...nums) : wCall('gcd', ...m[1].split(/\s*(?:,|\band\b)\s*/).map(wE).filter(Boolean));
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:least\s+common\s+multiple|lowest\s+common\s+multiple|lcm)\s+(?:of|for)\s+(.+)$/i.exec(s))) {
+    const nums = wNums(m[1]);
+    return nums ? wCall('lcm', ...nums) : wCall('lcm', ...m[1].split(/\s*(?:,|\band\b)\s*/).map(wE).filter(Boolean));
+  }
+  if ((m = /^is\s+(\d[\d,]*)\s+(?:a\s+)?prime(?:\s+number)?$/i.exec(s))) return wCall('isprime', m[1].replace(/,/g, ''));
+  if ((m = /^is\s+(\d[\d,]*)\s+(?:a\s+)?composite(?:\s+number)?$/i.exec(s))) return wCall('isprime', m[1].replace(/,/g, ''));
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:factors|divisors)\s+of\s+(\d+)$/i.exec(s))) return wCall('divisors', m[1]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(next|smallest)\s+prime\s+(?:number\s+)?(?:after|greater\s+than|larger\s+than|above|following)\s+(\d+)$/i.exec(s))) return wCall('nextprime', m[2]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:previous|largest)\s+prime\s+(?:number\s+)?(?:before|less\s+than|smaller\s+than|below)\s+(\d+)$/i.exec(s))) return wCall('prevprime', m[1]);
+  if ((m = /^(?:all\s+)?(?:(?:the|a|an)\s+)?primes?\s+(?:numbers?\s+)?(?:between\s+(\d+)\s+and\s+(\d+)|up\s+to\s+(\d+)|less\s+than\s+(\d+)|below\s+(\d+))$/i.exec(s))) return wCall('primes', m[1] || '2', m[2] || m[3] || m[4] || m[5]);
+  if ((m = /^how\s+many\s+primes\s+(?:are\s+there\s+)?(?:up\s+to|less\s+than|below|under|are\s+less\s+than|are\s+below)\s+(\d+)$/i.exec(s))) return wCall('primepi', m[1]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:remainder\s+(?:when|of|if)\s+)?(\d+)\s+(?:is\s+)?(?:divided\s+by|%|mod(?:ulo)?)\s+(\d+)(?:\s+remainder)?$/i.exec(s)) && /remainder|mod/i.test(s)) return wCall('mod', m[1], m[2]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:remainder\s+(?:when|of|if|after)\s+)(\d+)\s+(?:is\s+)?(?:divided\s+by|\u00f7|\/)\s+(\d+)$/i.exec(s))) return wCall('mod', m[1], m[2]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(\d+)\s*(?:st|nd|rd|th)?\s+fibonacci(?:\s+number)?$/i.exec(s)) || (m = /^fibonacci(?:\s+number)?\s+(?:number\s+)?(\d+)$/i.exec(s))) return wCall('fibonacci', m[1]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(\d+)\s*(?:st|nd|rd|th)?\s+lucas(?:\s+number)?$/i.exec(s))) return wCall('lucas', m[1]);
+  if ((m = /^(\d+)\s*(?:!|factorial)$/i.exec(s)) || (m = /^factorial\s+of\s+(\d+)$/i.exec(s))) return wCall('factorial', m[1]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:number\s+of\s+)?(?:ways\s+to\s+choose|combinations\s+of|ways\s+of\s+choosing|ways\s+to\s+select)\s+(\d+)\s+(?:items?\s+|objects?\s+|things?\s+|people\s+|students?\s+)?(?:from|out\s+of|of)\s+(?:a\s+(?:set|group)\s+of\s+)?(\d+)(?:\s+\w+)?$/i.exec(s))) return wCall('ncr', m[2], m[1]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:number\s+of\s+)?combinations\s+of\s+(\d+)\s+(?:items?\s+|objects?\s+|things?\s+)?taken\s+(\d+)\s+at\s+a\s+time$/i.exec(s))) return wCall('ncr', m[1], m[2]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:number\s+of\s+)?permutations\s+of\s+(\d+)\s+(?:items?\s+|objects?\s+|things?\s+)?taken\s+(\d+)\s+at\s+a\s+time$/i.exec(s)) || (m = /^(?:(?:the|a|an)\s+)?(?:number\s+of\s+)?(?:ways\s+to\s+arrange|arrangements\s+of)\s+(\d+)\s+(?:items?\s+|objects?\s+|things?\s+)?(?:taken\s+|chosen\s+from\s+)?(\d+)$/i.exec(s))) return wCall('npr', m[1], m[2]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:number\s+of\s+)?(?:ways\s+to\s+arrange|ways\s+of\s+arranging|arrangements\s+of|permutations\s+of)\s+(\d+)\s+(?:distinct\s+|different\s+)?(?:items?|objects?|things?|people|books|students?|letters?|digits?)(?:\s+in\s+a\s+(?:row|line))?$/i.exec(s))) return wCall('factorial', m[1]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:number\s+of\s+)?(?:distinct\s+)?(?:permutations|arrangements|anagrams|rearrangements)\s+of\s+(?:(?:the|a|an)\s+)?(?:letters\s+(?:in|of)\s+)?(?:the\s+word\s+)?["']?([A-Za-z]{3,})["']?$/i.exec(s))) return 'anagrams of ' + m[1].toUpperCase();
+  if ((m = /^(?:convert\s+)?(\d+)\s+(?:to|in|into|as)\s+(binary|octal|hex(?:adecimal)?|base\s*(\d+))$/i.exec(s)) && !/^\d+\s+(?:in)\s+base/i.test(s)) return wCall('tobase', m[1], /binary/i.test(m[2]) ? '2' : /octal/i.test(m[2]) ? '8' : /hex/i.test(m[2]) ? '16' : m[3]);
+  if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:binary|base\s*2)\s+(?:number\s+)?([01]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', m[1], '2');
+  if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:hex(?:adecimal)?|base\s*16)\s+(?:number\s+)?([0-9a-f]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', m[1], '16');
+  if ((m = /^(?:convert\s+)?(?:(?:the|a|an)\s+)?(?:octal|base\s*8)\s+(?:number\s+)?([0-7]+)\s+(?:to|in|into)\s+(?:decimal|base\s*10)$/i.exec(s))) return wCall('frombase', m[1], '8');
+  if ((m = /^(?:(?:the|a|an)\s+)?sum\s+of\s+(?:(?:the|a|an)\s+)?digits\s+of\s+(\d+)$/i.exec(s))) return wCall('digitsum', m[1]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:euler'?s?\s+)?(?:totient|phi)\s+of\s+(\d+)$/i.exec(s))) return wCall('totient', m[1]);
+  if ((m = /^(?:(?:the|a|an)\s+)?number\s+of\s+divisors\s+of\s+(\d+)$/i.exec(s))) return wCall('numdivisors', m[1]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:log|logarithm)\s+(?:to\s+)?(?:(?:the|a|an)\s+)?base\s+(\w+(?:\.\d+)?)\s+of\s+(.+)$/i.exec(s))) return wCall('log', wE(m[2]), wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:natural\s+(?:log|logarithm)|ln)\s+of\s+(.+)$/i.exec(s))) return wCall('ln', wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:common\s+(?:log|logarithm)|log10|log\s*base\s*10)\s+of\s+(.+)$/i.exec(s))) return wCall('log10', wE(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:percent(?:age)?\s+(?:change|increase|decrease)|%\s*change)\s+(?:from|between)\s+(-?[\d.,]+)\s+(?:to|and)\s+(-?[\d.,]+)$/i.exec(s))) return wCall('pctchange', m[1].replace(/,/g, ''), m[2].replace(/,/g, ''));
+  if ((m = /^what\s+percent(?:age)?\s+of\s+([\d.,]+)\s+is\s+([\d.,]+)$/i.exec(s))) return wCall('pctof', m[2].replace(/,/g, ''), m[1].replace(/,/g, ''));
+  if ((m = /^([\d.,]+)\s+is\s+what\s+percent(?:age)?\s+of\s+([\d.,]+)$/i.exec(s))) return wCall('pctof', m[1].replace(/,/g, ''), m[2].replace(/,/g, ''));
+  if ((m = /^(increase|decrease|reduce|raise|discount|mark(?:\s+up|\s+down))\s+\$?([\d.,]+)\s+by\s+([\d.]+)\s*(?:%|percent)$/i.exec(s))) return '(' + m[2].replace(/,/g, '') + ') * (1 ' + (/increase|raise|up/i.test(m[1]) ? '+' : '-') + ' ' + m[3] + '/100)';
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:price|cost|total|amount)\s+(?:of\s+\$?([\d.,]+)\s+)?after\s+(?:a\s+)?([\d.]+)\s*(?:%|percent)\s+(discount|increase|markup|tax|tip)(?:\s+(?:on|of)\s+\$?([\d.,]+))?$/i.exec(s))) {
+    const base = (m[1] || m[4] || '').replace(/,/g, '');
+    return base ? '(' + base + ') * (1 ' + (/discount/i.test(m[3]) ? '-' : '+') + ' ' + m[2] + '/100)' : null;
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?ratio\s+of\s+(\d+(?:\.\d+)?)\s+to\s+(\d+(?:\.\d+)?)(?:\s+to\s+(\d+(?:\.\d+)?))?$/i.exec(s))) return wCall('ratio', m[1], m[2], m[3]);
+
+  // ---- plane geometry: circles, lines, tangents, transformations
+  const eqsOf = (str) => str.split(/\s+and\s+|\s*;\s*|\s*,\s+(?=[a-z0-9(-])/i).map((t) => t.replace(/^(?:the\s+)?(?:lines?|circles?)\s+/i, '').trim()).filter(Boolean);
+  if ((m = /^(?:the\s+)?(?:equation\s+of\s+)?(?:the\s+)?circle\s+(?:passing\s+)?through\s+(?:the\s+)?(?:points?\s+)?(.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length === 3 && pts.every((p) => p.length === 2)) return wCall('circle', ...pts.map(wVec));
+  }
+  if ((m = /^(?:the\s+)?(?:equation\s+of\s+)?(?:the\s+)?circle\s+(?:with|having|of|whose)\s+(?:the\s+)?(?:diameter\s+)?(?:endpoints?|ends?|segment\s+joining|diameter\s+joining|diameter\s+with\s+endpoints|diameter)\s+(?:at\s+|of\s+)?(?:the\s+)?(?:points?\s+)?(.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length === 2 && pts.every((p) => p.length === 2)) return wCall('circle', ...pts.map(wVec));
+  }
+  if ((m = /^(?:the\s+)?(?:equation\s+of\s+)?(?:the\s+)?circle\s+(?:with|having|of)\s+(?:its\s+)?cent(?:er|re)\s+(?:at\s+)?(.+?)\s*(?:,|and|with)\s*(?:a\s+|the\s+)?radius\s+(?:of\s+|=\s*)?(\d+(?:\.\d+)?(?:\/\d+)?)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length === 1 && pts[0].length === 2) return wCall('circle', wVec(pts[0]), m[2]);
+  }
+  if ((m = /^(?:the\s+)?(?:equation\s+of\s+)?(?:the\s+)?perpendicular\s+bisector\s+of\s+(?:the\s+)?(?:line\s+)?(?:segment\s+)?(?:joining\s+|connecting\s+|from\s+|with\s+endpoints\s+)?(?:the\s+)?(?:points?\s+)?(.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length === 2 && pts.every((p) => p.length === 2)) return wCall('perpbisector', ...pts.map(wVec));
+  }
+  if ((m = /^(?:the\s+)?(?:equation\s+of\s+)?(?:the\s+)?line\s+(?:passing\s+)?through\s+(?:the\s+)?(?:point\s+)?(.+?)\s+(?:and\s+)?(parallel|perpendicular)\s+to\s+(?:the\s+)?(?:line\s+)?(.+=.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length === 1 && pts[0].length === 2) return wCall(m[2].toLowerCase() === 'parallel' ? 'parallel' : 'perpendicular', wOps(m[3]), wVec(pts[0]));
+  }
+  if ((m = /^(?:the\s+)?(?:intersection|intersection\s+point|point\s+of\s+intersection)\s+of\s+(?:the\s+)?lines?\s+(.+)$/i.exec(s)) || (m = /^where\s+do\s+(?:the\s+)?lines?\s+(.+?)\s+(?:meet|intersect|cross)$/i.exec(s))) {
+    const eq = eqsOf(m[1]);
+    if (eq.length === 2 && eq.every((e) => /=/.test(e))) return wCall('lineintersect', wOps(eq[0]), wOps(eq[1]));
+  }
+  if ((m = /^(?:the\s+)?angle\s+between\s+(?:the\s+)?lines?\s+(.+)$/i.exec(s))) {
+    const eq = eqsOf(m[1]);
+    if (eq.length === 2 && eq.every((e) => /=/.test(e))) return wCall('lineintersect', wOps(eq[0]), wOps(eq[1]));
+  }
+  if ((m = /^(?:the\s+)?distance\s+between\s+(?:the\s+)?parallel\s+lines\s+(.+)$/i.exec(s))) {
+    const eq = eqsOf(m[1]);
+    if (eq.length === 2 && eq.every((e) => /=/.test(e))) return wCall('parallellines', wOps(eq[0]), wOps(eq[1]));
+  }
+  if ((m = /^(?:the\s+)?(?:slope|intercepts?|slope\s+and\s+intercepts?|gradient)\s+of\s+(?:the\s+)?line\s+(.+=.+)$/i.exec(s))) return wCall('lineinfo', wOps(m[1]));
+  if ((m = /^(?:the\s+)?(?:intersection|intersection\s+points?|points?\s+of\s+intersection)\s+of\s+(?:the\s+)?line\s+(.+=.+?)\s+(?:and|with)\s+(?:the\s+)?circle\s+(.+=.+)$/i.exec(s)) || (m = /^where\s+does\s+(?:the\s+)?line\s+(.+=.+?)\s+(?:meet|intersect|cross)\s+(?:the\s+)?circle\s+(.+=.+)$/i.exec(s))) return wCall('linecircle', wOps(m[1]), wOps(m[2]));
+  if ((m = /^(?:the\s+)?(?:intersection|intersection\s+points?|points?\s+of\s+intersection)\s+of\s+(?:the\s+)?circles?\s+(.+)$/i.exec(s)) || (m = /^where\s+do\s+(?:the\s+)?circles?\s+(.+?)\s+(?:meet|intersect|cross)$/i.exec(s))) {
+    const eq = eqsOf(m[1]);
+    if (eq.length === 2 && eq.every((e) => /=/.test(e))) return wCall('circlecircle', wOps(eq[0]), wOps(eq[1]));
+  }
+  if ((m = /^(?:the\s+)?tangents?(?:\s+lines?)?\s+(?:drawn\s+)?from\s+(?:the\s+)?(?:point\s+)?(.+?)\s+to\s+(?:the\s+)?circle\s+(.+=.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length === 1 && pts[0].length === 2) return wCall('tangentcircle', wOps(m[2]), wVec(pts[0]));
+  }
+  if ((m = /^(?:the\s+)?(?:equation\s+of\s+the\s+)?tangent(?:\s+line)?\s+to\s+(?:the\s+)?circle\s+(.+=.+?)\s+at\s+(?:the\s+)?(?:point\s+)?(.+)$/i.exec(s))) {
+    const pts = wPoints(m[2]);
+    if (pts.length === 1 && pts[0].length === 2) return wCall('tangentcircle', wOps(m[1]), wVec(pts[0]));
+  }
+  if ((m = /^(?:the\s+)?(?:reflection|mirror\s+image)\s+of\s+(?:the\s+)?(?:point\s+)?(.+?)\s+(?:in|across|about|over|on)\s+(?:the\s+)?(?:line\s+)?(.+)$/i.exec(s)) || (m = /^reflect\s+(?:the\s+)?(?:point\s+)?(.+?)\s+(?:in|across|about|over|on)\s+(?:the\s+)?(?:line\s+)?(.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    let l = m[2].trim();
+    if (/^x-?\s*axis$/i.test(l)) l = 'y = 0';
+    else if (/^y-?\s*axis$/i.test(l)) l = 'x = 0';
+    if (pts.length === 1 && pts[0].length === 2 && /=/.test(l)) return wCall('reflect', wVec(pts[0]), wOps(l));
+  }
+  if ((m = /^(?:rotate|rotation\s+of)\s+(?:the\s+)?(?:point\s+)?(.+?)\s+(?:by|through)\s+(-?[\d.]+)\s*(?:degrees?|\u00b0)\s*(?:counter-?clockwise|anticlockwise|ccw)?\s*(?:about|around|from|at)?\s*(?:the\s+)?(?:point\s+)?(origin|.*)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    const cen = /origin|^$/i.test(m[3]) ? [] : wPoints(m[3]);
+    let ang = m[2];
+    if (/(?<![a-z])clockwise/i.test(s) && !/counter|anti/i.test(s)) ang = String(-Number(ang));
+    if (pts.length === 1 && pts[0].length === 2 && (!cen.length || cen[0].length === 2)) return wCall('rotate', wVec(pts[0]), ang, cen.length ? wVec(cen[0]) : null);
+  }
+  if ((m = /^(?:translate|shift|move)\s+(?:the\s+)?(?:point\s+)?(.+?)\s+by\s+(?:the\s+)?(?:vector\s+)?(.+)$/i.exec(s))) {
+    const a = wPoints(m[1]);
+    const b = wPoints(m[2]);
+    if (a.length === 1 && b.length === 1 && a[0].length === 2 && b[0].length === 2) return wCall('translate', wVec(a[0]), wVec(b[0]));
+  }
+  if ((m = /^(?:dilate|enlarge|scale)\s+(?:the\s+)?(?:point\s+)?(.+?)\s+by\s+(?:a\s+)?(?:scale\s+)?(?:factor\s+)?(?:of\s+)?(-?\d+(?:\.\d+)?)\s*(?:about|around|from|with\s+centre\s+|with\s+center\s+)?\s*(?:the\s+)?(?:point\s+|centre\s+|center\s+)?(origin|.*)$/i.exec(s))) {
+    const a = wPoints(m[1]);
+    const cen = /origin|^$/i.test(m[3]) ? [] : wPoints(m[3]);
+    if (a.length === 1 && a[0].length === 2 && (!cen.length || cen[0].length === 2)) return wCall('dilate', wVec(a[0]), m[2], cen.length ? wVec(cen[0]) : null);
+  }
+  if ((m = /^(?:the\s+)?(?:point\s+)?(?:which\s+)?divid(?:es|ing)\s+(?:the\s+)?(?:line\s+)?(?:segment\s+)?(?:joining\s+)?(?:the\s+points?\s+)?(.+?)\s+(internally|externally)?\s*in\s+the\s+ratio\s+(\d+)\s*:\s*(\d+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length === 2 && pts.every((p) => p.length === 2)) return wCall('section', wVec(pts[0]), wVec(pts[1]), m[3], /extern/i.test(m[2] || '') ? '-' + m[4] : m[4]);
+  }
+  if ((m = /^(?:are|is)\s+(?:the\s+)?(?:points?\s+)?(.+?)\s+collinear$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length >= 3 && pts.every((p) => p.length === 2)) return wCall('collinear', ...pts.map(wVec));
+  }
+  if ((m = /^(?:the\s+)?convex\s+hull\s+of\s+(?:the\s+)?(?:points?\s+)?(.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length >= 3 && pts.every((p) => p.length === 2)) return wCall('hull', ...pts.map(wVec));
+  }
+  if ((m = /^(?:the\s+)?(circum-?cent(?:er|re)|circumradius|in-?cent(?:er|re)|inradius|ortho-?cent(?:er|re)|nine-point\s+cent(?:er|re)|angles|sides)\s+(?:and\s+\w+\s+)?of\s+(?:the\s+)?triangle\s+(?:with\s+)?(?:vertices|corners|points)?\s*(?:at\s+|are\s+|:)?\s*(.+)$/i.exec(s))) {
+    const pts = wPoints(m[2]);
+    if (pts.length === 3 && pts.every((p) => p.length === 2)) {
+      const q = m[1].toLowerCase().replace(/-/g, '');
+      WORDS_ASK.v = /circumrad/.test(q) ? ['circumcentre'] : /circum/.test(q) ? ['circumcentre'] : /inrad|incent/.test(q) ? ['incentre'] : /ortho/.test(q) ? ['orthocentre'] : /angles/.test(q) ? ['scalene', 'isosceles', 'equilateral'] : ['sides'];
+      return wCall('triangle2d', ...pts.map(wVec));
+    }
+  }
+
+  // ---- geometry: shapes
+  if ((m = new RegExp('^(?:a\\s+|an\\s+|the\\s+)?(' + W_NOUNS + ')\\s+(?:with|of|having|whose|that\\s+has|has|:)\\s*(.+)$', 'i').exec(s))) {
+    const r = wShape('area', m[1], m[2]);
+    if (r) { WORDS_ASK.v = null; return r; }
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?hypotenuse\s+of\s+(?:a\s+|the\s+)?right(?:-angled)?\s+triangle\s+(?:with\s+)?(?:legs|sides)\s*(?:of\s+|are\s+)?(.+)$/i.exec(s))) {
+    const nums = wNums(m[1]);
+    if (nums && nums.length === 2) return wCall('hypotenuse', ...nums);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:missing\s+|other\s+|unknown\s+)?(?:leg|side)\s+of\s+(?:a\s+|the\s+)?right(?:-angled)?\s+triangle\s+(?:with\s+)?hypotenuse\s*(?:of\s+|=\s*)?(\d+(?:\.\d+)?)\s+and\s+(?:one\s+|the\s+other\s+)?(?:leg|side)\s*(?:of\s+|=\s*)?(\d+(?:\.\d+)?)$/i.exec(s))) return wCall('leg', m[1], m[2]);
+
+  if ((m = new RegExp('^(?:(?:the|a|an)\\s+)?' + W_QTY + '\\s+(?:of|for|in)\\s+(?:a\\s+|an\\s+|the\\s+|one\\s+)?(?:[a-z-]+\\s+){0,2}?(' + W_NOUNS + ')\\s*(?:with|of|that\\s+has|having|whose|has|where|if|given|and|:|,|-)?\\s*(.*)$', 'i').exec(s))) {
+    const r = wShape(m[1], m[2], m[3]);
+    if (r) return r;
+  }
+  if ((m = new RegExp('^(?:(?:the|a|an)\\s+)?' + W_QTY + '\\s+(?:of|for)\\s+(?:a\\s+|an\\s+|the\\s+)?(' + W_NOUNS + ')\\s+(.*)$', 'i').exec(s))) {
+    const r = wShape(m[1], m[2], m[3]);
+    if (r) return r;
+  }
+  if ((m = new RegExp('^(?:a|an|the)\\s+(' + W_NOUNS + ')\\s+(?:has|with|having|of|whose)\\s+(.*?)[,;]?\\s*(?:what|find|calculate)\\s+(?:is\\s+)?(?:(?:the|a|an)\\s+)?' + W_QTY + '$', 'i').exec(s))) {
+    const r = wShape(m[3], m[1], m[2]);
+    if (r) return r;
+  }
+  // ---- geometry: coordinates
+  if ((m = /^(?:(?:the|a|an)\s+)?distance\s+(?:between|from)\s+(?:(?:the|a|an)\s+)?(?:points?\s+)?(.+?)\s+(?:and|to)\s+(?:(?:the|a|an)\s+)?(?:points?\s+)?(.+)$/i.exec(s))) {
+    const a = wPoints(m[1]);
+    const b = wPoints(m[2]);
+    if (a.length === 1 && b.length === 1 && a[0].length === b[0].length) return wCall('distance', wVec(a[0]), wVec(b[0]));
+    const pl = wPoints(m[1]);
+    const co = wLine2(m[2].replace(/^(?:(?:the|a|an)\s+)?line\s*/i, ''));
+    if (pl.length === 1 && pl[0].length === 2 && co) return wCall('pointlinedistance', pl[0][0], pl[0][1], co[0], co[1], co[2]);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?distance\s+from\s+(?:(?:the|a|an)\s+)?(?:point\s+)?(.+?)\s+to\s+(?:(?:the|a|an)\s+)?line\s+(.+)$/i.exec(s))) {
+    const pl = wPoints(m[1]);
+    const co = wLine2(m[2]);
+    if (pl.length === 1 && pl[0].length === 2 && co) return wCall('pointlinedistance', pl[0][0], pl[0][1], co[0], co[1], co[2]);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?mid-?point\s+(?:of|between)\s+(?:(?:the|a|an)\s+)?(?:line\s+)?(?:segment\s+)?(?:joining\s+|with\s+endpoints\s+|connecting\s+|from\s+)?(?:(?:the|a|an)\s+)?(?:points?\s+)?(.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length === 2 && pts[0].length === pts[1].length) return wCall('midpoint', wVec(pts[0]), wVec(pts[1]));
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:slope|gradient)\s+(?:of\s+(?:(?:the|a|an)\s+)?line\s+)?(?:through|between|joining|connecting|passing\s+through|containing)\s+(?:(?:the|a|an)\s+)?(?:points?\s+)?(.+)$/i.exec(s)) || (m = /^(?:(?:the|a|an)\s+)?(?:slope|gradient)\s+of\s+(?:(?:the|a|an)\s+)?(?:line\s+)?(?:segment\s+)?(?:from\s+)?(.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length === 2 && pts[0].length === 2 && pts[1].length === 2) return wCall('slope', wVec(pts[0]), wVec(pts[1]));
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:equation\s+of\s+)?(?:(?:the|a|an)\s+)?line\s+(?:through|passing\s+through|joining|connecting|containing|between)\s+(?:(?:the|a|an)\s+)?(?:points?\s+)?(.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length === 2 && pts[0].length === 2 && pts[1].length === 2) return wCall('line', wVec(pts[0]), wVec(pts[1]));
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?area\s+of\s+(?:(?:the|a|an)\s+)?(?:triangle|polygon|quadrilateral|pentagon|hexagon|region)\s+(?:with\s+|having\s+|whose\s+)?(?:vertices|corners|points)\s*(?:at\s+|of\s+|are\s+|:)?\s*(.+)$/i.exec(s))) {
+    const pts = wPoints(m[1]);
+    if (pts.length >= 3 && pts.every((p) => p.length === 2)) return wCall('polygonarea', ...pts.map(wVec));
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(centroid|center\s+of\s+mass)\s+of\s+(?:(?:the|a|an)\s+)?(?:triangle|polygon)\s+(?:with\s+)?(?:vertices|points)?\s*(?:at\s+|of\s+|are\s+|:)?\s*(.+)$/i.exec(s))) {
+    const pts = wPoints(m[2]);
+    if (pts.length >= 3) return wCall('centroid', ...pts.map(wVec));
+  }
+
+  // ---- linear algebra
+  const MAT = '(?:(?:the|a|an)\\s+)?(?:matrix\\s+)?(?:[A-Z]\\s*=\\s*)?';
+  const mk = (words, cmd) => {
+    const mm = new RegExp('^(?:(?:the|a|an)\\s+)?(?:' + words + ')\\s+of\\s+' + MAT + '(.+)$', 'i').exec(s);
+    if (!mm) return null;
+    const br = wBrackets(mm[1]);
+    if (br.length === 1 && mm[1].replace(br[0], '').replace(/[\s.,]/g, '') === '') return wCall(cmd, br[0]);
+    if (/;/.test(mm[1]) && /^\[.*\]$/.test(mm[1].trim())) return wCall(cmd, mm[1].trim());
+    return null;
+  };
+  const MATS = [['determinant|det', 'det'], ['inverse', 'inv'], ['transpose', 'transpose'], ['trace', 'trace'], ['rank', 'rank'], ['(?:reduced\\s+)?row\\s+echelon\\s+form|rref', 'rref'], ['eigenvalues\\s+and\\s+eigenvectors|eigenvectors\\s+and\\s+eigenvalues|eigenvalues|eigenvectors|eigen\\s*system', 'eigen'],
+    ['characteristic\\s+polynomial', 'charpoly'], ['null\\s*space|kernel', 'nullspace'], ['column\\s+space', 'colspace'], ['lu\\s+(?:decomposition|factori[sz]ation)', 'lu'], ['qr\\s+(?:decomposition|factori[sz]ation)', 'qr'],
+    ['singular\\s+values?(?:\\s+decomposition)?|svd', 'svd'], ['diagonali[sz]ation', 'diagonalize'], ['cholesky\\s+(?:decomposition|factori[sz]ation)', 'cholesky'], ['pseudo-?inverse', 'pinv'], ['matrix\\s+exponential', 'expm'], ['jordan\\s+(?:normal\\s+)?form', 'jordan']];
+  for (const [words, cmd] of MATS) {
+    const r = mk(words, cmd);
+    if (r) return r;
+  }
+  if ((m = /^(?:diagonali[sz]e|invert|transpose)\s+(?:(?:the|a|an)\s+)?(?:matrix\s+)?(\[.*\])$/i.exec(s))) return wCall(/^diag/i.test(s) ? 'diagonalize' : /^inv/i.test(s) ? 'inv' : 'transpose', m[1]);
+  if ((m = /^(?:is\s+)?(?:(?:the|a|an)\s+)?(?:matrix\s+)?(\[.*\])\s+(?:positive\s+definite|invertible|singular|diagonali[sz]able)$/i.exec(s))) return /definite/i.test(s) ? wCall('definite', m[1]) : /diagonali/i.test(s) ? wCall('diagonalize', m[1]) : wCall('det', m[1]);
+  if ((m = /^(?:solve\s+)?(?:(?:the|a|an)\s+)?(?:linear\s+)?system\s+(?:with\s+)?(?:coefficient\s+)?matrix\s+(\[\[.*\]\])\s+(?:and\s+(?:right[- ]hand\s+side|constants?|vector)|=|\*\s*x\s*=)\s*(\[.*\])$/i.exec(s))) return wCall('linsolve', m[1], m[2]);
+  const vecs = (rest) => {
+    const br = wBrackets(rest);
+    if (br.length === 2) return br;
+    const pts = wPoints(rest);
+    if (pts.length === 2 && pts[0].length === pts[1].length) return pts.map(wVec);
+    return null;
+  };
+  if ((m = /^(?:(?:the|a|an)\s+)?(dot|inner|scalar)\s+product\s+of\s+(?:(?:the|a|an)\s+)?(?:vectors?\s+)?(.+)$/i.exec(s))) {
+    const v = vecs(m[2]);
+    if (v) return wCall('dot', ...v);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:cross|vector)\s+product\s+of\s+(?:(?:the|a|an)\s+)?(?:vectors?\s+)?(.+)$/i.exec(s))) {
+    const v = vecs(m[1]);
+    if (v) return wCall('cross', ...v);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:angle)\s+between\s+(?:(?:the|a|an)\s+)?(?:vectors?\s+)?(.+)$/i.exec(s))) {
+    const v = vecs(m[1]);
+    if (v) return wCall('angle', ...v);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:vector\s+)?(?:projection)\s+of\s+(?:(?:the|a|an)\s+)?(?:vector\s+)?(.+?)\s+(?:onto|on\s+to|on)\s+(?:(?:the|a|an)\s+)?(?:vector\s+)?(.+)$/i.exec(s))) {
+    const a = wOneVec(m[1]);
+    const b = wOneVec(m[2]);
+    if (a && b) return wCall('proj', a, b);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:magnitude|length|norm)\s+of\s+(?:(?:the|a|an)\s+)?(?:vector\s+)?(.+)$/i.exec(s))) {
+    const a = wOneVec(m[1]);
+    if (a) return wCall('norm', a);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?unit\s+vector\s+(?:in\s+the\s+direction\s+of|of|along|parallel\s+to)\s+(?:(?:the|a|an)\s+)?(?:vector\s+)?(.+)$/i.exec(s))) {
+    const a = wOneVec(m[1]);
+    if (a) return wCall('unit', a);
+  }
+
+  // ---- statistics
+  for (const [words, cmd] of W_STAT) {
+    if ((m = W_LIST_OF(words).exec(s))) {
+      const nums = wNums(m[2]);
+      if (!nums || nums.length < (cmd === 'stdev' || cmd === 'variance' ? 2 : 1)) continue;
+      let name = cmd;
+      if (m[1] && m[1].toLowerCase() === 'population') name = cmd === 'stdev' ? 'popstdev' : cmd === 'variance' ? 'popvariance' : cmd;
+      return wCall(name, ...nums);
+    }
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:sum|total)\s+of\s+(.+)$/i.exec(s))) {
+    const nums = wNums(m[1]);
+    if (nums && nums.length >= 2) return nums.join(' + ');
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?product\s+of\s+(.+)$/i.exec(s))) {
+    const nums = wNums(m[1]);
+    if (nums && nums.length >= 2) return nums.map((x) => '(' + x + ')').join(' * ');
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(correlation|covariance|spearman(?:\s+correlation)?|kendall(?:\s+tau)?)(?:\s+coefficient)?\s+(?:of|between|for)\s+(.+)$/i.exec(s)) && wBrackets(m[2]).length === 2) return wCall(/corr/i.test(m[1]) ? 'correlation' : /cov/i.test(m[1]) ? 'covariance' : /spear/i.test(m[1]) ? 'spearman' : 'kendall', ...wBrackets(m[2]));
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:linear\s+regression|regression\s+line|line\s+of\s+best\s+fit|least[- ]squares\s+line)\s+(?:of|for|to|through)?\s*(.+)$/i.exec(s)) && wBrackets(m[1]).length === 2) return wCall('linreg', ...wBrackets(m[1]));
+  if ((m = /^(?:(?:the|a|an)\s+)?z-?score\s+(?:of|for)\s+(-?[\d.]+)\s*,?\s*(?:with|given|when|if|where)?\s*(?:a\s+)?mean\s*(?:of|=)?\s*(-?[\d.]+)\s*(?:,|and)?\s*(?:a\s+)?(?:standard\s+deviation|sd|std)\s*(?:of|=)?\s*([\d.]+)$/i.exec(s))) return wCall('zscore', m[1], m[2], m[3]);
+  if ((m = /^(?:(?:the|a|an)\s+)?probability\s+(?:of\s+)?(?:getting\s+|obtaining\s+|having\s+|seeing\s+)?(exactly|at\s+least|at\s+most|more\s+than|fewer\s+than|less\s+than)?\s*(\d+)\s+(?:heads?|tails?|successes?|hits?|sixes|\w+s?)\s+(?:in|out\s+of|from|when)\s+(?:flipping\s+|tossing\s+|rolling\s+)?(?:a\s+(?:fair\s+)?coin\s+)?(\d+)\s*(?:coin\s+|die\s+|dice\s+)?(?:times?|trials?|tosses|flips|attempts|tries|rolls)?(?:\s+of\s+a\s+(?:fair\s+)?coin)?(?:\s+(?:with|if|when|where|and)\s+(?:(?:the|a|an)\s+)?(?:success\s+)?probability\s*(?:of\s+success\s*)?(?:is\s+|of\s+|=\s*)?(0?\.\d+|\d+\/\d+|\d+%))?$/i.exec(s))) {
+    const k = m[2];
+    const n = m[3];
+    const p = m[4] ? (m[4].endsWith('%') ? '(' + m[4].slice(0, -1) + '/100)' : m[4]) : '1/2';
+    const how = (m[1] || 'exactly').toLowerCase().replace(/\s+/g, ' ');
+    if (how === 'exactly') return wCall('binompdf', n, p, k);
+    if (how === 'at most') return wCall('binomcdf', n, p, k);
+    if (how === 'at least') return wCall('binomcdf', n, p, k, n);
+    if (how === 'more than') return Number(k) + 1 > Number(n) ? null : wCall('binomcdf', n, p, String(Number(k) + 1), n);
+    return Number(k) - 1 < 0 ? null : wCall('binomcdf', n, p, String(Number(k) - 1));
+  }
+  if ((m = /^(?:x\s*(?:~|follows|is)\s*)?bin(?:omial)?\s*\(\s*(?:n\s*=\s*)?(\d+)\s*,\s*(?:p\s*=\s*)?([\d./]+)\s*\)\s*[,;:.]?\s*(?:find\s+|calculate\s+)?P\s*\(\s*X\s*(=|<=|>=|<|>|\u2264|\u2265)\s*(\d+)\s*\)$/i.exec(s))) {
+    const [, n, p, op, k] = m;
+    const K = Number(k);
+    if (op === '=') return wCall('binompdf', n, p, k);
+    if (op === '<=' || op === '\u2264') return wCall('binomcdf', n, p, k);
+    if (op === '<') return K === 0 ? null : wCall('binomcdf', n, p, String(K - 1));
+    if (op === '>=' || op === '\u2265') return wCall('binomcdf', n, p, k, n);
+    return K + 1 > Number(n) ? null : wCall('binomcdf', n, p, String(K + 1), n);
+  }
+  if ((m = /^(?:x\s*(?:~|follows|is)\s*)?(?:a\s+)?normal(?:ly\s+distributed)?(?:\s+(?:distribution|random\s+variable|variable))?\s+with\s+(?:a\s+)?mean\s*(?:of|=)?\s*(-?[\d.]+)\s*(?:,|and)?\s*(?:a\s+)?(?:standard\s+deviation|sd|sigma|\u03c3)\s*(?:of|=)?\s*([\d.]+)\s*[,;:.]?\s*(?:find\s+|calculate\s+|what\s+is\s+)?(?:(?:the|a|an)\s+)?(?:probability\s+(?:that\s+)?)?(?:P\s*\(\s*)?(?:X|x)\s*(<=|>=|<|>|\u2264|\u2265|is\s+(?:less|greater|more|fewer)\s+than|is\s+(?:above|below)|between)\s*(-?[\d.]+)(?:\s*(?:and|,)\s*(-?[\d.]+))?\s*\)?$/i.exec(s))) {
+    const [, mu, sd, op, a, b] = m;
+    if (/between/i.test(op) && b != null) return wCall('normalcdf', a, b, mu, sd);
+    if (/<|less|below|fewer|\u2264/i.test(op)) return wCall('normalcdf', '-oo', a, mu, sd);
+    return wCall('normalcdf', a, 'oo', mu, sd);
+  }
+
+  // ---- finance
+  const money = (t) => t.replace(/[$,]/g, '');
+  if ((m = /^(?:(?:the|a|an)\s+)?(compound|simple)\s+interest\s+(?:on|for|of)\s+\$?\s*([\d,.]+)\s+(?:at|with|and|of)\s+(?:an?\s+(?:annual\s+)?(?:interest\s+)?rate\s+of\s+)?([\d.]+)\s*(?:%|percent)(?:\s+(?:per\s+year|annually|a\s+year|per\s+annum|p\.?a\.?))?\s*(?:,\s*)?(?:for|over)\s+([\d.]+)\s*(years?|months?)(?:\s*,?\s*(?:compounded\s+)?(annually|yearly|semi-?annually|quarterly|monthly|weekly|daily|\d+\s+times\s+(?:a|per)\s+year))?$/i.exec(s))) {
+    const years = /month/i.test(m[5]) ? '(' + m[4] + '/12)' : m[4];
+    const freq = m[6] ? ({ annually: 1, yearly: 1, semiannually: 2, 'semi-annually': 2, quarterly: 4, monthly: 12, weekly: 52, daily: 365 }[m[6].toLowerCase()] || (/^\d+/.exec(m[6]) || [1])[0]) : null;
+    return /simple/i.test(m[1]) ? wCall('simpleinterest', money(m[2]), m[3] + '%', years) : wCall('compound', money(m[2]), m[3] + '%', years, freq);
+  }
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:monthly\s+)?(?:payment|mortgage\s+payment|loan\s+payment)\s+(?:on|for)\s+(?:a\s+|an\s+)?\$?\s*([\d,.]+)\s+(?:loan|mortgage|debt)?\s*(?:at|with|and|of)\s+(?:an?\s+(?:annual\s+)?(?:interest\s+)?rate\s+of\s+)?([\d.]+)\s*(?:%|percent)(?:\s+(?:per\s+year|annually|a\s+year|apr))?\s*(?:,\s*)?(?:for|over)\s+([\d.]+)\s*years?$/i.exec(s))) return wCall('loan', money(m[1]), m[2] + '%', m[3]);
+  if ((m = /^(?:(?:the|a|an)\s+)?(?:time|how\s+long)\s+(?:does\s+it\s+take\s+)?(?:for\s+(?:money|an\s+investment)\s+)?to\s+double\s+at\s+([\d.]+)\s*(?:%|percent)(?:\s+(?:interest|per\s+year|annually))?$/i.exec(s))) return wCall('doubletime', m[1] + '%');
+
+  return null;
+}
+
+/** "f(x) = x^2 + 1, g(x) = 2x; find f(g(3))": the definitions are substituted into the question. */
+function wFunctions(s) {
+  const defs = new Map();
+  const rx = /(?:^|[,;]|\band\b|\bwith\b|\blet\b|\bgiven\b)\s*(?:let\s+)?([a-z])\s*\(\s*([a-z])\s*\)\s*=\s*([^,;]+?)(?=\.(?:\s|$)|\s*(?:[,;]|\band\b|\bfind\b|\bevaluate\b|\bcompute\b|\bcalculate\b|\bwhat\b|\bdetermine\b|$))/gi;
+  let m;
+  let last = 0;
+  while ((m = rx.exec(s))) {
+    defs.set(m[1].toLowerCase(), { v: m[2].toLowerCase(), e: m[3].trim() });
+    last = rx.lastIndex;
+  }
+  if (!defs.size) return null;
+  let q = s.slice(last).replace(/^[\s,;.]*(?:and\s+)?(?:then\s+)?(?:find|evaluate|compute|calculate|what\s+is|what's|determine|get)?\s*(?:the\s+value\s+of\s+)?/i, '').trim();
+  if (!q || !new RegExp('\\b[' + Array.from(defs.keys()).join('') + ']\\s*\\(', 'i').test(q)) return null;
+  const callRx = new RegExp('(?<![A-Za-z])([' + Array.from(defs.keys()).join('') + '])\\s*\\(', 'g');
+  for (let guard = 0; guard < 12; guard++) {
+    const mm = callRx.exec(q);
+    if (!mm) break;
+    const open = mm.index + mm[0].length - 1;
+    const close = matchBracket(q, open, '(', ')');
+    if (close < 0) return null;
+    const def = defs.get(mm[1].toLowerCase());
+    const arg = q.slice(open + 1, close);
+    const body = def.e.replace(new RegExp('(?<![A-Za-z])' + def.v + '(?![A-Za-z])', 'g'), '(' + arg + ')');
+    q = q.slice(0, mm.index) + '(' + body + ')' + q.slice(close + 1);
+    callRx.lastIndex = 0;
+  }
+  return q;
+}
+
+const W_WORDY = /\b(?:plus|minus|times|multiplied|divided|over|squared|cubed|power|root|equals?|percent|per\s*cent|less\s+than|greater\s+than|at\s+least|at\s+most|twice|half|negative|sum\s+of|product\s+of|difference)\b/i;
+function convertWordLine(line) {
+  const s0 = line.trim().replace(/\s+/g, ' ');
+  if (s0.length < 4 || s0.length > 400 || !/[A-Za-z]{3}|\b(?:of|on|in)\b/.test(s0)) return line;
+  const s = s0.replace(/\s*[?!]+$/, '').replace(/\s*\.$/, '');
+  const lead = s.replace(W_LEAD, '');
+  WORDS_ASK.v = null;
+  let hit = null;
+  try {
+    hit = wRules(lead);
+    if (hit == null && lead !== s) hit = wRules(s);
+  } catch (e) {
+    hit = null;
+  }
+  if (hit != null) return hit;
+  WORDS_ASK.v = null;
+  if (W_WORDY.test(lead)) {
+    const t = wOps(lead);
+    if (t !== lead) return t;
+  }
+  return line;
+}
+function convertWords(raw) {
+  if (!/[A-Za-z]{3}|\b(?:of|on|in)\b/.test(raw)) return raw;
+  return raw.split('\n').map(convertWordLine).join('\n');
+}
+
+/** Words of problem statements that can never be part of an equation: they would be read as products of letters. */
+const ENGLISH_WORDS = new Set(('of is the and for are was were will would can could how why who whom what when where which while that this these those then than there their them they with without from into onto over under about around between after before during since until because '
+  + 'find solve evaluate calculate compute determine simplify show tell give please help answer result value values equal equals plus minus times divided multiplied squared cubed power root square cube '
+  + 'positive negative integer integers real number numbers function expression equation equations inequality problem question given following true false have has does did not each every some any all both either '
+  + 'area volume length width height radius diameter perimeter circumference triangle circle rectangle sphere cylinder derivative integral limit approaches respect interval point points line slope distance '
+  + 'probability chance prime factor factors remainder divisible greater less least most larger smaller exactly approximately roughly total sum product average mean median mode').split(' '));
+
+/** One equation in one unknown plus bounds on that unknown ("sin(x) = 1/2, 0 <= x <= 2pi"): solve inside the interval. */
+function tryWindowedEquation(sts) {
+  const eqs = sts.filter((s) => s.kind === 'eq');
+  const rels = sts.filter((s) => s.kind === 'rel');
+  if (eqs.length !== 1 || !rels.length || eqs.length + rels.length !== sts.length) return null;
+  const vars = new Set();
+  collectVars(eqs[0].lhs, vars);
+  collectVars(eqs[0].rhs, vars);
+  if (vars.size !== 1) return null;
+  const v = Array.from(vars)[0];
+  let lo = -Infinity;
+  let hi = Infinity;
+  let loInc = true;
+  let hiInc = true;
+  for (const st of rels) {
+    for (const c of st.conds) {
+      const lv = c.lhs.t === 'var' && c.lhs.name === v;
+      const rv = c.rhs.t === 'var' && c.rhs.name === v;
+      if (lv === rv) return null;
+      const other = lv ? c.rhs : c.lhs;
+      const ov = new Set();
+      collectVars(other, ov);
+      if (ov.size) return null;
+      const val = evalNum(other, {});
+      if (!isFinite(val)) return null;
+      // normalise to "v op val"
+      const flip = { '<': '>', '>': '<', '<=': '>=', '>=': '<=', '!=': '!=', '=': '=' };
+      const op = lv ? c.op : flip[c.op];
+      if (op === '<' || op === '<=') { if (val < hi || (val === hi && op === '<')) { hi = val; hiInc = op === '<='; } } else if (op === '>' || op === '>=') { if (val > lo || (val === lo && op === '>')) { lo = val; loInc = op === '>='; } } else return null;
+    }
+  }
+  if (!isFinite(lo) || !isFinite(hi) || lo > hi) return null;
+  const win = { lo, hi, loInc, hiInc };
+  try {
+    const dom = [];
+    const f = rfSub(evalRF(eqs[0].lhs, new Map([[v, RF_X]]), dom), evalRF(eqs[0].rhs, new Map([[v, RF_X]]), dom));
+    return solveRationalEquation(f, dom, eqs[0], v, win);
+  } catch (e) {
+    if (!(e instanceof NotAlgebraic)) throw e;
+  }
+  return solveNumericEquation(eqs[0], v, win);
+}
+/** "sin(x) = 1/2 for 0 <= x <= 2pi", "cos(x) = 0.5 on [0, 2pi]", "x^2 = 2, x in (0, 3)" -> the equation and the bounds as two statements */
+function wWindow(line) {
+  let m;
+  const brk = '([\\[(])\\s*(' + W_BOUND + ')\\s*[,;]\\s*(' + W_BOUND + ')\\s*([\\])])\\s*$';
+  if ((m = new RegExp('^(.+=[^<>]*?)\\s*(?:,|;|\\bfor\\b|\\bwhere\\b|\\bwith\\b|\\bwhen\\b|\\bon\\b|\\bin\\b)\\s*(?:the\\s+interval\\s+)?(?:([a-z])\\s*(?:in|\u2208)\\s*)?' + brk, 'i').exec(line)) && !/[<>]/.test(m[1])) {
+    const v = m[2] || (/(?<![A-Za-z])([a-z])(?![A-Za-z])/i.exec(m[1].replace(/\b(?:sin|cos|tan|cot|sec|csc|ln|log|exp|sqrt|abs|pi)\b/gi, '')) || [])[1];
+    if (!v) return null;
+    return m[1].trim() + '; ' + m[4] + ' ' + (m[3] === '[' ? '<=' : '<') + ' ' + v + ' ' + (m[6] === ']' ? '<=' : '<') + ' ' + m[5];
+  }
+  if ((m = /^(.+?=[^<>\u2264\u2265]*?)\s*(?:,|;|\bfor\b|\bwhere\b|\bwith\b|\bwhen\b|\bon\b|\bin\b|\bif\b)\s*(?:the\s+interval\s+)?(.*[<>\u2264\u2265].*)$/i.exec(line)) && !/[<>\u2264\u2265]/.test(m[1]) && !/=/.test(m[2].replace(/[<>!]=/g, ''))) return m[1].trim() + '; ' + m[2].trim();
+  return null;
+}
+// ======================================================================
+// 29. Coordinate geometry in the plane: circles (centre and radius, through three points, from a diameter), lines and circles,
+//     two circles, tangents from a point, perpendicular bisectors, parallel and perpendicular lines, intersections and angles,
+//     triangle centres, rotations / reflections / translations / dilations, the section formula, collinearity, convex hulls.
+//     A point is [x, y], a line is [a, b, c] for ax + by = c (or two points, or the equation itself), a circle is [h, k, r\u00b2]
+//     (or the equation itself).  Everything is exact: rational coordinates, square roots where the answer needs them.
+// ======================================================================
+const c2Flat = (v, what) => {
+  const a = needMat(v, what);
+  return a.length === 1 ? a[0] : a[0].length === 1 ? a.map((r) => r[0]) : null;
+};
+const c2Pt = (v, what) => {
+  const f = c2Flat(v, what);
+  if (!f || f.length !== 2) throw new MathError(what + ' needs a point with two numbers, like [1, 2]');
+  return f;
+};
+/** one point or a list of points (an n\u00d72 matrix) */
+function c2Pts(v, what) {
+  const a = needMat(v, what);
+  if (a.length === 1 && a[0].length === 2) return [a[0]];
+  if (a[0].length === 1 && a.length === 2) return [[a[0][0], a[1][0]]];
+  if (a[0].length === 2) return a;
+  throw new MathError(what + ' needs a point [x, y] or a list of points [[x1, y1], [x2, y2], ...]');
+}
+const c2Eq = (P, Qp) => {
+  const a = Qp[1].sub(P[1]);
+  const b = P[0].sub(Qp[0]);
+  return [a, b, a.mul(P[0]).add(b.mul(P[1]))];
+};
+function c2Line(v, what) {
+  const a = needMat(v, what);
+  if (a.length === 1 && a[0].length === 3) {
+    if (a[0][0].isZero() && a[0][1].isZero()) throw new MathError('a line needs a or b to be non-zero in ax + by = c');
+    return a[0];
+  }
+  if (a.length === 2 && a[0].length === 2) {
+    if (a[0][0].eq(a[1][0]) && a[0][1].eq(a[1][1])) throw new MathError('the two points of a line must be different');
+    return c2Eq(a[0], a[1]);
+  }
+  throw new MathError(what + ' needs a line: its equation (3x + 4y = 12, y = 2x + 1), [a, b, c] for ax + by = c, or two points [[x1, y1], [x2, y2]]');
+}
+function c2Circle(v, what) {
+  const f = c2Flat(v, what);
+  if (!f || f.length !== 3 || f[2].sign() <= 0) throw new MathError(what + ' needs a circle: its equation ((x-1)^2 + (y+2)^2 = 25, x^2 + y^2 - 4x = 0) or [h, k, r\u00b2]');
+  return f;
+}
+/** integer coefficients with no common factor, first non-zero one positive */
+function c2Norm(l) {
+  let L = 1n;
+  l.forEach((q) => { L = (L * q.d) / bgcd(L, q.d); });
+  let ints = l.map((q) => q.n * (L / q.d));
+  let g = 0n;
+  ints.forEach((v) => { g = bgcd(g, babs(v)); });
+  if (g > 1n) ints = ints.map((v) => v / g);
+  const first = ints.find((v) => v !== 0n);
+  if (first < 0n) ints = ints.map((v) => -v);
+  return ints.map((v) => qInt(v));
+}
+function c2LineText(l) {
+  const [a, b, c] = c2Norm(l);
+  let s = '';
+  [[a, 'x'], [b, 'y']].forEach(([co, nm]) => {
+    if (co.isZero()) return;
+    const mag = co.sign() < 0 ? co.neg() : co;
+    const term = (mag.eq(Q1) ? '' : mag.toString()) + nm;
+    s += s ? (co.sign() < 0 ? ' - ' : ' + ') + term : (co.sign() < 0 ? '-' : '') + term;
+  });
+  return s + ' = ' + c.toString();
+}
+/** y = m x + n when the line is not vertical */
+function c2SlopeText(l) {
+  const [a, b, c] = l;
+  if (b.isZero()) return 'x = ' + c.div(a).toString();
+  const m = a.neg().div(b);
+  const n = c.div(b);
+  let s = 'y = ';
+  if (!m.isZero()) s += m.eq(Q1) ? 'x' : m.eq(qInt(-1)) ? '-x' : m.toString() + 'x';
+  if (m.isZero()) s += n.toString();
+  else if (!n.isZero()) s += (n.sign() < 0 ? ' - ' : ' + ') + n.abs().toString();
+  return s;
+}
+const c2P = (p) => '(' + p.map((q) => q.toString()).join(', ') + ')';
+const c2PS = (p) => ptText(p.map((x) => (x.k ? x : sN(x))));
+const c2Sub = (u, v) => [u[0].sub(v[0]), u[1].sub(v[1])];
+const c2Dist2 = (u, v) => {
+  const d = c2Sub(u, v);
+  return d[0].mul(d[0]).add(d[1].mul(d[1]));
+};
+const c2Sqrt = (q) => symText(simp(sSqrt(sN(q))));
+const c2Eval = (l, p) => l[0].mul(p[0]).add(l[1].mul(p[1])).sub(l[2]); // a x + b y - c
+const c2Deg = (rad) => fmtNum((rad * 180) / Math.PI) + '\u00b0';
+const c2Sq = (v, c) => (c.isZero() ? v + '\u00b2' : '(' + v + (c.sign() > 0 ? ' - ' + c.toString() : ' + ' + c.neg().toString()) + ')\u00b2');
+function c2CircleLines(out, h, k, r2) {
+  const r = simp(sSqrt(sN(r2)));
+  out.answer.push('centre ' + c2P([h, k]) + ',  radius ' + symText(r));
+  out.answer.push('equation: ' + c2Sq('x', h) + ' + ' + c2Sq('y', k) + ' = ' + r2.toString());
+  const D = h.mul(qInt(-2));
+  const E = k.mul(qInt(-2));
+  const F = h.mul(h).add(k.mul(k)).sub(r2);
+  const term = (co, nm) => (co.isZero() ? '' : (co.sign() < 0 ? ' - ' : ' + ') + (co.abs().eq(Q1) ? '' : co.abs().toString()) + nm);
+  const gen = 'x\u00b2 + y\u00b2' + term(D, 'x') + term(E, 'y') + (F.isZero() ? '' : (F.sign() < 0 ? ' - ' : ' + ') + F.abs().toString()) + ' = 0';
+  out.work.push('general form: ' + gen);
+  out.work.push('area = ' + symText(simp(sMul([S_PI, sN(r2)]))) + ',  circumference = ' + symText(simp(sMul([sI(2), S_PI, r]))));
+}
+
+// ---- circle: centre and radius, through three points, from a diameter -------------------------------------------------------------
+const C2_OLD_CIRCLE = COMMANDS.circle;
+defCmd('circle', (n) => {
+  if (!n.args.length || !n.args.some((a) => a.t === 'list')) return C2_OLD_CIRCLE(n);
+  const out = newOut();
+  const args = n.args.map((a, i) => (a.t === 'list' ? evalMat(a) : null));
+  let h;
+  let k;
+  let r2;
+  if (n.args.length === 3 && args.every(Boolean)) {
+    const [A, B, C] = args.map((a) => c2Pt(a, 'circle'));
+    const D = qInt(2).mul(A[0].mul(B[1].sub(C[1])).add(B[0].mul(C[1].sub(A[1]))).add(C[0].mul(A[1].sub(B[1]))));
+    if (D.isZero()) throw new MathError('the three points lie on one line, so there is no circle through them');
+    const sa = A[0].mul(A[0]).add(A[1].mul(A[1]));
+    const sb = B[0].mul(B[0]).add(B[1].mul(B[1]));
+    const sc = C[0].mul(C[0]).add(C[1].mul(C[1]));
+    h = sa.mul(B[1].sub(C[1])).add(sb.mul(C[1].sub(A[1]))).add(sc.mul(A[1].sub(B[1]))).div(D);
+    k = sa.mul(C[0].sub(B[0])).add(sb.mul(A[0].sub(C[0]))).add(sc.mul(B[0].sub(A[0]))).div(D);
+    r2 = c2Dist2([h, k], A);
+    out.work.push('the centre is on the perpendicular bisectors of the sides: it solves 2(x\u2082 \u2212 x\u2081)x + 2(y\u2082 \u2212 y\u2081)y = |P\u2082|\u00b2 \u2212 |P\u2081|\u00b2 for each pair');
+    out.check = c2Dist2([h, k], B).eq(r2) && c2Dist2([h, k], C).eq(r2) ? 'all three points are at distance r from the centre' : null;
+  } else if (n.args.length === 2 && args[0] && args[1]) {
+    const A = c2Pt(args[0], 'circle');
+    const B = c2Pt(args[1], 'circle');
+    if (A[0].eq(B[0]) && A[1].eq(B[1])) throw new MathError('the two points of a diameter must be different');
+    h = A[0].add(B[0]).div(qInt(2));
+    k = A[1].add(B[1]).div(qInt(2));
+    r2 = c2Dist2(A, B).div(qInt(4));
+    out.work.push('the points are the ends of a diameter: centre = midpoint, r = half the distance');
+  } else if (n.args.length === 2 && args[0] && !args[1]) {
+    const C = c2Pt(args[0], 'circle');
+    h = C[0];
+    k = C[1];
+    try {
+      const r = entryQ(n.args[1]);
+      r2 = r.mul(r);
+    } catch (e) {
+      r2 = entryQ(parseExpression('(' + showRaw(n.args[1]) + ')^2'));
+    }
+    if (r2.sign() <= 0) throw new MathError('the radius must be positive');
+  } else throw new MathError('circle([h, k], r) is a circle from centre and radius, circle(P, Q) from a diameter, circle(P, Q, R) through three points; circle(r) is a circle of radius r');
+  c2CircleLines(out, h, k, r2);
+  out.value = { S: simp(sSqrt(sN(r2))) };
+  return out;
+}, true);
+
+// ---- lines and circles -------------------------------------------------------------------------------------------------------------
+/** intersection of the line ax + by = c with the circle (h, k, r\u00b2): { kind, pts (S pairs), d2 (squared distance centre-line) } */
+function c2LineCircle(l, ci) {
+  const [a, b, c] = l;
+  const [h, k, r2] = ci;
+  const n2 = a.mul(a).add(b.mul(b));
+  const e = a.mul(h).add(b.mul(k)).sub(c); // signed numerator of the distance
+  const d2 = e.mul(e).div(n2);
+  const foot = [h.sub(e.div(n2).mul(a)), k.sub(e.div(n2).mul(b))];
+  const t2 = r2.sub(d2).div(n2); // (half chord)\u00b2 / (a\u00b2 + b\u00b2)
+  if (t2.sign() < 0) return { kind: 'none', d2, foot, t2 };
+  if (t2.isZero()) return { kind: 'tangent', pts: [[sN(foot[0]), sN(foot[1])]], d2, foot, t2 };
+  const s = simp(sSqrt(sN(t2)));
+  const pm = (sign) => [simp(sAdd([sN(foot[0]), sign > 0 ? sMul([s, sN(b.neg())]) : sMul([s, sN(b)])])), simp(sAdd([sN(foot[1]), sign > 0 ? sMul([s, sN(a)]) : sMul([s, sN(a.neg())])]))];
+  return { kind: 'secant', pts: [pm(1), pm(-1)], d2, foot, t2 };
+}
+defMat('linecircle', (args, n, out) => {
+  const l = c2Line(args[0], 'linecircle');
+  const ci = c2Circle(args[1], 'linecircle');
+  const r = c2LineCircle(l, ci);
+  const dist = c2Sqrt(r.d2);
+  if (r.kind === 'none') {
+    out.answer.push('the line does not meet the circle');
+    out.work.push('distance from the centre to the line = ' + dist + ' > radius ' + c2Sqrt(ci[2]));
+  } else if (r.kind === 'tangent') {
+    out.answer.push('the line is tangent to the circle at ' + c2PS(r.pts[0]));
+    out.work.push('distance from the centre to the line = radius = ' + dist);
+  } else {
+    out.answer.push('the line cuts the circle at ' + c2PS(r.pts[0]) + ' and ' + c2PS(r.pts[1]));
+    const chord = simp(sMul([sI(2), sSqrt(sN(ci[2].sub(r.d2)))]));
+    out.work.push('distance from the centre to the line = ' + dist + ' < radius ' + c2Sqrt(ci[2]));
+    out.work.push('chord length = ' + symText(chord) + ',  midpoint of the chord ' + c2P(r.foot));
+  }
+  if (r.pts) {
+    const ok = r.pts.every((p) => {
+      const x = numS(p[0], {});
+      const y = numS(p[1], {});
+      return Math.abs(l[0].toNumber() * x + l[1].toNumber() * y - l[2].toNumber()) < 1e-9 * (1 + Math.abs(x) + Math.abs(y)) && Math.abs((x - ci[0].toNumber()) ** 2 + (y - ci[1].toNumber()) ** 2 - ci[2].toNumber()) < 1e-9 * (1 + ci[2].toNumber());
+    });
+    out.check = ok ? 'the intersection points satisfy both equations' : null;
+  }
+  return g3Out(out);
+}, [2, 'a line and a circle: linecircle(y = x + 1, x^2 + y^2 = 25)']);
+
+defMat('circlecircle', (args, n, out) => {
+  const c1 = c2Circle(args[0], 'circlecircle');
+  const c2 = c2Circle(args[1], 'circlecircle');
+  const d2 = c2Dist2([c1[0], c1[1]], [c2[0], c2[1]]);
+  const R1 = c1[2];
+  const R2 = c2[2];
+  const m = d2.sub(R1).sub(R2);
+  const cmp = m.mul(m).sub(qInt(4).mul(R1).mul(R2)); // sign of m\u00b2 \u2212 4 R1 R2
+  const dist = c2Sqrt(d2);
+  let rel;
+  let tangents;
+  if (d2.isZero() && R1.eq(R2)) { rel = 'the circles coincide'; tangents = 'infinitely many common points'; } else if (d2.isZero()) { rel = 'concentric circles (the smaller one lies inside the larger one)'; tangents = 'no common tangent'; } else if (m.sign() > 0 && cmp.sign() > 0) { rel = 'the circles are apart (each outside the other)'; tangents = '4 common tangents'; } else if (m.sign() > 0 && cmp.isZero()) { rel = 'the circles touch externally'; tangents = '3 common tangents'; } else if (cmp.sign() < 0) { rel = 'the circles intersect in two points'; tangents = '2 common tangents'; } else if (cmp.isZero()) { rel = 'the circles touch internally'; tangents = '1 common tangent'; } else { rel = 'one circle lies inside the other without touching'; tangents = 'no common tangent'; }
+  out.answer.push(rel);
+  out.work.push('distance between the centres = ' + dist + ',  radii ' + c2Sqrt(R1) + ' and ' + c2Sqrt(R2) + ';  ' + tangents);
+  if (!(d2.isZero())) {
+    const rad = [qInt(2).mul(c2[0].sub(c1[0])), qInt(2).mul(c2[1].sub(c1[1])), c2[0].mul(c2[0]).add(c2[1].mul(c2[1])).sub(R2).sub(c1[0].mul(c1[0]).add(c1[1].mul(c1[1])).sub(R1))];
+    out.work.push((cmp.sign() < 0 ? 'radical axis (the common chord): ' : 'radical axis: ') + c2LineText(rad));
+    if (cmp.sign() < 0 || cmp.isZero()) {
+      const r = c2LineCircle(rad, c1);
+      if (r.pts && r.pts.length === 2) out.answer.push('common points ' + c2PS(r.pts[0]) + ' and ' + c2PS(r.pts[1]));
+      else if (r.pts) out.answer.push('point of contact ' + c2PS(r.pts[0]));
+    }
+  }
+  return g3Out(out);
+}, [2, 'two circles: circlecircle(x^2 + y^2 = 25, (x-3)^2 + y^2 = 16)']);
+
+defMat('tangentcircle tangentsfrom', (args, n, out) => {
+  const ci = c2Circle(args[0], 'tangentcircle');
+  const P = c2Pt(args[1], 'tangentcircle');
+  const [h, k, r2] = ci;
+  const d2 = c2Dist2(P, [h, k]);
+  const cmp = d2.sub(r2);
+  if (cmp.isZero()) {
+    const l = [P[0].sub(h), P[1].sub(k), P[0].sub(h).mul(P[0]).add(P[1].sub(k).mul(P[1]))];
+    out.answer.push('tangent at ' + c2P(P) + ': ' + c2LineText(l));
+    out.work.push('the tangent is perpendicular to the radius: normal vector = P \u2212 centre = ' + c2P(c2Sub(P, [h, k])));
+    return g3Out(out);
+  }
+  if (cmp.sign() < 0) {
+    out.answer.push('the point lies inside the circle: there is no tangent through it');
+    out.work.push('distance from the centre ' + c2Sqrt(d2) + ' < radius ' + c2Sqrt(r2));
+    return g3Out(out);
+  }
+  // the points of contact lie on the polar line (x0 - h)(x - h) + (y0 - k)(y - k) = r\u00b2
+  const a = P[0].sub(h);
+  const b = P[1].sub(k);
+  const polar = [a, b, r2.add(a.mul(h)).add(b.mul(k))];
+  const r = c2LineCircle(polar, ci);
+  out.work.push('tangent length = ' + c2Sqrt(cmp) + ';  the points of contact lie on the polar line ' + c2LineText(polar));
+  r.pts.forEach((T, i) => {
+    out.answer.push('point of contact ' + c2PS(T));
+    const A = simp(sSub(T[1], sN(P[1])));
+    const B = simp(sSub(sN(P[0]), T[0]));
+    const C = simp(sAdd([sMul([A, sN(P[0])]), sMul([B, sN(P[1])])]));
+    const rat = A.k === 'n' && B.k === 'n' && C.k === 'n';
+    if (rat) out.answer.push('tangent ' + (i + 1) + ': ' + c2LineText([A.q, B.q, C.q]));
+    else out.answer.push('tangent ' + (i + 1) + ': (' + fmtS(A) + ')x + (' + fmtS(B) + ')y = ' + fmtS(C) + '   (slope \u2248 ' + fmtNum(-numS(A, {}) / numS(B, {})) + ')');
+  });
+  return g3Out(out);
+}, [2, 'a circle and a point: tangentcircle(x^2 + y^2 = 25, [7, 1])']);
+
+// ---- lines -------------------------------------------------------------------------------------------------------------------------
+defMat('perpbisector', (args, n, out) => {
+  const P = c2Pt(args[0], 'perpbisector');
+  const Qp = c2Pt(args[1], 'perpbisector');
+  if (P[0].eq(Qp[0]) && P[1].eq(Qp[1])) throw new MathError('the two points must be different');
+  const M = [P[0].add(Qp[0]).div(qInt(2)), P[1].add(Qp[1]).div(qInt(2))];
+  const a = Qp[0].sub(P[0]);
+  const b = Qp[1].sub(P[1]);
+  const l = [a, b, a.mul(M[0]).add(b.mul(M[1]))];
+  out.answer.push('perpendicular bisector: ' + c2LineText(l));
+  out.work.push('midpoint ' + c2P(M) + ';  normal vector = Q \u2212 P = ' + c2P([a, b]) + ';  ' + c2SlopeText(l));
+  out.check = c2Dist2(P, [M[0], M[1]]).eq(c2Dist2(Qp, M)) ? 'the midpoint is on the line and the line is perpendicular to PQ' : null;
+  return g3Out(out);
+}, [2, 'two points: perpbisector([1,2], [5,6])']);
+
+defMat('parallel', (args, n, out) => {
+  const l = c2Line(args[0], 'parallel');
+  const P = c2Pt(args[1], 'parallel');
+  const m = [l[0], l[1], l[0].mul(P[0]).add(l[1].mul(P[1]))];
+  out.answer.push('parallel line through ' + c2P(P) + ': ' + c2LineText(m));
+  out.work.push('same normal vector (' + c2P([l[0], l[1]]).slice(1, -1) + ') as ' + c2LineText(l) + ';  ' + c2SlopeText(m));
+  const n2 = l[0].mul(l[0]).add(l[1].mul(l[1]));
+  const diff = m[2].sub(l[2]);
+  out.work.push(diff.isZero() ? 'the point lies on the given line, so the parallel line is that line itself' : 'distance between the two parallel lines = ' + g3Ratio(diff.abs(), n2));
+  return g3Out(out);
+}, [2, 'a line and a point: parallel(y = 2x + 3, [1, 5])']);
+
+defMat('perpendicular', (args, n, out) => {
+  const l = c2Line(args[0], 'perpendicular');
+  const P = c2Pt(args[1], 'perpendicular');
+  const m = [l[1], l[0].neg(), l[1].mul(P[0]).sub(l[0].mul(P[1]))];
+  out.answer.push('perpendicular line through ' + c2P(P) + ': ' + c2LineText(m));
+  out.work.push('direction of ' + c2LineText(l) + ' becomes the normal vector;  ' + c2SlopeText(m));
+  const n2 = l[0].mul(l[0]).add(l[1].mul(l[1]));
+  const e = c2Eval(l, P);
+  const foot = [P[0].sub(e.div(n2).mul(l[0])), P[1].sub(e.div(n2).mul(l[1]))];
+  out.work.push(e.isZero() ? 'the point lies on the given line (it is the foot of the perpendicular)' : 'foot of the perpendicular on the given line ' + c2P(foot) + ';  distance from the point = ' + g3Ratio(e.abs(), n2));
+  out.check = l[0].mul(m[0]).add(l[1].mul(m[1])).isZero() ? 'the normal vectors are orthogonal' : null;
+  return g3Out(out);
+}, [2, 'a line and a point: perpendicular(y = 2x + 3, [1, 5])']);
+
+defMat('lineintersect linesintersect', (args, n, out) => {
+  const l1 = c2Line(args[0], 'lineintersect');
+  const l2 = c2Line(args[1], 'lineintersect');
+  const det = l1[0].mul(l2[1]).sub(l2[0].mul(l1[1]));
+  if (det.isZero()) {
+    const same = l1[0].mul(l2[2]).eq(l2[0].mul(l1[2])) && l1[1].mul(l2[2]).eq(l2[1].mul(l1[2]));
+    if (same) out.answer.push('the lines coincide');
+    else {
+      out.answer.push('the lines are parallel (no intersection)');
+      const n2 = l1[0].mul(l1[0]).add(l1[1].mul(l1[1]));
+      // bring l2 to the normal vector of l1
+      const t = l1[0].isZero() ? l1[1].div(l2[1]) : l1[0].div(l2[0]);
+      const diff = l2[2].mul(t).sub(l1[2]);
+      out.work.push('distance between the lines = ' + g3Ratio(diff.abs(), n2));
+    }
+    return g3Out(out);
+  }
+  const x = l1[2].mul(l2[1]).sub(l2[2].mul(l1[1])).div(det);
+  const y = l1[0].mul(l2[2]).sub(l2[0].mul(l1[2])).div(det);
+  out.answer.push('intersection point ' + c2P([x, y]));
+  const cross = l1[0].mul(l2[1]).sub(l1[1].mul(l2[0]));
+  const dot = l1[0].mul(l2[0]).add(l1[1].mul(l2[1]));
+  const ang = Math.atan2(Math.abs(cross.toNumber()), Math.abs(dot.toNumber()));
+  out.answer.push('angle between the lines (acute) = ' + c2Deg(ang) + (dot.isZero() ? ' (perpendicular)' : ''));
+  out.check = c2Eval(l1, [x, y]).isZero() && c2Eval(l2, [x, y]).isZero() ? 'the point satisfies both equations' : null;
+  return g3Out(out);
+}, [2, 'two lines: lineintersect(y = 2x + 1, x + y = 7)']);
+
+defMat('lineinfo', (args, n, out) => {
+  const l = c2Line(args[0], 'lineinfo');
+  const [a, b, c] = l;
+  out.answer.push(c2LineText(l));
+  if (b.isZero()) out.answer.push('vertical line: undefined slope, x-intercept ' + c.div(a).toString());
+  else {
+    out.answer.push('slope m = ' + a.neg().div(b).toString() + ',  ' + c2SlopeText(l));
+    out.work.push('y-intercept ' + c.div(b).toString() + (a.isZero() ? ' (horizontal line, no x-intercept)' : ',  x-intercept ' + c.div(a).toString()));
+    const mm = a.neg().div(b).toNumber();
+    out.work.push('angle of inclination ' + c2Deg(mm >= 0 ? Math.atan(mm) : Math.atan(mm) + Math.PI));
+  }
+  out.work.push('normal vector ' + c2P([a, b]) + ',  direction vector ' + c2P([b.neg(), a]) + ',  distance from the origin ' + g3Ratio(c.abs(), a.mul(a).add(b.mul(b))));
+  return g3Out(out);
+}, [1, 'a line: lineinfo(3x + 4y = 12)']);
+
+defMat('pointline', (args, n, out) => {
+  const P = c2Pt(args[0], 'pointline');
+  const l = c2Line(args[1], 'pointline');
+  const n2 = l[0].mul(l[0]).add(l[1].mul(l[1]));
+  const e = c2Eval(l, P);
+  const foot = [P[0].sub(e.div(n2).mul(l[0])), P[1].sub(e.div(n2).mul(l[1]))];
+  out.answer.push('distance = ' + g3Ratio(e.abs(), n2));
+  out.work.push('d = |ax\u2080 + by\u2080 \u2212 c| / \u221a(a\u00b2 + b\u00b2) = |' + e.toString() + '| / ' + c2Sqrt(n2));
+  out.work.push('foot of the perpendicular ' + c2P(foot) + ';  mirror image of the point in the line ' + c2P([foot[0].mul(qInt(2)).sub(P[0]), foot[1].mul(qInt(2)).sub(P[1])]));
+  out.check = c2Eval(l, foot).isZero() ? 'the foot lies on the line' : null;
+  return g3Out(out);
+}, [2, 'a point and a line: pointline([1, 2], 3x + 4y = 5)']);
+
+defMat('parallellines', (args, n, out) => {
+  const l1 = c2Line(args[0], 'parallellines');
+  const l2 = c2Line(args[1], 'parallellines');
+  if (!l1[0].mul(l2[1]).sub(l1[1].mul(l2[0])).isZero()) throw new MathError('the lines are not parallel');
+  const t = l1[0].isZero() ? l1[1].div(l2[1]) : l1[0].div(l2[0]);
+  const diff = l2[2].mul(t).sub(l1[2]);
+  const n2 = l1[0].mul(l1[0]).add(l1[1].mul(l1[1]));
+  out.answer.push('distance = ' + g3Ratio(diff.abs(), n2));
+  out.work.push('d = |c\u2081 \u2212 c\u2082| / \u221a(a\u00b2 + b\u00b2) once both equations have the same a and b');
+  return g3Out(out);
+}, [2, 'two parallel lines: parallellines(3x + 4y = 5, 3x + 4y = 15)']);
+
+// ---- triangle centres ---------------------------------------------------------------------------------------------------------------
+defMat('triangle2d trianglecenters', (args, n, out) => {
+  const [A, B, C] = args.slice(0, 3).map((a) => c2Pt(a, 'triangle2d'));
+  const cross = B[0].sub(A[0]).mul(C[1].sub(A[1])).sub(B[1].sub(A[1]).mul(C[0].sub(A[0])));
+  if (cross.isZero()) throw new MathError('the three points lie on one line: there is no triangle');
+  const area = cross.abs().div(qInt(2));
+  const a2 = c2Dist2(B, C);
+  const b2 = c2Dist2(C, A);
+  const c2s = c2Dist2(A, B);
+  const side = (q) => simp(sSqrt(sN(q)));
+  const sa = side(a2);
+  const sb = side(b2);
+  const sc = side(c2s);
+  out.answer.push('sides a = BC = ' + symText(sa) + ',  b = CA = ' + symText(sb) + ',  c = AB = ' + symText(sc));
+  const sorted = [a2, b2, c2s].slice().sort((p, q) => p.sub(q).sign());
+  const kind = sorted[0].eq(sorted[2]) ? 'equilateral' : sorted[0].eq(sorted[1]) || sorted[1].eq(sorted[2]) ? 'isosceles' : 'scalene';
+  const rt = sorted[2].sub(sorted[0]).sub(sorted[1]);
+  out.answer.push('area = ' + area.toString() + (area.isInt() ? '' : ' (= ' + fmtNum(area.toNumber()) + ')') + ',  perimeter = ' + symText(simp(sAdd([sa, sb, sc]))));
+  out.answer.push(kind + ', ' + (rt.isZero() ? 'right' : rt.sign() < 0 ? 'acute' : 'obtuse') + ' triangle;  angles A = ' + c2Deg(Math.acos((b2.add(c2s).sub(a2).toNumber()) / (2 * Math.sqrt(b2.toNumber() * c2s.toNumber())))) + ', B = ' + c2Deg(Math.acos((a2.add(c2s).sub(b2).toNumber()) / (2 * Math.sqrt(a2.toNumber() * c2s.toNumber())))) + ', C = ' + c2Deg(Math.acos((a2.add(b2).sub(c2s).toNumber()) / (2 * Math.sqrt(a2.toNumber() * b2.toNumber())))));
+  const G = [A[0].add(B[0]).add(C[0]).div(qInt(3)), A[1].add(B[1]).add(C[1]).div(qInt(3))];
+  const cc = c2Circle_(A, B, C);
+  const O = [cc[0], cc[1]];
+  const H = [A[0].add(B[0]).add(C[0]).sub(qInt(2).mul(O[0])), A[1].add(B[1]).add(C[1]).sub(qInt(2).mul(O[1]))];
+  out.answer.push('centroid G = ' + c2P(G));
+  out.answer.push('circumcentre O = ' + c2P(O) + ',  circumradius R = ' + c2Sqrt(cc[2]));
+  out.answer.push('orthocentre H = ' + c2P(H));
+  // incentre: weights a, b, c (lengths, possibly irrational)
+  const perim = sAdd([sa, sb, sc]);
+  const inc = [0, 1].map((i) => simp(sDiv(sAdd([sMul([sa, sN(A[i])]), sMul([sb, sN(B[i])]), sMul([sc, sN(C[i])])]), perim)));
+  const inr = simp(sDiv(sN(area), sDiv(perim, sI(2))));
+  out.answer.push('incentre I = ' + c2PS(inc) + ',  inradius r = ' + symText(inr));
+  const N9 = [O[0].add(H[0]).div(qInt(2)), O[1].add(H[1]).div(qInt(2))];
+  out.work.push('nine-point centre ' + c2P(N9) + (kind === 'equilateral' ? ' (G, O, H, I coincide)' : ';  O, G, H lie on the Euler line with OG : GH = 1 : 2'));
+  const ok = [[A, B, C], [B, C, A], [C, A, B]].every(([P1, P2, P3]) => H[0].sub(P1[0]).mul(P3[0].sub(P2[0])).add(H[1].sub(P1[1]).mul(P3[1].sub(P2[1]))).isZero());
+  out.check = ok && c2Dist2(O, A).eq(c2Dist2(O, B)) && c2Dist2(O, A).eq(c2Dist2(O, C)) ? 'O is equidistant from A, B, C and the altitudes pass through H' : null;
+  return g3Out(out);
+}, [3, 'three points: triangle2d([0,0], [4,0], [0,3])']);
+/** circumcentre and R\u00b2 of a triangle (rational) */
+function c2Circle_(A, B, C) {
+  const D = qInt(2).mul(A[0].mul(B[1].sub(C[1])).add(B[0].mul(C[1].sub(A[1]))).add(C[0].mul(A[1].sub(B[1]))));
+  const sa = A[0].mul(A[0]).add(A[1].mul(A[1]));
+  const sb = B[0].mul(B[0]).add(B[1].mul(B[1]));
+  const sc = C[0].mul(C[0]).add(C[1].mul(C[1]));
+  const h = sa.mul(B[1].sub(C[1])).add(sb.mul(C[1].sub(A[1]))).add(sc.mul(A[1].sub(B[1]))).div(D);
+  const k = sa.mul(C[0].sub(B[0])).add(sb.mul(A[0].sub(C[0]))).add(sc.mul(B[0].sub(A[0]))).div(D);
+  return [h, k, c2Dist2([h, k], A)];
+}
+
+// ---- transformations ----------------------------------------------------------------------------------------------------------------
+const c2Out = (out, pts, images, plain) => {
+  images.forEach((p, i) => out.answer.push((pts.length > 1 ? 'point ' + (i + 1) + ': ' + c2P(pts[i]) + ' \u2192 ' : 'image: ') + c2PS(p)));
+  return plain ? out : g3Out(out);
+};
+defCmd('rotate', (n) => {
+  if (n.args.length < 2 || n.args.length > 3) throw new MathError('rotate(point, angle) or rotate(point, angle, centre): the angle is in degrees (or an expression with pi in radians), counter-clockwise');
+  const out = newOut();
+  const pts = c2Pts(evalMat(n.args[0]), 'rotate');
+  const C = n.args[2] ? c2Pt(evalMat(n.args[2]), 'rotate') : [Q0, Q0];
+  const node = n.args[1];
+  const S = fromAst(node);
+  const inRad = varsOfS(S).size === 0 && /pi|\u03c0|rad/i.test(showRaw(node));
+  const th = inRad ? S : degToRad(S);
+  const cs = simp(sFn('cos', [th]));
+  const sn = simp(sFn('sin', [th]));
+  out.work.push('rotation by ' + symText(simp(S)) + (inRad ? ' rad' : '\u00b0') + ' about ' + c2P(C) + ':  x\u2032 = cx + (x \u2212 cx)cos \u03b8 \u2212 (y \u2212 cy)sin \u03b8,  y\u2032 = cy + (x \u2212 cx)sin \u03b8 + (y \u2212 cy)cos \u03b8');
+  const images = pts.map((P) => {
+    const dx = sN(P[0].sub(C[0]));
+    const dy = sN(P[1].sub(C[1]));
+    return [simp(expandS(sAdd([sN(C[0]), sMul([dx, cs]), sNeg(sMul([dy, sn]))]))), simp(expandS(sAdd([sN(C[1]), sMul([dx, sn]), sMul([dy, cs])])))];
+  });
+  return c2Out(out, pts, images, true);
+});
+defMat('reflect', (args, n, out) => {
+  const pts = c2Pts(args[0], 'reflect');
+  const l = c2Line(args[1], 'reflect');
+  const n2 = l[0].mul(l[0]).add(l[1].mul(l[1]));
+  out.work.push('reflection in the line ' + c2LineText(l) + ':  P\u2032 = P \u2212 2(ax + by \u2212 c)/(a\u00b2 + b\u00b2)\u00b7(a, b)');
+  const images = pts.map((P) => {
+    const t = c2Eval(l, P).mul(qInt(2)).div(n2);
+    return [sN(P[0].sub(t.mul(l[0]))), sN(P[1].sub(t.mul(l[1])))];
+  });
+  return c2Out(out, pts, images);
+}, [2, 'a point (or points) and a line: reflect([1, 2], y = x)']);
+defMat('translate', (args, n, out) => {
+  const pts = c2Pts(args[0], 'translate');
+  const v = c2Pt(args[1], 'translate');
+  out.work.push('translation by the vector ' + c2P(v) + ':  P\u2032 = P + v');
+  return c2Out(out, pts, pts.map((P) => [sN(P[0].add(v[0])), sN(P[1].add(v[1]))]));
+}, [2, 'a point (or points) and a vector: translate([1, 2], [3, -1])']);
+defMat('dilate', (args, n, out) => {
+  const pts = c2Pts(args[0], 'dilate');
+  const kk = args[1].t === 'num' ? args[1].q : (() => { throw new MathError('dilate needs a scale factor: dilate([1, 2], 3) or dilate([1, 2], 3, [4, 4])'); })();
+  const C = args[2] ? c2Pt(args[2], 'dilate') : [Q0, Q0];
+  out.work.push('dilation with factor ' + kk.toString() + ' about ' + c2P(C) + ':  P\u2032 = C + k(P \u2212 C)' + (kk.sign() < 0 ? ' (the image is turned through 180\u00b0)' : ''));
+  return c2Out(out, pts, pts.map((P) => [sN(C[0].add(kk.mul(P[0].sub(C[0])))), sN(C[1].add(kk.mul(P[1].sub(C[1]))))]));
+}, [2, 'a point (or points), a factor and optionally a centre: dilate([1, 2], 3)']);
+
+// ---- the section formula, collinearity, convex hull -------------------------------------------------------------------------------------
+defMat('section', (args, n, out) => {
+  const P = c2Pt(args[0], 'section');
+  const Qp = c2Pt(args[1], 'section');
+  const m = args[2].t === 'num' ? args[2].q : null;
+  const nn = args[3].t === 'num' ? args[3].q : null;
+  if (!m || !nn) throw new MathError('section(P, Q, m, n) needs the ratio m, n as numbers');
+  const s = m.add(nn);
+  if (s.isZero()) throw new MathError('m + n must not be 0 (a ratio of 1 : \u22121 has no point)');
+  const R = [nn.mul(P[0]).add(m.mul(Qp[0])).div(s), nn.mul(P[1]).add(m.mul(Qp[1])).div(s)];
+  const external = m.sign() * nn.sign() < 0;
+  out.answer.push('the point dividing PQ ' + (external ? 'externally' : 'internally') + ' in the ratio ' + m.toString() + ' : ' + nn.toString() + ' is ' + c2P(R));
+  out.work.push('R = (n\u00b7P + m\u00b7Q)/(m + n)' + (external ? '  (a negative ratio means external division)' : ''));
+  return g3Out(out);
+}, [4, 'two points and a ratio: section([1, 2], [7, 8], 2, 1)']);
+
+defMat('collinear', (args, n, out) => {
+  const pts = args.length === 1 ? c2Pts(args[0], 'collinear') : args.map((a) => c2Pt(a, 'collinear'));
+  if (pts.length < 3) throw new MathError('collinear needs at least three points');
+  let first = null;
+  for (let i = 1; i < pts.length && !first; i++) if (!(pts[i][0].eq(pts[0][0]) && pts[i][1].eq(pts[0][1]))) first = pts[i];
+  if (!first) { out.answer.push('all points coincide'); return g3Out(out); }
+  const l = c2Eq(pts[0], first);
+  const off = pts.filter((P) => !c2Eval(l, P).isZero());
+  if (!off.length) {
+    out.answer.push('yes, the points are collinear');
+    out.work.push('they lie on the line ' + c2LineText(l));
+  } else {
+    out.answer.push('no, the points are not collinear');
+    const P = off[0];
+    const area = first[0].sub(pts[0][0]).mul(P[1].sub(pts[0][1])).sub(first[1].sub(pts[0][1]).mul(P[0].sub(pts[0][0]))).abs().div(qInt(2));
+    out.work.push('the triangle ' + c2P(pts[0]) + ', ' + c2P(first) + ', ' + c2P(P) + ' has area ' + area.toString() + ' \u2260 0');
+  }
+  return g3Out(out);
+}, [3, 'three or more points: collinear([0,0], [1,2], [3,6])']);
+
+defMat('hull convexhull', (args, n, out) => {
+  const pts = args.length === 1 ? c2Pts(args[0], 'hull') : args.map((a) => c2Pt(a, 'hull'));
+  if (pts.length < 3) throw new MathError('hull needs at least three points');
+  const sorted = pts.slice().sort((p, q) => p[0].sub(q[0]).sign() || p[1].sub(q[1]).sign());
+  const uniq = sorted.filter((p, i) => i === 0 || !(p[0].eq(sorted[i - 1][0]) && p[1].eq(sorted[i - 1][1])));
+  const crs = (o, a, b) => a[0].sub(o[0]).mul(b[1].sub(o[1])).sub(a[1].sub(o[1]).mul(b[0].sub(o[0])));
+  const half = (arr) => {
+    const h = [];
+    arr.forEach((p) => {
+      while (h.length >= 2 && crs(h[h.length - 2], h[h.length - 1], p).sign() <= 0) h.pop();
+      h.push(p);
+    });
+    h.pop();
+    return h;
+  };
+  const hull = half(uniq).concat(half(uniq.slice().reverse()));
+  if (hull.length < 3) {
+    out.answer.push('the points are collinear: the hull is the segment from ' + c2P(uniq[0]) + ' to ' + c2P(uniq[uniq.length - 1]));
+    return g3Out(out);
+  }
+  out.answer.push('vertices of the convex hull (counter-clockwise): ' + hull.map(c2P).join(', '));
+  let area = Q0;
+  let per = S0;
+  hull.forEach((p, i) => {
+    const q = hull[(i + 1) % hull.length];
+    area = area.add(p[0].mul(q[1]).sub(q[0].mul(p[1])));
+    per = sAdd([per, simp(sSqrt(sN(c2Dist2(p, q))))]);
+  });
+  out.work.push('area = ' + area.abs().div(qInt(2)).toString() + ',  perimeter = ' + symText(simp(per)) + ',  ' + hull.length + ' of the ' + uniq.length + ' points are vertices');
+  return g3Out(out);
+}, [3, 'points: hull([0,0], [4,0], [4,3], [1,1], [0,3])']);
+
+// ---- text pre-pass: equations inside the arguments become [a, b, c] (lines) and [h, k, r\u00b2] (circles) -----------------------------------------
+const C2_KINDS = {
+  linecircle: ['line', 'circle'], circlecircle: ['circle', 'circle'], tangentcircle: ['circle', null], tangentsfrom: ['circle', null],
+  parallel: ['line', null], perpendicular: ['line', null], lineinfo: ['line'],
+  parallellines: ['line', 'line'], lineintersect: ['line', 'line'], linesintersect: ['line', 'line'], pointline: [null, 'line'], reflect: [null, 'line'],
+};
+/** "Read as" shows the lines and circles as the equations they stand for */
+Object.keys(C2_KINDS).forEach((name) => {
+  const base = COMMANDS[name];
+  if (!base) return;
+  base.show = (n) => name + '(' + n.args.map((a, i) => {
+    const kind = C2_KINDS[name][Math.min(i, C2_KINDS[name].length - 1)];
+    try {
+      if (kind === 'line' && a.t === 'list') {
+        const v = c2Flat(evalMat(a), name);
+        if (v && v.length === 3) return c2LineText(v);
+      }
+      if (kind === 'circle' && a.t === 'list') {
+        const v = c2Flat(evalMat(a), name);
+        if (v && v.length === 3) return c2Sq('x', v[0]) + ' + ' + c2Sq('y', v[1]) + ' = ' + v[2].toString();
+      }
+    } catch (e) {
+      // show the raw text
+    }
+    return showRaw(a);
+  }).join(', ') + ')';
+});
+function convertCoord2d(s) {
+  if (!/=/.test(s) || !/[xy]/.test(s)) return s;
+  const asLine = (arg) => {
+    if (!/=/.test(arg) || /\[/.test(arg)) return null;
+    let st;
+    try {
+      st = parseStatement(cleanStatement(arg));
+    } catch (e) {
+      return null;
+    }
+    if (st.kind !== 'eq') return null;
+    const f = affineForm(st, ['x', 'y']);
+    if (!f || (f.coef[0].isZero() && f.coef[1].isZero())) return null;
+    return '[' + f.coef[0].toString() + ', ' + f.coef[1].toString() + ', ' + f.c0.neg().toString() + ']';
+  };
+  const asCircle = (arg) => {
+    if (!/=/.test(arg) || /\[/.test(arg)) return null;
+    let st;
+    try {
+      st = parseStatement(cleanStatement(arg));
+    } catch (e) {
+      return null;
+    }
+    if (st.kind !== 'eq') return null;
+    let co;
+    try {
+      co = conicCoefficients(st.lhs, st.rhs);
+    } catch (e) {
+      return null;
+    }
+    if (!co || !co.B.isZero() || co.A.isZero() || !co.A.eq(co.C)) return null;
+    const h = co.D.neg().div(qInt(2).mul(co.A));
+    const k = co.E.neg().div(qInt(2).mul(co.A));
+    const r2 = h.mul(h).add(k.mul(k)).sub(co.F.div(co.A));
+    if (r2.sign() <= 0) throw new MathError('this equation has no real circle (r\u00b2 = ' + r2.toString() + ')');
+    return '[' + h.toString() + ', ' + k.toString() + ', ' + r2.toString() + ']';
+  };
+  const handle = (kinds) => (name, inner) => {
+    const parts = g3SplitArgs(inner);
+    let changed = false;
+    const conv = parts.map((p, i) => {
+      const kind = kinds[Math.min(i, kinds.length - 1)];
+      if (!kind) return p;
+      const r = kind === 'line' ? asLine(p) : asCircle(p);
+      if (r) changed = true;
+      return r || p;
+    });
+    return changed ? name + '(' + conv.join(',') + ')' : null;
+  };
+  Object.keys(C2_KINDS).forEach((name) => { s = replaceCalls(s, [name], handle(C2_KINDS[name])); });
+  return s;
 }
 
 // ======================================================================

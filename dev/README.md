@@ -60,7 +60,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 
 | File | What it checks |
 |------|----------------|
-| `cases.mjs` + `run-cases.mjs` | 668 hand-written input → expected output cases |
+| `cases.mjs` + `run-cases.mjs` | 734 hand-written input → expected output cases |
 | `doc-test.mjs` | every example in `SKILL.md` runs; every command appears in the built-in help |
 | `props.mjs`, `gen_expr.py`, `gen_poly.py` | random expressions / polynomials / systems against Fraction and numpy |
 | `cas-props.mjs`, `gen_cas.py` | the symbolic core against sympy |
@@ -84,6 +84,9 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `plot2-battery.mjs`, `gen_plot2.py` | the numbers printed next to the new pictures (RK4 solutions and equilibria against scipy `solve_ivp`, fits against `numpy.polyfit`, exact histogram counts, box-plot fences, shaded areas against scipy.stats, intercepts, contour ranges, exact region corners and areas against `scipy.optimize.linprog` / `ConvexHull`), and the geometry of the marching-squares curves against the equation (needs the `--expose` build) |
 | `series-battery.mjs`, `gen_series.py` | about 190 series per seed whose behaviour is known from theory (p-series, geometric, ratio / root families, alternating, logarithmic, rational and radical terms, radius and end points of power series); a wrong verdict fails, "cannot decide" is allowed |
 | `laplace2-battery.mjs`, `gen_laplace2.py` | 117 checks per seed: transforms with steps / impulses against quadrature, inverses against mpmath's inverse Laplace transform, initial value problems against `scipy.solve_ivp` applied piece by piece (impulses as jumps of the derivative) |
+| `words-battery.mjs` | about 1,450 plain-English phrasings per seed (derivatives, integrals, limits, algebra, number theory, shapes, points, matrices, data, probability, money, function definitions) with random numbers; each must give exactly the answer of the command it stands for (the commands themselves are checked by the other batteries) |
+| `coord2d-battery.mjs`, `gen_coord2d.py` | about 180 plane-geometry checks per seed against `sympy.geometry`: circles (three points, diameter, centre-radius), line-circle and circle-circle relations with intersection points, tangents (points of contact verified on the circle and orthogonal to the radius), perpendicular bisectors, parallels and perpendiculars, intersections and angles, triangle centres and radii, rotations / reflections / translations / dilations, section formula, collinearity, convex hulls (tangency and incidence are built in by Pythagorean construction) |
+| `window-battery.mjs`, `gen_window.py` | 51 equations per seed with an interval for the unknown (`sin(x) = 1/2, 0 <= x <= 2pi`, `e^x = 3x on (0, 5)`, polynomials with chosen roots incl. double and triple roots, open and closed ends) against a 400,000-point scan + `scipy.optimize.brentq`; touching roots are listed from their closed form |
 | `linalg-battery.mjs`, `gen_linalg.py` | linear algebra against sympy |
 | `linalg2-battery.mjs`, `gen_linalg2.py` | QR, Cholesky, definiteness, pinv, least squares, SVD, expm, Jordan form against numpy / scipy.linalg / sympy (printed matrices are parsed back and compared) |
 | `applied-battery.mjs`, `gen_applied.py` | geometry, triangles, units, chemistry, finance, complex numbers against pint / periodictable / numpy-financial / Python `complex` |

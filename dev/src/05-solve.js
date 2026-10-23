@@ -102,7 +102,7 @@ function residualCheck(lhs, rhs, v, roots) {
 }
 
 // ---- one unknown: exact rational path --------------------------------------------
-function solveRationalEquation(f, dom, eq, v) {
+function solveRationalEquation(f, dom, eq, v, win) {
   const out = newOut();
   const N = f.n;
   const denomRoots = [];
@@ -131,6 +131,19 @@ function solveRationalEquation(f, dom, eq, v) {
   const keep = [];
   const rejected = [];
   for (const r of roots.real) (dom.some((P) => polyIsZeroAt(P, r)) ? rejected : keep).push(r);
+  if (win) {
+    const eps = 1e-9;
+    const inside = (x) => (x > win.lo + eps || (win.loInc && Math.abs(x - win.lo) <= eps)) && (x < win.hi - eps || (win.hiInc && Math.abs(x - win.hi) <= eps));
+    const kept = keep.filter((r) => inside(r.val));
+    keep.length = 0;
+    kept.forEach((r) => keep.push(r));
+    const bt = (x) => { const rc = recognize(x); return rc ? rc.text : fmtNum(x); };
+    out.notes.push('Only solutions with ' + bt(win.lo) + (win.loInc ? ' ≤ ' : ' < ') + v + (win.hiInc ? ' ≤ ' : ' < ') + bt(win.hi) + ' are listed.');
+    if (!keep.length) {
+      out.answer.push('no solution in the interval');
+      return out;
+    }
+  }
   if (rejected.length) out.work.push('Rejected (makes a denominator zero): ' + listJoin(rejected.map((r) => v + ' = ' + (r.text || fmtNum(r.val)))));
   if (keep.length) {
     capList(keep.map((r) => rootLine(v, r))).forEach((l) => out.answer.push(l));
@@ -214,7 +227,7 @@ function periodStep(P) {
   return (fr.p === 1 ? '' : String(fr.p)) + '\u03c0k' + (fr.q === 1 ? '' : '/' + fr.q);
 }
 
-function solveNumericEquation(eq, v) {
+function solveNumericEquation(eq, v, win) {
   const out = newOut();
   const env = {};
   const F = (x) => {
@@ -222,10 +235,10 @@ function solveNumericEquation(eq, v) {
     return evalNum(eq.lhs, env) - evalNum(eq.rhs, env);
   };
   const trig = usesTrig(eq.lhs) || usesTrig(eq.rhs);
-  let P = trig ? findPeriod(F) : 0;
-  const lo = P ? 0 : -SCAN_LIMIT;
-  const hi = P ? P : SCAN_LIMIT;
-  const steps = P ? 6000 : 80000;
+  let P = trig && !win ? findPeriod(F) : 0;
+  const lo = win ? win.lo : P ? 0 : -SCAN_LIMIT;
+  const hi = win ? win.hi : P ? P : SCAN_LIMIT;
+  const steps = win ? Math.min(160000, Math.max(8000, Math.ceil((hi - lo) * 500))) : P ? 6000 : 80000;
   const h = (hi - lo) / steps;
   const xs = new Array(steps + 1);
   const fs = new Array(steps + 1);
@@ -262,7 +275,15 @@ function solveNumericEquation(eq, v) {
     if (i > 0 && i < steps && isFinite(fs[i - 1]) && isFinite(fs[i + 1]) && (f < 0) === (fs[i - 1] < 0) && (f < 0) === (fs[i + 1] < 0) &&
         Math.abs(f) <= Math.abs(fs[i - 1]) && Math.abs(f) <= Math.abs(fs[i + 1]) &&
         Math.abs(f) < 0.5 * Math.max(Math.abs(fs[i - 1]), Math.abs(fs[i + 1])) && ++refinements <= 400) {
-      const m = minimizeAbs(F, xs[i - 1], xs[i + 1]);
+      let m = minimizeAbs(F, xs[i - 1], xs[i + 1]);
+      // a touching root is where the slope changes sign: polish it with a bisection on the slope (the minimum itself is only good to about 1e-8)
+      const D = (x) => (F(x + 1e-5) - F(x - 1e-5)) / 2e-5;
+      const d0 = D(xs[i - 1]);
+      const d1 = D(xs[i + 1]);
+      if (isFinite(d0) && isFinite(d1) && (d0 < 0) !== (d1 < 0)) {
+        const mm = bisect(D, xs[i - 1], xs[i + 1]);
+        if (Math.abs(F(mm)) <= Math.abs(F(m)) + 1e-15) m = mm;
+      }
       if (Math.abs(F(m)) <= tol(m)) roots.push(m);
     }
   }
@@ -271,10 +292,18 @@ function solveNumericEquation(eq, v) {
     return out;
   }
   if (P) roots = roots.map((r) => ((r % P) + P) % P).map((r) => (P - r < 1e-9 ? 0 : r));
+  if (win) {
+    // the end points of the interval are tested on their own (the scan only sees sign changes)
+    [[win.lo, win.loInc], [win.hi, win.hiInc]].forEach(([e, inc]) => {
+      if (inc && Math.abs(F(e)) <= Math.max(tol(e), 1e-11)) roots.push(e);
+    });
+    roots = roots.filter((r) => (r > win.lo || (win.loInc && Math.abs(r - win.lo) < 1e-9 * (1 + Math.abs(r)))) && (r < win.hi || (win.hiInc && Math.abs(r - win.hi) < 1e-9 * (1 + Math.abs(r)))));
+    roots = roots.filter((r) => !(!win.loInc && Math.abs(r - win.lo) < 1e-9) && !(!win.hiInc && Math.abs(r - win.hi) < 1e-9));
+  }
   roots.sort((a, b) => a - b);
   const uniq = [];
   for (const r of roots) if (!uniq.length || r - uniq[uniq.length - 1] > 1e-7 * (1 + Math.abs(r))) uniq.push(r);
-  out.work.push('Type: equation with ' + (trig ? 'trigonometric functions' : 'a non-polynomial expression (root, exponential, logarithm, absolute value ...)') + ' - solved numerically (exact names are shown when they are recognised)');
+  out.work.push('Type: equation with ' + (win ? 'an interval for ' + v + (trig ? ' (trigonometric functions)' : '') : trig ? 'trigonometric functions' : 'a non-polynomial expression (root, exponential, logarithm, absolute value ...)') + ' - solved numerically (exact names are shown when they are recognised)');
   // The solution set may repeat faster than the function itself (e.g. sin x = cos x: every pi, not 2 pi).
   if (P && uniq.length) {
     for (let m = 12; m >= 2; m--) {
@@ -294,7 +323,7 @@ function solveNumericEquation(eq, v) {
   }
   if (truncated) out.notes.push('The search was stopped early because the function oscillates too fast or has too many solutions, so this answer is incomplete.');
   if (!uniq.length) {
-    out.answer.push(truncated ? 'could not find a solution before the search was stopped' : 'no real solution found' + (P ? '' : ' between ' + v + ' = -' + SCAN_LIMIT + ' and ' + SCAN_LIMIT));
+    out.answer.push(truncated ? 'could not find a solution before the search was stopped' : 'no real solution found' + (win ? ' in the interval' : P ? '' : ' between ' + v + ' = -' + SCAN_LIMIT + ' and ' + SCAN_LIMIT));
     return out;
   }
   let total = uniq.length;
@@ -319,10 +348,19 @@ function solveNumericEquation(eq, v) {
       }
     } else {
       line = rec ? (rec.rational && !rec.text.includes('/') ? v + ' = ' + rec.text : v + ' = ' + rec.text + ' (' + approxSym(r) + ' ' + d + ')') : v + ' \u2248 ' + d;
+      if (win && rec && /\u03c0/.test(rec.text)) {
+        const deg = (r * 180) / Math.PI;
+        const dfr = toFraction(deg, 6);
+        if (dfr) line += '  [' + (dfr.q === 1 ? dfr.p : fmtNum(deg)) + '\u00b0]';
+      }
     }
     out.answer.push(line);
   }
-  if (P) out.notes.push('The equation repeats every ' + periodText(P) + ' (k is any integer). The solutions listed are those in 0 ≤ ' + v + ' < ' + periodText(P) + '.');
+  if (win) {
+    const bt = (x) => { const rc = recognize(x); return rc ? rc.text : fmtNum(x); };
+    out.notes.push('Solutions with ' + bt(win.lo) + (win.loInc ? ' ≤ ' : ' < ') + v + (win.hiInc ? ' ≤ ' : ' < ') + bt(win.hi) + ' (' + uniq.length + ' found).');
+  }
+  else if (P) out.notes.push('The equation repeats every ' + periodText(P) + ' (k is any integer). The solutions listed are those in 0 ≤ ' + v + ' < ' + periodText(P) + '.');
   else out.notes.push('Searched for real solutions between ' + v + ' = -' + SCAN_LIMIT + ' and ' + SCAN_LIMIT + '.');
   out.check = uniq.every((r) => Math.abs(F(r)) <= Math.max(tol(r), 1e-7)) ? 'substituting back gives equal sides (to numerical precision)' : null;
   return out;
@@ -843,6 +881,8 @@ function solveProblem(text, solveFor) {
   if (special) return special;
   sts = sts.map(resolveCommandsStatement);
   const readAs = sts.map(showStatement).join(';  ');
+  const windowed = tryWindowedEquation(sts);
+  if (windowed) return { readAs, out: windowed };
   const kinds = new Set(sts.map((s) => s.kind));
   if (kinds.size > 1) throw new MathError('equations, inequalities and plain expressions cannot be mixed in one problem; send them as separate problems');
   let out;
@@ -921,6 +961,7 @@ function solveProblem(text, solveFor) {
 }
 
 function renderResult(readAs, out) {
+  askFirst(out);
   const lines = ['Read as: ' + readAs];
   if (out.answer.length === 1) lines.push('Answer: ' + out.answer[0]);
   else {

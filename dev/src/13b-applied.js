@@ -764,10 +764,12 @@ function trimFormula(f) {
 function convertApplied(s) {
   if (!/[A-Za-z]/.test(s)) return s;
   s = convertPlotWords(s);
+  s = convertWords(s);
   // balancing chemical equations and formula commands
   s = s.replace(/[₀-₉]/g, (c) => String(c.charCodeAt(0) - 0x2080));
   s = convertChem2(s);
   s = convertGeometry3d(s);
+  s = convertCoord2d(s);
   s = convertPlot2(s);
   s = convertSeriesSentence(s);
   s = convertStepNotation(s);

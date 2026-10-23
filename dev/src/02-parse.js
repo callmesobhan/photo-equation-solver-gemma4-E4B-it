@@ -126,6 +126,7 @@ function convertLogBase(s) {
 /** Character-level clean-up: unicode math, LaTeX, printed notation, abs bars. Keeps ; and newlines. */
 function normalizeText(raw) {
   SERIES_FLAG.v = null;
+  WORDS_ASK.v = null;
   let s = convertApplied(convertLogic(String(raw)));
   s = s.replace(/[∑Σ]/g, '\u0001S').replace(/[∏Π]/g, '\u0001P');
   s = s.replace(/[⁰¹²³⁴-⁻]+/g, (m) =>
@@ -349,6 +350,10 @@ function tokenize(s) {
         const word = /^[a-z]{5,}(?=\()/.exec(rest);
         if (word && !FN_NAMES.some((f) => word[0].includes(f)) && !Object.keys(COMMANDS).some((f) => word[0].includes(f)) && !/pi|oo/.test(word[0])) {
           throw new MathError('"' + word[0] + '" is not a function this solver knows; see "help" for the supported functions and commands');
+        }
+        const wd = /^[a-z]+/.exec(rest);
+        if (wd && wd[0].length >= 3 && (i === 0 || !/[a-z]/.test(s[i - 1])) && ENGLISH_WORDS.has(wd[0])) {
+          throw new MathError('"' + wd[0] + '" is a word of the question, not part of the maths; send only the equation or expression (or a plain phrasing such as "derivative of x^2" or "area of a circle with radius 3")');
         }
         tok = { t: 'id', v: c };
         i++;
