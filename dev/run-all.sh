@@ -70,4 +70,5 @@ if node -e "require('playwright')" 2>/dev/null; then
 else
   echo; echo "== 11. skipped (playwright not installed)"
 fi
+echo; echo "== 12. packaging: the folder the Gallery app imports (SKILL.md at its root, scripts/index.html, nothing else) and its zip"; node "$here/package.mjs" "$tmp/photo-equation-solver.zip"
 echo; echo "ALL GOOD"

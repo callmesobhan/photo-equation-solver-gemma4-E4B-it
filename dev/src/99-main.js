@@ -114,12 +114,23 @@ function helpHint(data) {
   return ' If you are unsure how to write it, call the tool with {"equation": "help"} for the list of topics.';
 }
 
+// Shown in the app's "View Console Logs" (a page, not a test run): the build number first, so a stale install is obvious.
+const BUILD = '2026-10-24.1';
+function logCall(...parts) {
+  if (typeof document === 'undefined') return;
+  try { console.log('[photo-equation-solver ' + BUILD + '] ' + parts.join(' | ')); } catch (e) { /* logging never breaks a result */ }
+}
+
 window['ai_edge_gallery_get_result'] = async (data) => {
+  const t0 = Date.now();
+  logCall('call', 'page up ' + (typeof performance !== 'undefined' ? Math.round(performance.now()) : '?') + ' ms', 'in: ' + String(data).slice(0, 300));
   try {
     const r = run(data);
+    logCall('ok', (Date.now() - t0) + ' ms', 'text ' + r.text.length + ' chars', r.image ? 'picture yes' : 'picture no');
     return JSON.stringify(r.image ? { result: r.text, image: { base64: r.image } } : { result: r.text });
   } catch (e) {
     if (!(e instanceof MathError)) console.error(e);
+    logCall('error', (Date.now() - t0) + ' ms', explain(e).slice(0, 200));
     return JSON.stringify({ error: 'Could not solve: ' + explain(e) + '.' + RETRY_HINT + helpHint(data) });
   }
 };
