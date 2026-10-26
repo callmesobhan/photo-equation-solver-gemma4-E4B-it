@@ -430,6 +430,13 @@ function roundQ(q, d) {
   return r.div(scale);
 }
 const moneyOut = (out, label, q) => out.answer.push(label + ' = ' + money(q));
+/** A photo easily gains a zero ("10 years" read as 1000): say so on the card instead of answering silently. */
+function plausibleYears(out, years, limit) {
+  if (years > limit) out.notes.push('Check the picture: ' + fmtNum(years) + ' years is an unusual length of time (a misread number, such as an extra 0?).');
+}
+function plausibleRate(out, what, rate) {
+  if (rate > 0.5) out.notes.push('Check the picture: a ' + what + ' of ' + fmtNum(rate * 100) + ' % is unusual (a misread number?).');
+}
 defCmd('compound compoundinterest', (n) => {
   needArgs(n, 3, 4, 'principal, rate, years and optionally the compounds per year');
   const P = constQ(n.args[0]);
@@ -440,6 +447,8 @@ defCmd('compound compoundinterest', (n) => {
   if (!nt.isInt() || nt.n > 5000n || nt.sign() < 0) throw new MathError('years × compounds per year must be a whole number up to 5000');
   const A = P.mul(Q1.add(r.div(m)).pow(Number(nt.n)));
   const out = newOut();
+  plausibleYears(out, t.toNumber(), 100);
+  plausibleRate(out, 'rate', r.toNumber());
   moneyOut(out, 'final amount A', A);
   moneyOut(out, 'interest earned', A.sub(P));
   out.work.push('A = P(1 + r/n)^(n·t) = ' + P.toString() + '·(1 + ' + fmtNum(r.toNumber()) + '/' + m.toString() + ')^' + nt.toString());
@@ -481,6 +490,8 @@ defCmd('loan payment mortgage', (n) => {
   if (!N.isInt() || N.n > 5000n || N.sign() <= 0) throw new MathError('years × payments per year must be a whole number up to 5000');
   const i = r.div(m);
   const out = newOut();
+  plausibleYears(out, years.toNumber(), 60);
+  plausibleRate(out, 'rate', r.toNumber());
   let pay;
   if (i.isZero()) pay = P.div(N);
   else {

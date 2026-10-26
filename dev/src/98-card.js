@@ -10,6 +10,10 @@ function cardLines(text) {
   const keep = [];
   let skipping = false;
   text.split('\n').forEach((l) => {
+    if (/^Note: Check the picture/.test(l)) {
+      keep.push(l);
+      return;
+    }
     if (/^(?:Working:|Check:|Note:)/.test(l)) skipping = true;
     else if (/^(?:Read as:|Answer:|Problem \d+$|Error:)/.test(l)) skipping = false;
     if (!skipping) keep.push(l);
@@ -51,7 +55,7 @@ function answerCardImage(text) {
     const LH = 29;
     g0.font = '20px ' + FONT;
     let rows = [];
-    lines.forEach((l) => wrapCardLine(g0, l, CARD_W - 2 * PAD).forEach((r) => rows.push({ t: r, bold: /^(?:Answer|\s{2,}\S)/.test(r) && !/^Read as/.test(r) })));
+    lines.forEach((l) => wrapCardLine(g0, l, CARD_W - 2 * PAD).forEach((r) => rows.push({ t: r, warn: /^Note: Check the picture/.test(l), bold: /^(?:Answer|\s{2,}\S)/.test(r) && !/^Read as/.test(r) })));
     if (rows.length > CARD_MAX_LINES) rows = rows.slice(0, CARD_MAX_LINES - 1).concat([{ t: '...', bold: false }]);
     const H = 2 * PAD + 26 + rows.length * LH;
     canvas.width = CARD_W;
@@ -67,7 +71,7 @@ function answerCardImage(text) {
     g.fillText('Exact result from the solver (the chat text may differ)', PAD, PAD + 12);
     let y = PAD + 26 + 22;
     rows.forEach((r) => {
-      g.fillStyle = r.bold ? '#0b57d0' : '#202124';
+      g.fillStyle = r.warn ? '#b3261e' : r.bold ? '#0b57d0' : '#202124';
       g.font = (r.bold ? 'bold ' : '') + '20px ' + FONT;
       g.fillText(r.t, PAD, y);
       y += LH;

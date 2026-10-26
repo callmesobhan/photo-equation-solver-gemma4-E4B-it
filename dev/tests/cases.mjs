@@ -1051,4 +1051,15 @@ export const CASES = [
   ['Bond price: FV=1000, C=0.05/2, YTM=0.06/2, N=20. Price = sum_{t=1}^{20} [C / (1+YTM)^t]', ['help finance'], { err: true }],
   ['t-test with mean = 5, std = 2, sample = 10 and then something odd =', ['help stats'], { err: true }],
   ['2x +', ['"help"'], { err: true }],
+  // ---- a stacked fraction read without its top: the card says so
+  ['x/x + 1 = 3', ['Answer: no solution', 'Note: Check the picture: "x/x" is just 1', '(x + 1)/x'], {}],
+  ['(x+1)/x = 3', ['x = 1/2'], { not: ['Check the picture'] }],
+  ['(x+1)/(x-1) = 3', ['x = 2'], { not: ['Check the picture'] }],
+  ['x^2/x', [], { not: ['Check the picture'] }],
+  // ---- numbers a photo can gain a zero in: a warning on the card
+  ['bond(10000, 5%, 6%, 1000, 2)', ['Note: Check the picture: 1000 years'], {}],
+  ['bond(1000, 5%, 6%, 10, 2)', ['price = 925.61'], { not: ['Check the picture'] }],
+  ['compound(1000, 5%, 10)', ['Answer'], { not: ['Check the picture'] }],
+  ['compound(1000, 5%, 1000)', ['Check the picture: 1000 years'], {}],
+  ['loan(200000, 650%, 30)', ['Check the picture: a rate of 650 %'], {}],
 ];

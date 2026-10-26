@@ -600,6 +600,9 @@ defCmd('bond bondprice', (n) => {
     convex += (t * (t + 1) * pv) / Math.pow(1 + i, 2) / (f * f);
   }
   const out = newOut();
+  plausibleYears(out, years, 100);
+  plausibleRate(out, 'coupon rate', cr);
+  plausibleRate(out, 'yield', y);
   out.answer.push('price = ' + fmtMoney(price) + ' (' + (Math.abs(price - F) < 0.005 ? 'at par' : price > F ? 'at a premium: coupon rate above the yield' : 'at a discount: coupon rate below the yield') + ')');
   const mac = wsum / price;
   out.answer.push('Macaulay duration = ' + fmtNum(mac) + ' years');

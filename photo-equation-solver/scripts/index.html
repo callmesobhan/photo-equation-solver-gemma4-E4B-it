@@ -12397,6 +12397,13 @@ function roundQ(q, d) {
   return r.div(scale);
 }
 const moneyOut = (out, label, q) => out.answer.push(label + ' = ' + money(q));
+/** A photo easily gains a zero ("10 years" read as 1000): say so on the card instead of answering silently. */
+function plausibleYears(out, years, limit) {
+  if (years > limit) out.notes.push('Check the picture: ' + fmtNum(years) + ' years is an unusual length of time (a misread number, such as an extra 0?).');
+}
+function plausibleRate(out, what, rate) {
+  if (rate > 0.5) out.notes.push('Check the picture: a ' + what + ' of ' + fmtNum(rate * 100) + ' % is unusual (a misread number?).');
+}
 defCmd('compound compoundinterest', (n) => {
   needArgs(n, 3, 4, 'principal, rate, years and optionally the compounds per year');
   const P = constQ(n.args[0]);
@@ -12407,6 +12414,8 @@ defCmd('compound compoundinterest', (n) => {
   if (!nt.isInt() || nt.n > 5000n || nt.sign() < 0) throw new MathError('years \u00d7 compounds per year must be a whole number up to 5000');
   const A = P.mul(Q1.add(r.div(m)).pow(Number(nt.n)));
   const out = newOut();
+  plausibleYears(out, t.toNumber(), 100);
+  plausibleRate(out, 'rate', r.toNumber());
   moneyOut(out, 'final amount A', A);
   moneyOut(out, 'interest earned', A.sub(P));
   out.work.push('A = P(1 + r/n)^(n\u00b7t) = ' + P.toString() + '\u00b7(1 + ' + fmtNum(r.toNumber()) + '/' + m.toString() + ')^' + nt.toString());
@@ -12448,6 +12457,8 @@ defCmd('loan payment mortgage', (n) => {
   if (!N.isInt() || N.n > 5000n || N.sign() <= 0) throw new MathError('years \u00d7 payments per year must be a whole number up to 5000');
   const i = r.div(m);
   const out = newOut();
+  plausibleYears(out, years.toNumber(), 60);
+  plausibleRate(out, 'rate', r.toNumber());
   let pay;
   if (i.isZero()) pay = P.div(N);
   else {
@@ -17952,6 +17963,9 @@ defCmd('bond bondprice', (n) => {
     convex += (t * (t + 1) * pv) / Math.pow(1 + i, 2) / (f * f);
   }
   const out = newOut();
+  plausibleYears(out, years, 100);
+  plausibleRate(out, 'coupon rate', cr);
+  plausibleRate(out, 'yield', y);
   out.answer.push('price = ' + fmtMoney(price) + ' (' + (Math.abs(price - F) < 0.005 ? 'at par' : price > F ? 'at a premium: coupon rate above the yield' : 'at a discount: coupon rate below the yield') + ')');
   const mac = wsum / price;
   out.answer.push('Macaulay duration = ' + fmtNum(mac) + ' years');
@@ -25580,6 +25594,10 @@ function cardLines(text) {
   const keep = [];
   let skipping = false;
   text.split('\n').forEach((l) => {
+    if (/^Note: Check the picture/.test(l)) {
+      keep.push(l);
+      return;
+    }
     if (/^(?:Working:|Check:|Note:)/.test(l)) skipping = true;
     else if (/^(?:Read as:|Answer:|Problem \d+$|Error:)/.test(l)) skipping = false;
     if (!skipping) keep.push(l);
@@ -25621,7 +25639,7 @@ function answerCardImage(text) {
     const LH = 29;
     g0.font = '20px ' + FONT;
     let rows = [];
-    lines.forEach((l) => wrapCardLine(g0, l, CARD_W - 2 * PAD).forEach((r) => rows.push({ t: r, bold: /^(?:Answer|\s{2,}\S)/.test(r) && !/^Read as/.test(r) })));
+    lines.forEach((l) => wrapCardLine(g0, l, CARD_W - 2 * PAD).forEach((r) => rows.push({ t: r, warn: /^Note: Check the picture/.test(l), bold: /^(?:Answer|\s{2,}\S)/.test(r) && !/^Read as/.test(r) })));
     if (rows.length > CARD_MAX_LINES) rows = rows.slice(0, CARD_MAX_LINES - 1).concat([{ t: '...', bold: false }]);
     const H = 2 * PAD + 26 + rows.length * LH;
     canvas.width = CARD_W;
@@ -25637,7 +25655,7 @@ function answerCardImage(text) {
     g.fillText('Exact result from the solver (the chat text may differ)', PAD, PAD + 12);
     let y = PAD + 26 + 22;
     rows.forEach((r) => {
-      g.fillStyle = r.bold ? '#0b57d0' : '#202124';
+      g.fillStyle = r.warn ? '#b3261e' : r.bold ? '#0b57d0' : '#202124';
       g.font = (r.bold ? 'bold ' : '') + '20px ' + FONT;
       g.fillText(r.t, PAD, y);
       y += LH;
@@ -25715,6 +25733,12 @@ function parseRequest(data) {
   return { problems: list, solveFor };
 }
 
+/** A misreading that still parses: x/x is 1, so a fraction bar over more than a bare letter was probably read without its top. */
+function readingNotes(readAs, out) {
+  const m = /(^|[^\w.)^])([A-Za-z])\s*\/\s*\2(?![\w(^.])/.exec(readAs);
+  if (m) out.notes.push('Check the picture: "' + m[2] + '/' + m[2] + '" is just 1. If the picture shows a longer fraction, such as ' + m[2] + ' + 1 over ' + m[2] + ', it must be written with brackets: (' + m[2] + ' + 1)/' + m[2] + '.');
+}
+
 function explain(e) {
   if (e instanceof MathError) return unmarkLetters(e.message);
   if (e instanceof RangeError) return 'the numbers or expression are too large to handle';
@@ -25727,6 +25751,7 @@ function run(data) {
     const help = helpFor(problems[0]);
     if (help) return { text: help, image: null };
     const { readAs, out } = solveProblem(problems[0], solveFor);
+    readingNotes(readAs, out);
     const text = renderResult(readAs, out);
     return { text, image: out.image || answerCardImage(text) };
   }
@@ -25734,6 +25759,7 @@ function run(data) {
   const text = problems.map((p, i) => {
     try {
       const { readAs, out } = solveProblem(p, solveFor);
+      readingNotes(readAs, out);
       if (out.image && !image) image = out.image;
       return 'Problem ' + (i + 1) + '\n' + renderResult(readAs, out);
     } catch (e) {
@@ -25765,7 +25791,7 @@ function helpHint(data) {
 }
 
 // Shown in the app's "View Console Logs" (a page, not a test run): the build number first, so a stale install is obvious.
-const BUILD = '2026-10-24.1';
+const BUILD = '2026-10-26.1';
 function logCall(...parts) {
   if (typeof document === 'undefined') return;
   try { console.log('[photo-equation-solver ' + BUILD + '] ' + parts.join(' | ')); } catch (e) { /* logging never breaks a result */ }

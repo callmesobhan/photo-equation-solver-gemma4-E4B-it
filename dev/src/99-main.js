@@ -65,6 +65,12 @@ function parseRequest(data) {
   return { problems: list, solveFor };
 }
 
+/** A misreading that still parses: x/x is 1, so a fraction bar over more than a bare letter was probably read without its top. */
+function readingNotes(readAs, out) {
+  const m = /(^|[^\w.)^])([A-Za-z])\s*\/\s*\2(?![\w(^.])/.exec(readAs);
+  if (m) out.notes.push('Check the picture: "' + m[2] + '/' + m[2] + '" is just 1. If the picture shows a longer fraction, such as ' + m[2] + ' + 1 over ' + m[2] + ', it must be written with brackets: (' + m[2] + ' + 1)/' + m[2] + '.');
+}
+
 function explain(e) {
   if (e instanceof MathError) return unmarkLetters(e.message);
   if (e instanceof RangeError) return 'the numbers or expression are too large to handle';
@@ -77,6 +83,7 @@ function run(data) {
     const help = helpFor(problems[0]);
     if (help) return { text: help, image: null };
     const { readAs, out } = solveProblem(problems[0], solveFor);
+    readingNotes(readAs, out);
     const text = renderResult(readAs, out);
     return { text, image: out.image || answerCardImage(text) };
   }
@@ -84,6 +91,7 @@ function run(data) {
   const text = problems.map((p, i) => {
     try {
       const { readAs, out } = solveProblem(p, solveFor);
+      readingNotes(readAs, out);
       if (out.image && !image) image = out.image;
       return 'Problem ' + (i + 1) + '\n' + renderResult(readAs, out);
     } catch (e) {
@@ -115,7 +123,7 @@ function helpHint(data) {
 }
 
 // Shown in the app's "View Console Logs" (a page, not a test run): the build number first, so a stale install is obvious.
-const BUILD = '2026-10-24.1';
+const BUILD = '2026-10-26.1';
 function logCall(...parts) {
   if (typeof document === 'undefined') return;
   try { console.log('[photo-equation-solver ' + BUILD + '] ' + parts.join(' | ')); } catch (e) { /* logging never breaks a result */ }

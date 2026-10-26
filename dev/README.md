@@ -60,7 +60,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 
 | File | What it checks |
 |------|----------------|
-| `cases.mjs` + `run-cases.mjs` | 1004 hand-written input → expected output cases |
+| `cases.mjs` + `run-cases.mjs` | 1013 hand-written input → expected output cases |
 | `doc-test.mjs` | every example in `SKILL.md` runs; every command appears in the built-in help |
 | `props.mjs`, `gen_expr.py`, `gen_poly.py` | random expressions / polynomials / systems against Fraction and numpy |
 | `cas-props.mjs`, `gen_cas.py` | the symbolic core against sympy |
