@@ -102,6 +102,7 @@ Edit `src/`, then run `./run-all.sh`. Never edit the generated `index.html` by h
 | `applied-battery.mjs`, `gen_applied.py` | geometry, triangles, units, chemistry, finance, complex numbers against pint / periodictable / numpy-financial / Python `complex` |
 | `fuzz.mjs`, `fuzz-cmds.mjs` | random garbage text, and every command with random arguments: never crash, hang or print `NaN` |
 | `../package.mjs` | not a test: checks the skill folder the way the app needs it (SKILL.md at the folder root with a matching name, `scripts/index.html`, no web references, SKILL.md under 2500 bytes) and writes the zip to import on the phone: `node dev/package.mjs out.zip` |
+| `photo-kit/` | ten handwritten-style test pictures for the phone (generator, four finished images, expected answers, how to run them); `photo-kit/check.mjs` checks the expected answers against the solver |
 | `browser-test.cjs` | the built page in real Chromium, offline, called the way the app calls it (needs Playwright) |
 
 `pip install -r tests/requirements.txt` installs the Python oracles; the batteries are skipped when they are missing.

@@ -1,0 +1,68 @@
+<!doctype html><meta charset="utf-8">
+<style>
+@font-face{font-family:Caveat;src:url(fonts/Caveat.ttf);font-weight:400 700}
+@font-face{font-family:Kalam;src:url(fonts/Kalam.ttf)}
+@font-face{font-family:PatrickHand;src:url(fonts/PatrickHand.ttf)}
+@font-face{font-family:IndieFlower;src:url(fonts/IndieFlower.ttf)}
+html,body{margin:0;background:#888}
+#paper{position:relative;display:inline-block;min-width:1000px;padding:46px 70px 54px 120px;box-sizing:border-box;
+  background:
+   linear-gradient(to right,transparent 92px,#d98a8a 92px,#d98a8a 94px,transparent 94px),
+   repeating-linear-gradient(to bottom,#fbfaf4 0 78px,#c5d3ea 78px 80px);}
+#ink{color:var(--ink);font-family:var(--font);font-size:var(--size);line-height:1;filter:url(#wob);display:flex;flex-direction:column;gap:46px}
+.line{display:flex;align-items:center;gap:18px;min-height:80px}
+.run{display:inline-flex;align-items:center;white-space:pre}
+.g{display:inline-block}
+.sp{display:inline-block;width:.34em}
+.row{display:inline-flex;align-items:center}
+.col{display:inline-flex;flex-direction:column;align-items:center}
+.sup,.sub{position:relative;font-size:.7em;display:inline-flex;margin-left:-4px;margin-right:4px}
+.sup{top:-.62em}.sub{top:.3em}
+.fbar{align-self:stretch;border-top:4px solid var(--ink);margin:3px 0;border-radius:3px}
+.sq{position:relative;display:inline-flex;align-items:stretch;padding-left:.74em;margin-right:.05em}
+.sq svg{position:absolute;left:0;top:0;height:100%;width:.7em;overflow:visible}
+.sqb{border-top:4px solid var(--ink);padding:.16em .12em .02em .04em;display:inline-flex;align-items:center}
+svg path,svg line{stroke:var(--ink);fill:none;stroke-width:4;stroke-linecap:round;stroke-linejoin:round}
+.small{font-size:.58em}
+</style>
+<svg width="0" height="0" style="position:absolute"><filter id="wob"><feTurbulence type="fractalNoise" baseFrequency="0.035" numOctaves="2" seed="4"/><feDisplacementMap in="SourceGraphic" scale="3.2"/></filter></svg>
+<div id="paper"><div id="ink"></div></div>
+<script>
+let seed=1;const rnd=()=>{seed|=0;seed=seed+0x6D2B79F5|0;let t=Math.imul(seed^seed>>>15,1|seed);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296};
+const R=(a,b)=>a+(b-a)*rnd();
+function h(tag,cls,style,kids){const e=document.createElement(tag);if(cls)e.className=cls;if(style)Object.assign(e.style,style);(kids||[]).forEach(k=>e.append(k));return e;}
+function T(s){const w=h('span','run');for(const ch of s){if(ch===' '){w.append(h('span','sp'));continue;}const g=h('span','g',{transform:`translateY(${R(-3,3)}px) rotate(${R(-5,5)}deg) scale(${R(.94,1.07)})`,marginRight:R(-1,3)+'px'});g.textContent=ch;w.append(g);}return w;}
+const row=(...k)=>h('span','row',null,k);
+const col=(...k)=>h('span','col',null,k);
+const sup=(s)=>h('span','sup',{top:(-R(.42,.55))+'em'},[T(s)]);
+const sub=(s)=>h('span','sub',null,[T(s)]);
+const small=(...k)=>h('span','small',null,k);
+function svg(w,hh,d,css){const s=document.createElementNS('http://www.w3.org/2000/svg','svg');s.setAttribute('viewBox',`0 0 ${w} ${hh}`);s.setAttribute('preserveAspectRatio','none');Object.assign(s.style,css||{});s.innerHTML=d;return s;}
+const minus=()=>h('span','g',{display:'inline-block',width:'.5em',borderTop:'4px solid var(--ink)',margin:'0 .2em',transform:`rotate(${R(-3,3)}deg)`,borderRadius:'3px'});
+const frac=(a,b)=>col(a,h('span','fbar',{transform:`rotate(${R(-1.2,1.2)}deg)`}),b);
+const sqrt=(...k)=>h('span','sq',null,[svg(30,100,'<path d="M2 62 L9 56 L19 94 L29 2"/>',{width:'.7em'}),h('span','sqb',null,k)]);
+const ARROW=()=>svg(44,20,'<path d="M2 10 L40 10 M31 2 L41 10 L31 18"/>',{width:'1.0em',height:'.45em',overflow:'visible'});
+const INF=()=>svg(44,22,'<path d="M22 11 C13 -3 1 1 1 11 C1 21 13 25 22 11 C31 -3 43 1 43 11 C43 21 31 25 22 11"/>',{width:'.8em',height:'.4em',overflow:'visible'});
+function integral(lo,hi,...body){const i=h('span','',{position:'relative',display:'inline-block',width:'1.5em',height:'2.2em',margin:'0 .15em 0 .1em'});
+  i.append(svg(25,105,'<path d="M21 9 C19 1 10 0 9 9 C8 30 13 40 13 52 C13 66 18 78 16 94 C15 104 4 104 2 96" style="stroke-width:4.5"/>',{width:'.5em',height:'2.2em',overflow:'visible',position:'absolute',left:'.42em',top:'0'}));
+  const H=h('span','small',{position:'absolute',left:'1.55em',top:'-.02em',fontSize:'.72em'},[T(hi)]);const L=h('span','small',{position:'absolute',left:'-.1em',bottom:'-.02em',fontSize:'.72em'},[T(lo)]);i.append(H,L);return row(i,...body);}
+function matrix(rows){const g=col(...rows.map(r=>row(...r.map(c=>h('span','',{width:'1.3em',textAlign:'center',display:'inline-block'},[T(c)])))));g.style.gap='.18em';
+  return row(svg(30,100,'<path d="M26 3 L6 3 L6 97 L26 97"/>',{width:'.34em',height:'2.6em',overflow:'visible'}),g,svg(30,100,'<path d="M4 3 L24 3 L24 97 L4 97"/>',{width:'.34em',height:'2.6em',overflow:'visible'}));}
+const lab=(s)=>h('span','',{marginRight:'.5em'},[T(s)]);
+const SPECS={
+ '01-quadratic':{font:'Caveat',size:'72px',ink:'#17306e',lines:[[lab('1)'),T('2x'),sup('2'),minus(),T('5x + 3 = 0')]]},
+ '02-integral':{font:'Kalam',size:'58px',ink:'#1a1a1a',lines:[[lab('2)'),integral('0','1',T('x e'),sup('x'),T(' dx'))]]},
+ '03-limit':{font:'Caveat',size:'72px',ink:'#17306e',lines:[[lab('3)'),col(T('lim'),small(row(T('x'),ARROW(),INF()))),T(' (1 + 1/x)'),sup('x')]]},
+ '04-determinant':{font:'PatrickHand',size:'60px',ink:'#222',lines:[[lab('4)'),T('Find the determinant')],[matrix([['3','1'],['2','4']])]]},
+ '05-radical':{font:'Kalam',size:'58px',ink:'#1a1a1a',lines:[[lab('5)'),sqrt(T('x + 7')),T(' = x + 1')]]},
+ '06-fraction':{font:'Caveat',size:'72px',ink:'#17306e',lines:[[lab('6)'),frac(T('x + 1'),row(T('x'),minus(),T('1'))),T(' = 3')]]},
+ '07-decimals':{font:'PatrickHand',size:'60px',ink:'#222',lines:[[lab('7)'),T('10x'),minus(),T('3 = 0.5x + 15')]]},
+ '08-logs':{font:'IndieFlower',size:'56px',ink:'#1a2b5c',lines:[[lab('8)'),T('log'),sub('2'),T('(x) + log'),sub('2'),T('(x'),minus(),T('2) = 3')]]},
+ '09-system':{font:'Caveat',size:'72px',ink:'#17306e',lines:[[lab('9)'),T('x'),sup('2'),T(' + y'),sup('2'),T(' = 25')],[h('span','',{marginLeft:'1.3em'},[T('y = x + 1')])]]},
+ '10-bond':{font:'PatrickHand',size:'52px',ink:'#222',lines:[[lab('10)'),T('A bond has a face value of $1000 and pays')],[T('a 5% coupon twice a year. It matures in')],[T('10 years, and the market yield is 6%.')],[T('Find the price and the Macaulay duration.')]]}
+};
+window.build=(id)=>{seed=id.charCodeAt(1)*97+id.charCodeAt(0)*13;const s=SPECS[id];const ink=document.getElementById('ink');ink.innerHTML='';
+  ink.style.setProperty('--font',s.font);ink.style.setProperty('--size',s.size);ink.style.setProperty('--ink',s.ink);document.documentElement.style.setProperty('--ink',s.ink);
+  s.lines.forEach(items=>{const l=h('div','line',null,items);ink.append(l);});return Object.keys(SPECS);};
+window.ids=Object.keys(SPECS);
+</script>

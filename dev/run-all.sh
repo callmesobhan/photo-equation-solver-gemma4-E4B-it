@@ -70,5 +70,6 @@ if node -e "require('playwright')" 2>/dev/null; then
 else
   echo; echo "== 11. skipped (playwright not installed)"
 fi
+echo; echo "== 8zg. photo kit: the typed form of the ten handwritten test items gives the expected answers"; node photo-kit/check.mjs "$skill"
 echo; echo "== 12. packaging: the folder the Gallery app imports (SKILL.md at its root, scripts/index.html, nothing else) and its zip"; node "$here/package.mjs" "$tmp/photo-equation-solver.zip"
 echo; echo "ALL GOOD"
